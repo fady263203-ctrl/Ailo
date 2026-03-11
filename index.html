@@ -4,16 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ailo — تعلم اللغات</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0f0f1a;font-family:system-ui,sans-serif}
-#root{max-width:480px;margin:0 auto}
-::-webkit-scrollbar{width:4px}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow-x:hidden}
+body{background:linear-gradient(135deg,#f8fafc 0%,#eef2ff 50%,#faf5ff 100%);font-family:'Tajawal',system-ui,sans-serif;min-height:100vh}
+#root{max-width:480px;margin:0 auto;min-height:100vh}
+::-webkit-scrollbar{width:3px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#2a2a4a;border-radius:2px}
+::-webkit-scrollbar-thumb{background:rgba(99,102,241,0.3);border-radius:2px}
+input,select,button{font-family:'Tajawal',system-ui,sans-serif}
 </style>
 </head>
 <body>
@@ -22,43 +25,64 @@ body{background:#0f0f1a;font-family:system-ui,sans-serif}
 const { useState, useEffect, useRef, useCallback } = React;
 
 
-// ── THEMES ──────────────────────────────────────────────────────────────────
+// ── THEMES ───────────────────────────────────────────────────────────────────
 const THEMES = {
-  blue:   { primary:"#6366f1", secondary:"#818cf8", bg:"#0f0f1a", card:"#1a1a2e", border:"#2a2a4a", text:"#e8e8ff", muted:"#8888aa" },
-  pink:   { primary:"#ec4899", secondary:"#f472b6", bg:"#1a0f18", card:"#2d1a2a", border:"#4a2a42", text:"#ffe8f8", muted:"#aa88a0" },
-  green:  { primary:"#22c55e", secondary:"#4ade80", bg:"#0a1a0f", card:"#1a2d1a", border:"#2a4a2a", text:"#e8ffe8", muted:"#88aa88" },
-  gray:   { primary:"#94a3b8", secondary:"#cbd5e1", bg:"#0f1117", card:"#1a1d27", border:"#2a2d3a", text:"#e8eaf0", muted:"#8890a8" },
-  brown:  { primary:"#d97706", secondary:"#f59e0b", bg:"#1a1208", card:"#2d1f0a", border:"#4a3412", text:"#fff8e8", muted:"#aa9060" },
-  yellow: { primary:"#eab308", secondary:"#facc15", bg:"#1a1800", card:"#2d2800", border:"#4a4400", text:"#fffde8", muted:"#aaa060" },
+  platinum:{ name:"بلاتيني",  primary:"#6366f1", secondary:"#a5b4fc", accent:"#f0abfc",
+    bg:"linear-gradient(135deg,#f8fafc 0%,#eef2ff 50%,#faf5ff 100%)",
+    card:"rgba(255,255,255,0.7)", border:"rgba(99,102,241,0.15)",
+    text:"#1e1b4b", muted:"#6b7280", glow:"rgba(99,102,241,0.2)", dark:false },
+  midnight:{ name:"منتصف الليل", primary:"#818cf8", secondary:"#c4b5fd", accent:"#f472b6",
+    bg:"linear-gradient(135deg,#0f0c29 0%,#1a1040 50%,#0f0c29 100%)",
+    card:"rgba(30,25,80,0.6)", border:"rgba(129,140,248,0.2)",
+    text:"#e0e7ff", muted:"#8b8fa8", glow:"rgba(129,140,248,0.25)", dark:true },
+  rose:    { name:"وردي", primary:"#f43f5e", secondary:"#fb7185", accent:"#fbbf24",
+    bg:"linear-gradient(135deg,#1a0010 0%,#2d0a1e 50%,#1a0010 100%)",
+    card:"rgba(60,10,35,0.65)", border:"rgba(244,63,94,0.2)",
+    text:"#ffe4e6", muted:"#a8738a", glow:"rgba(244,63,94,0.3)", dark:true },
+  emerald: { name:"زمرد", primary:"#10b981", secondary:"#34d399", accent:"#06b6d4",
+    bg:"linear-gradient(135deg,#020e08 0%,#062318 50%,#020e08 100%)",
+    card:"rgba(5,30,20,0.65)", border:"rgba(16,185,129,0.2)",
+    text:"#d1fae5", muted:"#5a9070", glow:"rgba(16,185,129,0.25)", dark:true },
+  gold:    { name:"ذهبي", primary:"#f59e0b", secondary:"#fbbf24", accent:"#ef4444",
+    bg:"linear-gradient(135deg,#0f0a00 0%,#1f1400 50%,#0f0a00 100%)",
+    card:"rgba(40,25,0,0.65)", border:"rgba(245,158,11,0.2)",
+    text:"#fef9c3", muted:"#a08030", glow:"rgba(245,158,11,0.3)", dark:true },
+  ocean:   { name:"محيطي", primary:"#0ea5e9", secondary:"#38bdf8", accent:"#818cf8",
+    bg:"linear-gradient(135deg,#000d1a 0%,#001e3c 50%,#000d1a 100%)",
+    card:"rgba(0,20,50,0.65)", border:"rgba(14,165,233,0.2)",
+    text:"#e0f2fe", muted:"#5090b0", glow:"rgba(14,165,233,0.25)", dark:true },
+  sakura:  { name:"ساكورا", primary:"#ec4899", secondary:"#f9a8d4", accent:"#a78bfa",
+    bg:"linear-gradient(135deg,#fdf2f8 0%,#fce7f3 50%,#f5f3ff 100%)",
+    card:"rgba(255,240,250,0.75)", border:"rgba(236,72,153,0.15)",
+    text:"#500724", muted:"#9d5070", glow:"rgba(236,72,153,0.2)", dark:false },
 };
 
-// ── XP SYSTEM ───────────────────────────────────────────────────────────────
+// ── XP SYSTEM ────────────────────────────────────────────────────────────────
 const xpForLevel = (lvl) => lvl === 1 ? 100 : xpForLevel(lvl-1) + lvl * 100;
 const getLevelInfo = (totalXp) => {
   let lvl = 1, acc = 0;
   while (acc + xpForLevel(lvl) <= totalXp) { acc += xpForLevel(lvl); lvl++; }
-  return { level: lvl, current: totalXp - acc, needed: xpForLevel(lvl), pct: Math.round(((totalXp-acc)/xpForLevel(lvl))*100) };
+  return { level:lvl, current:totalXp-acc, needed:xpForLevel(lvl), pct:Math.round(((totalXp-acc)/xpForLevel(lvl))*100) };
 };
 
-// ── DATA ─────────────────────────────────────────────────────────────────────
-const AVATARS = ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐙","🐧","🐦","🦋","🦄","🐲","🌸","🌺","🌻","🌹","⭐","🌙","☀️","🌈","💎","🔥","🎭","🎨","🎸","🎺","🎻","🎹","🏆","👑","💫","✨","🍀","🌿","🦋","🐬","🦅","🦉","🦚","🦜","🐝","🌊"];
+// ── DATA ──────────────────────────────────────────────────────────────────────
 const BADGES = [
-  { id:"first_chat", icon:"💬", name:"أول محادثة", desc:"أرسل رسالتك الأولى", earned:true },
-  { id:"streak5",   icon:"🔥", name:"سلسلة 5 أيام", desc:"دخلت 5 أيام متتالية", earned:true },
-  { id:"speaker10", icon:"🎤", name:"المتحدث المثالي", desc:"أتم 10 تمارين صوتية", earned:false },
-  { id:"vocab50",   icon:"📚", name:"حافظ الكلمات", desc:"تعلم 50 كلمة جديدة", earned:true },
-  { id:"top3",      icon:"🥇", name:"في القمة", desc:"وصلت للمراكز الثلاثة الأولى", earned:false },
-  { id:"challenge", icon:"⚔️",  name:"المتحدي", desc:"فزت في 5 تحديات مباشرة", earned:false },
+  { id:"first_chat", icon:"💬", name:"أول محادثة",  earned:true },
+  { id:"streak5",   icon:"🔥", name:"سلسلة 5 أيام", earned:true },
+  { id:"speaker10", icon:"🎤", name:"المتحدث المثالي", earned:false },
+  { id:"vocab50",   icon:"📚", name:"حافظ الكلمات", earned:true },
+  { id:"top3",      icon:"🥇", name:"في القمة",     earned:false },
+  { id:"challenge", icon:"⚔️",  name:"المتحدي",      earned:false },
 ];
 const SRS_CARDS = [
-  { word:"Hello",      arabic:"مرحباً",   type:"mcq",    options:["مرحباً","وداعاً","شكراً","آسف"],      answer:0 },
-  { word:"Beautiful",  arabic:"جميل",     type:"arrange", words:["جميل","هذا","الطقس"],                   answer:"هذا الطقس جميل" },
-  { word:"Thank you",  arabic:"شكراً",   type:"mcq",    options:["من فضلك","شكراً","آسف","نعم"],         answer:1 },
-  { word:"Water",      arabic:"ماء",      type:"match",   pairs:[["Water","ماء"],["Fire","نار"],["Sky","سماء"],["Earth","أرض"]], answer:null },
-  { word:"Friend",     arabic:"صديق",     type:"speech",  sentence:"My friend is very kind",              answer:null },
-  { word:"Love",       arabic:"حب",       type:"mcq",    options:["كره","خوف","حب","فرح"],               answer:2 },
-  { word:"Goodbye",    arabic:"وداعاً",   type:"arrange", words:["وداعاً","يا","صديقي"],                   answer:"وداعاً يا صديقي" },
-  { word:"Food",       arabic:"طعام",     type:"mcq",    options:["ماء","هواء","طعام","نوم"],             answer:2 },
+  { word:"Hello",     arabic:"مرحباً",  type:"mcq",     options:["مرحباً","وداعاً","شكراً","آسف"],        answer:0 },
+  { word:"Beautiful", arabic:"جميل",    type:"arrange", words:["جميل","هذا","الطقس"],                      answer:"هذا الطقس جميل" },
+  { word:"Thank you", arabic:"شكراً",  type:"mcq",     options:["من فضلك","شكراً","آسف","نعم"],           answer:1 },
+  { word:"Water",     arabic:"ماء",     type:"match",   pairs:[["Water","ماء"],["Fire","نار"],["Sky","سماء"],["Earth","أرض"]], answer:null },
+  { word:"Friend",    arabic:"صديق",    type:"speech",  sentence:"My friend is very kind",                 answer:null },
+  { word:"Love",      arabic:"حب",      type:"mcq",     options:["كره","خوف","حب","فرح"],                  answer:2 },
+  { word:"Goodbye",   arabic:"وداعاً",  type:"arrange", words:["وداعاً","يا","صديقي"],                      answer:"وداعاً يا صديقي" },
+  { word:"Food",      arabic:"طعام",    type:"mcq",     options:["ماء","هواء","طعام","نوم"],               answer:2 },
 ];
 const LEADERBOARD = [
   { rank:1, avatar:"🦁", name:"Ahmad", xp:4820, tier:"gold",   delta:"+2" },
@@ -71,48 +95,52 @@ const LEADERBOARD = [
   { rank:8, avatar:"🎭", name:"Omar",  xp:1420, tier:"bronze", delta:"-1" },
 ];
 const DAILY_QUESTS = [
-  { id:1, icon:"💬", text:"أرسل 5 رسائل", reward:20, progress:3, total:5 },
-  { id:2, icon:"📚", text:"تعلم 5 كلمات جديدة", reward:30, progress:5, total:5, done:true },
-  { id:3, icon:"🤝", text:"شارك نتيجتك مع صديق", reward:15, progress:0, total:1 },
+  { id:1, icon:"💬", text:"أرسل 5 رسائل",           reward:20, progress:3, total:5 },
+  { id:2, icon:"📚", text:"تعلم 5 كلمات جديدة",      reward:30, progress:5, total:5, done:true },
+  { id:3, icon:"🤝", text:"شارك نتيجتك مع صديق",    reward:15, progress:0, total:1 },
 ];
-const BOT_REPLIES = ["رائع! هل يمكنك استخدامها في جملة؟ 😊","ممتاز! أنت تتعلم بسرعة! 🌟","نطق مثالي! استمر! 🎯","سؤال مثير للاهتمام! دعني أساعدك 💡","أنت تتقدم بشكل مذهل! 🏆"];
+const BOT_REPLIES = ["رائع! هل يمكنك استخدامها في جملة؟ 😊","ممتاز! أنت تتعلم بسرعة كبيرة! 🌟","نطق مثالي! استمر في التقدم! 🎯","سؤال رائع! دعني أساعدك 💡","أنت تتقدم بشكل مذهل! 🏆"];
 const WEEK_DATA = [40,65,30,80,55,90,70];
 
-// ── SVG ICONS ────────────────────────────────────────────────────────────────
+// ── SVG ICONS (Lucide-style, clean) ──────────────────────────────────────────
 const Ic = {
-  home:   (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M3 9.5L12 3L21 9.5V20C21 20.55 20.55 21 20 21H15V15H9V21H4C3.45 21 3 20.55 3 20V9.5Z" fill={c}/></svg>,
-  chat:   (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2ZM20 16H5.17L4 17.17V4H20V16Z" fill={c}/><circle cx="8" cy="10" r="1.5" fill={c}/><circle cx="12" cy="10" r="1.5" fill={c}/><circle cx="16" cy="10" r="1.5" fill={c}/></svg>,
-  clock:  (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke={c} strokeWidth="2" fill="none"/><path d="M12 7V12L15 15" stroke={c} strokeWidth="2" strokeLinecap="round"/></svg>,
-  star:   (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M12 3L14.5 8.5L21 9.3L16.5 13.7L17.6 20L12 17.2L6.4 20L7.5 13.7L3 9.3L9.5 8.5L12 3Z" fill={c}/></svg>,
-  trophy: (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M7 4H3V8C3 10.2 4.8 12 7 12H7.1C7.6 14.2 9.6 15.8 12 16C14.4 15.8 16.4 14.2 16.9 12H17C19.2 12 21 10.2 21 8V4H17M12 16V18M9 20H15" stroke={c} strokeWidth="2" strokeLinecap="round"/><path d="M7 4H17V10C17 12.76 14.76 15 12 15C9.24 15 7 12.76 7 10V4Z" fill={c+"44"}/></svg>,
-  mic:    (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" fill={c}/><path d="M5 10C5 14.42 8.58 18 12 18M19 10C19 14.42 15.42 18 12 18M12 18V22M8 22H16" stroke={c} strokeWidth="2" strokeLinecap="round"/></svg>,
-  micOff: (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M2 2L22 22" stroke={c} strokeWidth="2" strokeLinecap="round"/><path d="M9 9V14C9 15.66 10.34 17 12 17C12.74 17 13.42 16.72 13.94 16.27" stroke={c} strokeWidth="2" strokeLinecap="round"/><path d="M15 11V7C15 5.34 13.66 4 12 4C10.59 4 9.39 4.89 9.06 6.12" stroke={c} strokeWidth="2" strokeLinecap="round"/><path d="M5 10C5 14.42 8.58 18 12 18M19 10C19 14.42 15.42 18 12 18M12 18V22" stroke={c} strokeWidth="2" strokeLinecap="round"/></svg>,
-  cam:    (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M15 10L19.58 7.71C20.5 7.21 21.5 7.89 21.5 8.93V15.07C21.5 16.11 20.5 16.79 19.58 16.29L15 14V10Z" fill={c}/><rect x="2" y="7" width="13" height="10" rx="2" fill={c}/></svg>,
-  flip:   (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M20 7L16 3M20 7L16 11M20 7H4M4 17L8 21M4 17L8 13M4 17H20" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  phone:  (c,s=24)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M6.6 10.8C7.8 13.2 9.8 15.2 12.2 16.4L14 14.6C14.2 14.4 14.6 14.4 14.8 14.6C15.8 15 16.8 15.2 18 15.2C18.4 15.2 18.8 15.6 18.8 16V18.8C18.8 19.2 18.4 19.6 18 19.6C9.4 19.6 2.4 12.6 2.4 4C2.4 3.6 2.8 3.2 3.2 3.2H6C6.4 3.2 6.8 3.6 6.8 4C6.8 5.2 7 6.2 7.4 7.2C7.5 7.5 7.4 7.8 7.2 8L5.4 9.8C5.6 10.2 6.1 10.5 6.6 10.8Z" fill={c}/></svg>,
-  img:    (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke={c} strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill={c}/><path d="M21 15L16 10L5 21" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  attach: (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05L12.25 20.24C11.12 21.37 9.59 22 8 22C6.41 22 4.88 21.37 3.75 20.24C2.62 19.11 1.99 17.58 1.99 16C1.99 14.42 2.62 12.89 3.75 11.76L12.94 2.57C13.7 1.81 14.73 1.38 15.8 1.38C16.87 1.38 17.9 1.81 18.66 2.57C19.42 3.33 19.85 4.36 19.85 5.43C19.85 6.5 19.42 7.53 18.66 8.29L9.46 17.48C9.08 17.86 8.56 18.08 8.01 18.08C7.46 18.08 6.94 17.86 6.56 17.48C6.18 17.1 5.96 16.58 5.96 16.03C5.96 15.48 6.18 14.96 6.56 14.58L15.07 6.07" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  send:   (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M2 21L23 12L2 3V10L17 12L2 14V21Z" fill={c}/></svg>,
-  back:   (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M20 12H4M4 12L10 6M4 12L10 18" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  shield: (c,s=16)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6V12C4 16.42 7.58 20 12 21C16.42 20 20 16.42 20 12V6L12 2Z" fill={c}/></svg>,
-  block:  (c,s=18)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke={c} strokeWidth="2"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke={c} strokeWidth="2"/></svg>,
-  flag:   (c,s=18)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M4 15L4 21M4 3V15M4 3H14L11 9H20L15 15H4" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  bell:   (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M18 8C18 4.69 15.31 2 12 2C8.69 2 6 4.69 6 8C6 13 4 14 4 14H20C20 14 18 13 18 8Z" fill={c}/><path d="M13.73 21C13.38 21.62 12.73 22 12 22C11.27 22 10.62 21.62 10.27 21" stroke={c} strokeWidth="2" strokeLinecap="round"/></svg>,
-  cog:    (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M12 15C13.66 15 15 13.66 15 12C15 10.34 13.66 9 12 9C10.34 9 9 10.34 9 12C9 13.66 10.34 15 12 15Z" fill={c}/><path d="M19.43 12.98C19.47 12.66 19.5 12.34 19.5 12C19.5 11.66 19.47 11.34 19.43 11.02L21.54 9.37C21.73 9.22 21.78 8.95 21.66 8.73L19.66 5.27C19.54 5.05 19.27 4.97 19.05 5.05L16.56 6.05C16.04 5.65 15.48 5.32 14.87 5.07L14.49 2.42C14.46 2.18 14.25 2 14 2H10C9.75 2 9.54 2.18 9.51 2.42L9.13 5.07C8.52 5.32 7.96 5.66 7.44 6.05L4.95 5.05C4.72 4.96 4.46 5.05 4.34 5.27L2.34 8.73C2.21 8.95 2.27 9.22 2.46 9.37L4.57 11.02C4.53 11.34 4.5 11.67 4.5 12C4.5 12.33 4.53 12.66 4.57 12.98L2.46 14.63C2.27 14.78 2.22 15.05 2.34 15.27L4.34 18.73C4.46 18.95 4.73 19.03 4.95 18.95L7.44 17.95C7.96 18.35 8.52 18.68 9.13 18.93L9.51 21.58C9.54 21.82 9.75 22 10 22H14C14.25 22 14.46 21.82 14.49 21.58L14.87 18.93C15.48 18.68 16.04 18.34 16.56 17.95L19.05 18.95C19.28 19.04 19.54 18.95 19.66 18.73L21.66 15.27C21.78 15.05 21.73 14.78 21.54 14.63L19.43 12.98Z" fill={c}/></svg>,
-  check2: (c,s=14)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M4 13L9 18L20 6" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  dblchk:(c,s=16)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M1 13L6 18L17 6" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 13L12 18L23 6" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  sword:  (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><path d="M14.5 9.5L3 21M8 8L16 16M5 5L19 19M9 3L21 3L21 15" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  coin:   (c,s=16)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill={c}/><text x="12" y="17" textAnchor="middle" fontSize="11" fill="white" fontWeight="bold">$</text></svg>,
+  home:    (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1V9.5z"/></svg>,
+  chat:    (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
+  clock:   (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  star:    (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+  trophy:  (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/></svg>,
+  mic:     (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/></svg>,
+  micOff:  (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><line x1="2" y1="2" x2="22" y2="22"/><path d="M18.89 13.23A7 7 0 005 10M15 9.34V4a3 3 0 00-5.94-.6M12 19v3M8 22h8"/><path d="M9 9v3a3 3 0 005.12 2.12"/></svg>,
+  video:   (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>,
+  videoOff:(c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M16 16v1a2 2 0 01-2 2H3a2 2 0 01-2-2V7a2 2 0 012-2h2m5.66 0H14a2 2 0 012 2v3.34l1 1L23 7v10M1 1l22 22"/></svg>,
+  phone:   (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>,
+  phoneOff:(c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07M14.29 9.9a16 16 0 00-6.29-6.29M1 1l22 22"/></svg>,
+  send:    (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+  back:    (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2.5" stroke={c} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
+  shield:  (c,s=14)=><svg width={s} height={s} viewBox="0 0 24 24" fill={c} stroke="none"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"/></svg>,
+  flag:    (c,s=18)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7"/></svg>,
+  block:   (c,s=18)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>,
+  bell:    (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>,
+  cog:     (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
+  check2:  (c,s=13)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2.5" stroke={c} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  checks:  (c,s=15)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><polyline points="1 12 5 16 13 8"/><polyline points="9 12 13 16 21 8"/></svg>,
+  attach:  (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>,
+  image:   (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+  sword:   (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" y1="19" x2="19" y2="13"/><line x1="16" y1="16" x2="20" y2="20"/><line x1="19" y1="21" x2="21" y2="19"/></svg>,
+  flip:    (c,s=20)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15"/></svg>,
+  coin:    (c,s=15)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" strokeWidth="2" stroke={c} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v2M12 15v2M9.5 9.5A2.5 2.5 0 0112 8a2.5 2.5 0 010 5 2.5 2.5 0 000 5 2.5 2.5 0 002.5-1.5"/></svg>,
+  zap:     (c,s=18)=><svg width={s} height={s} viewBox="0 0 24 24" fill={c} stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+  sparkle: (c,s=16)=><svg width={s} height={s} viewBox="0 0 24 24" fill={c} stroke="none"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z"/></svg>,
 };
 
-// ── ANIMATED XP BAR ──────────────────────────────────────────────────────────
-function XPBar({ pct, color, animated }) {
+// ── ANIMATED XP BAR ───────────────────────────────────────────────────────────
+function XPBar({ pct, color, accent }) {
   const [w, setW] = useState(0);
-  useEffect(() => { const t = setTimeout(()=>setW(pct), 300); return ()=>clearTimeout(t); }, [pct]);
-  const barColor = pct > 75 ? "#f59e0b" : pct > 50 ? "#6366f1" : "#6366f1";
+  useEffect(()=>{ const t = setTimeout(()=>setW(pct),400); return ()=>clearTimeout(t); }, [pct]);
+  const barColor = pct>75 ? (accent||"#f59e0b") : color;
   return (
-    <div style={{height:10, background:"#ffffff22", borderRadius:5, overflow:"hidden", position:"relative"}}>
-      <div style={{width:`${w}%`, height:"100%", background:`linear-gradient(90deg,${color},${barColor})`, borderRadius:5, transition:"width 0.8s cubic-bezier(.4,0,.2,1)", boxShadow:w>80?`0 0 10px ${barColor}`:undefined}}/>
+    <div style={{height:8,background:"rgba(0,0,0,0.1)",borderRadius:50,overflow:"hidden",position:"relative"}}>
+      <div style={{width:`${w}%`,height:"100%",background:`linear-gradient(90deg,${color},${barColor})`,borderRadius:50,transition:"width 1s cubic-bezier(.4,0,.2,1)",boxShadow:w>0?`0 0 12px ${barColor}66`:undefined}}/>
     </div>
   );
 }
@@ -120,31 +148,44 @@ function XPBar({ pct, color, animated }) {
 // ── MINI CHART ────────────────────────────────────────────────────────────────
 function WeekChart({ data, color }) {
   const max = Math.max(...data);
+  const days = ["أح","إث","ث","أر","خ","ج","س"];
   return (
-    <div style={{display:"flex", alignItems:"flex-end", gap:6, height:60}}>
-      {["أح","إث","ث","أر","خ","ج","س"].map((d,i)=>(
-        <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
-          <div style={{width:"100%", height:50, display:"flex", alignItems:"flex-end"}}>
-            <div style={{width:"100%", height:`${(data[i]/max)*100}%`, background:i===6?color:color+"66", borderRadius:"4px 4px 0 0", transition:"height 0.8s ease", minHeight:4}}/>
+    <div style={{display:"flex",alignItems:"flex-end",gap:8,height:64,padding:"0 4px"}}>
+      {days.map((d,i)=>(
+        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <div style={{width:"100%",height:50,display:"flex",alignItems:"flex-end"}}>
+            <div style={{width:"100%",height:`${(data[i]/max)*100}%`,background:i===6?`linear-gradient(180deg,${color},${color}88)`:`${color}44`,borderRadius:"4px 4px 0 0",transition:"height 1s ease",minHeight:4,boxShadow:i===6?`0 0 10px ${color}66`:undefined}}/>
           </div>
-          <span style={{fontSize:9, color:"#888"}}>{d}</span>
+          <span style={{fontSize:9,opacity:0.5}}>{d}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// ── MAIN COMPONENT ────────────────────────────────────────────────────────────
+// ── GLASS CARD ────────────────────────────────────────────────────────────────
+function GCard({ children, style={}, t, onClick }) {
+  return (
+    <div onClick={onClick} style={{background:t.card,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",border:`1px solid ${t.border}`,borderRadius:20,padding:"16px",boxShadow:`0 8px 32px rgba(0,0,0,0.12),inset 0 1px 0 rgba(255,255,255,0.15)`,transition:"transform 0.2s,box-shadow 0.2s",...style}}>
+      {children}
+    </div>
+  );
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 function Ailo() {
-  const [theme, setTheme] = useState("blue");
-  const [darkMode, setDarkMode] = useState(true);
+  const [theme, setTheme] = useState("platinum");
+  const [darkMode, setDarkMode] = useState(false);
   const [tab, setTab] = useState("home");
   const [screen, setScreen] = useState("home");
   const [callType, setCallType] = useState("video");
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
-  const [profile, setProfile] = useState({ avatar:"🦊", name:"فادي", status:"🔥 في حالة تعلم!", lang:"Arabic", bio:"أتعلم الإنجليزية" });
+  const [profile, setProfile] = useState({
+    avatar:"https://api.dicebear.com/7.x/lorelei/svg?seed=Aisha&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf",
+    name:"فادي", status:"🔥 في حالة تعلم!", lang:"Arabic", bio:"أتعلم الإنجليزية"
+  });
   const [totalXp, setTotalXp] = useState(3950);
   const [coins, setCoins] = useState(240);
   const [streak, setStreak] = useState(7);
@@ -162,13 +203,13 @@ function Ailo() {
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [frontCam, setFrontCam] = useState(true);
-  const [botMessages, setBotMessages] = useState([{ id:1, from:"bot", text:"مرحباً! أنا مساعدك للغات 🤖 كيف يمكنني مساعدتك اليوم؟", time:"10:00" }]);
+  const [botMessages, setBotMessages] = useState([{ id:1, from:"bot", text:"مرحباً! أنا مساعدك للغات ✨ كيف يمكنني مساعدتك اليوم؟", time:"10:00" }]);
   const [botInput, setBotInput] = useState("");
   const [historyData] = useState([
-    { id:1, partner:"Alex 🐬", lang:"English", duration:"12 min", date:"Mar 10", type:"video", xpGained:45 },
-    { id:2, partner:"Maria 🌸", lang:"Spanish", duration:"8 min",  date:"Mar 9",  type:"voice", xpGained:30 },
-    { id:3, partner:"Jin 🐯",   lang:"Japanese",duration:"25 min", date:"Mar 8",  type:"video", xpGained:80 },
-    { id:4, partner:"Sara 🦋",  lang:"French",  duration:"5 min",  date:"Mar 7",  type:"text",  xpGained:20 },
+    { id:1, partner:"Alex 🐬",  lang:"English",  duration:"12 min", date:"Mar 10", type:"video", xpGained:45 },
+    { id:2, partner:"Maria 🌸", lang:"Spanish",  duration:"8 min",  date:"Mar 9",  type:"voice", xpGained:30 },
+    { id:3, partner:"Jin 🐯",   lang:"Japanese", duration:"25 min", date:"Mar 8",  type:"video", xpGained:80 },
+    { id:4, partner:"Sara 🦋",  lang:"French",   duration:"5 min",  date:"Mar 7",  type:"text",  xpGained:20 },
   ]);
   const [srsIdx, setSrsIdx] = useState(0);
   const [srsScore, setSrsScore] = useState(0);
@@ -182,8 +223,7 @@ function Ailo() {
   const [speechResult, setSpeechResult] = useState("");
   const [avatarTab, setAvatarTab] = useState("female");
   const [emailInput, setEmailInput] = useState("");
-  const [customPhotoUrl, setCustomPhotoUrl] = useState("");
-  const [photoMode, setPhotoMode] = useState("avatar"); // avatar | email | url
+  const [photoMode, setPhotoMode] = useState("avatar");
   const [xpPopup, setXpPopup] = useState(null);
   const [notifMuted, setNotifMuted] = useState([]);
   const [blockedUsers, setBlockedUsers] = useState([]);
@@ -192,329 +232,370 @@ function Ailo() {
   const [challengeActive, setChallengeActive] = useState(false);
   const [challengeTime, setChallengeTime] = useState(60);
   const [challengeScore, setChallengeScore] = useState({ me:0, opp:0 });
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(()=>{ setTimeout(()=>setMounted(true),100); }, []);
 
   const msgEnd = useRef(null);
   const botEnd = useRef(null);
   const t = THEMES[theme];
-  const bg = darkMode?t.bg:"#f0f4ff";
-  const cardBg = darkMode?t.card:"#ffffff";
-  const borderCol = darkMode?t.border:"#e0e4ff";
-  const textCol = darkMode?t.text:"#1a1a2e";
-  const inp = { background:darkMode?"#ffffff18":"#f0f4ff", border:`1px solid ${borderCol}`, borderRadius:50, padding:"12px 18px", color:textCol, fontSize:15, outline:"none", width:"100%" };
+  const isDark = t.dark !== false;
+  const textCol = t.text;
+
+  const inp = {
+    background: isDark?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
+    border:`1px solid ${t.border}`,
+    borderRadius:50, padding:"13px 20px",
+    color:textCol, fontSize:14, outline:"none", width:"100%",
+    fontFamily:"'Tajawal',system-ui,sans-serif",
+    backdropFilter:"blur(10px)",
+  };
 
   const lvl = getLevelInfo(totalXp);
 
-  const addXp = useCallback((amount, label) => {
+  const addXp = useCallback((amount, label)=>{
     setTotalXp(x=>x+amount);
-    setXpPopup({ amount, label });
-    setTimeout(()=>setXpPopup(null), 2000);
-  }, []);
+    setXpPopup({amount,label});
+    setTimeout(()=>setXpPopup(null),2200);
+  },[]);
 
-  // Timers
-  useEffect(() => {
-    if (screen !== "matching") return;
-    const i = setInterval(()=>setSearchTime(s=>s+1), 1000);
-    const m = setTimeout(()=>setMatched(true), 4000);
-    return ()=>{ clearInterval(i); clearTimeout(m); };
-  }, [screen]);
-
-  useEffect(() => {
-    if (screen !== "call") return;
-    const i = setInterval(()=>setCallTime(s=>s+1), 1000);
-    return ()=>clearInterval(i);
-  }, [screen]);
-
-  useEffect(()=>{ msgEnd.current?.scrollIntoView({behavior:"smooth"}); }, [messages]);
-  useEffect(()=>{ botEnd.current?.scrollIntoView({behavior:"smooth"}); }, [botMessages]);
-
-  // Init SRS card
   useEffect(()=>{
-    const card = SRS_CARDS[srsIdx];
-    if (card.type==="arrange") setArrangeWords([...card.words].sort(()=>Math.random()-0.5));
-    if (card.type==="match") setMatchPairs({});
-    setArrangeSelected([]);
-    setMatchSelected(null);
-    setSrsAnswer(null);
-  }, [srsIdx]);
+    if (screen!=="matching") return;
+    const i = setInterval(()=>setSearchTime(s=>s+1),1000);
+    const m = setTimeout(()=>setMatched(true),4000);
+    return ()=>{ clearInterval(i); clearTimeout(m); };
+  },[screen]);
+
+  useEffect(()=>{
+    if (screen!=="call") return;
+    const i = setInterval(()=>setCallTime(s=>s+1),1000);
+    return ()=>clearInterval(i);
+  },[screen]);
+
+  useEffect(()=>{ msgEnd.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+  useEffect(()=>{ botEnd.current?.scrollIntoView({behavior:"smooth"}); },[botMessages]);
+
+  useEffect(()=>{
+    const c = SRS_CARDS[srsIdx];
+    if (c.type==="arrange") setArrangeWords([...c.words].sort(()=>Math.random()-0.5));
+    if (c.type==="match") setMatchPairs({});
+    setArrangeSelected([]); setMatchSelected(null); setSrsAnswer(null);
+  },[srsIdx]);
+
+  useEffect(()=>{
+    if (!challengeActive) return;
+    const i = setInterval(()=>{
+      setChallengeTime(t=>{ if(t<=1){ setChallengeActive(false); clearInterval(i); return 0; } return t-1; });
+      if (Math.random()>0.6) setChallengeScore(s=>({...s,opp:s.opp+1}));
+    },1000);
+    return ()=>clearInterval(i);
+  },[challengeActive]);
 
   const fmt = s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   const now = ()=>new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"});
   const startSearch = (type)=>{ setCallType(type); setScreen("matching"); setSearchTime(0); setMatched(false); setCallTime(0); };
   const acceptMatch = ()=>{ addXp(10,"مطابقة"); setScreen(callType==="text"?"chat":"call"); };
 
-  const sendMsg = () => {
+  const sendMsg = ()=>{
     if (!chatInput.trim()) return;
-    const newMsg = { id:Date.now(), from:"me", text:chatInput, time:now(), status:"sent" };
-    setMessages(p=>[...p, newMsg]);
-    setChatInput("");
-    addXp(5, "رسالة");
-    setIsTyping(true);
-    setTimeout(()=>{
-      setMessages(p=>p.map(m=>m.id===newMsg.id?{...m,status:"delivered"}:m));
-    }, 800);
+    const nm = {id:Date.now(),from:"me",text:chatInput,time:now(),status:"sent"};
+    setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة"); setIsTyping(true);
+    setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),800);
     const replies=["That's interesting! Tell me more 😊","Wow really? In English we say...","Great! Can you repeat that? 🎯","Perfect! You're improving! ⭐"];
     setTimeout(()=>{
       setIsTyping(false);
-      setMessages(p=>[...p.map(m=>m.id===newMsg.id?{...m,status:"read"}:m), { id:Date.now()+1, from:"partner", text:replies[Math.floor(Math.random()*replies.length)], time:now(), status:"read" }]);
-    }, 2000);
+      setMessages(p=>[...p.map(m=>m.id===nm.id?{...m,status:"read"}:m),{id:Date.now()+1,from:"partner",text:replies[Math.floor(Math.random()*replies.length)],time:now(),status:"read"}]);
+    },2000);
   };
 
-  const sendBot = () => {
+  const sendBot = ()=>{
     if (!botInput.trim()) return;
-    setBotMessages(p=>[...p, { id:Date.now(), from:"me", text:botInput, time:now() }]);
+    setBotMessages(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);
     setBotInput("");
-    setTimeout(()=>setBotMessages(p=>[...p, { id:Date.now()+1, from:"bot", text:BOT_REPLIES[Math.floor(Math.random()*BOT_REPLIES.length)], time:now() }]), 1000);
+    setTimeout(()=>setBotMessages(p=>[...p,{id:Date.now()+1,from:"bot",text:BOT_REPLIES[Math.floor(Math.random()*BOT_REPLIES.length)],time:now()}]),1000);
   };
 
-  const answerSrs = (idx) => {
-    const card = SRS_CARDS[srsIdx];
-    const correct = idx===card.answer;
+  const answerSrs = (idx)=>{
+    const c = SRS_CARDS[srsIdx]; const ok = idx===c.answer;
     setSrsAnswer(idx);
-    if (correct) { setSrsScore(s=>s+1); setSrsStreak(s=>s+1); addXp(15,"إجابة صحيحة"); }
-    else setSrsStreak(0);
-    setTimeout(()=>{ setSrsIdx(i=>(i+1)%SRS_CARDS.length); }, 1200);
+    if(ok){setSrsScore(s=>s+1);setSrsStreak(s=>s+1);addXp(15,"إجابة صحيحة");}else setSrsStreak(0);
+    setTimeout(()=>setSrsIdx(i=>(i+1)%SRS_CARDS.length),1200);
   };
 
-  const submitArrange = () => {
-    const card = SRS_CARDS[srsIdx];
-    const userAns = arrangeSelected.join(" ");
-    const correct = userAns === card.answer;
-    setSrsAnswer(correct ? card.answer : "wrong");
-    if (correct) { setSrsScore(s=>s+1); addXp(20,"ترتيب صحيح"); }
-    setTimeout(()=>setSrsIdx(i=>(i+1)%SRS_CARDS.length), 1200);
+  const submitArrange = ()=>{
+    const c = SRS_CARDS[srsIdx]; const ok = arrangeSelected.join(" ")===c.answer;
+    setSrsAnswer(ok?c.answer:"wrong");
+    if(ok){setSrsScore(s=>s+1);addXp(20,"ترتيب صحيح");}
+    setTimeout(()=>setSrsIdx(i=>(i+1)%SRS_CARDS.length),1200);
   };
 
-  const handleMatch = (word, arabic) => {
-    if (!matchSelected) { setMatchSelected(word); return; }
-    const newPairs = {...matchPairs, [matchSelected]: arabic };
-    setMatchPairs(newPairs);
-    setMatchSelected(null);
-    if (Object.keys(newPairs).length === 4) { addXp(25,"مطابقة مكتملة"); setTimeout(()=>setSrsIdx(i=>(i+1)%SRS_CARDS.length), 1000); }
+  const handleMatch = (word,arabic)=>{
+    if(!matchSelected){setMatchSelected(word);return;}
+    const np={...matchPairs,[matchSelected]:arabic};
+    setMatchPairs(np); setMatchSelected(null);
+    if(Object.keys(np).length===4){addXp(25,"مطابقة مكتملة");setTimeout(()=>setSrsIdx(i=>(i+1)%SRS_CARDS.length),1000);}
   };
 
-  const startSpeech = () => {
-    setSpeechActive(true);
-    setSpeechResult("");
-    setTimeout(()=>{ setSpeechActive(false); setSpeechResult("جيد جداً! نطقك واضح ✅"); addXp(20,"تمرين صوتي"); }, 2500);
+  const startSpeech = ()=>{
+    setSpeechActive(true); setSpeechResult("");
+    setTimeout(()=>{setSpeechActive(false);setSpeechResult("جيد جداً! نطقك واضح ✅");addXp(20,"تمرين صوتي");},2500);
   };
 
-  // CHALLENGE
-  useEffect(()=>{
-    if (!challengeActive) return;
-    const i = setInterval(()=>{
-      setChallengeTime(t=>{ if (t<=1){ setChallengeActive(false); clearInterval(i); return 0; } return t-1; });
-      if (Math.random()>0.6) setChallengeScore(s=>({...s, opp:s.opp+1}));
-    }, 1000);
-    return ()=>clearInterval(i);
-  }, [challengeActive]);
+  // ── STYLE HELPERS ──────────────────────────────────────────────────────────
+  const glassCard = (extra={}) => ({
+    background:t.card,
+    backdropFilter:"blur(20px)",
+    WebkitBackdropFilter:"blur(20px)",
+    border:`1px solid ${t.border}`,
+    borderRadius:20,
+    padding:"16px",
+    boxShadow:`0 8px 32px rgba(0,0,0,0.1),inset 0 1px 0 rgba(255,255,255,${isDark?0.08:0.6})`,
+    ...extra
+  });
 
-  // ── CARD STYLE ──────────────────────────────────────────────────────────────
-  const card = { background:cardBg, border:`1px solid ${borderCol}`, borderRadius:20, padding:"18px" };
-  const btnS = (bg2,col="#fff")=>({ background:bg2,color:col,border:"none",borderRadius:50,padding:"12px 24px",fontWeight:700,cursor:"pointer",fontSize:14 });
-  const tag = (c)=>({ background:c+"22",color:c,border:`1px solid ${c}44`,borderRadius:50,padding:"3px 10px",fontSize:11,fontWeight:700,display:"inline-block" });
-  const tierColors = { gold:"#f59e0b", silver:"#94a3b8", bronze:"#cd7f32" };
+  const btnPrimary = (extra={}) => ({
+    background:`linear-gradient(135deg,${t.primary},${t.secondary})`,
+    color:"white", border:"none", borderRadius:50,
+    padding:"13px 28px", fontWeight:700, cursor:"pointer",
+    fontSize:14, fontFamily:"'Tajawal',system-ui",
+    boxShadow:`0 4px 20px ${t.glow}`,
+    transition:"all 0.2s", ...extra
+  });
+
+  const tag = (c,extra={}) => ({
+    background:`${c}22`, color:c,
+    border:`1px solid ${c}44`,
+    borderRadius:50, padding:"3px 12px",
+    fontSize:11, fontWeight:700, display:"inline-block", ...extra
+  });
+
+  const tierC = { gold:"#f59e0b", silver:"#94a3b8", bronze:"#cd7f32" };
 
   const TABS = [
-    {id:"home",    label:"الرئيسية", icon:Ic.home},
-    {id:"bot",     label:"المساعد",  icon:Ic.chat},
-    {id:"history", label:"السجل",    icon:Ic.clock},
-    {id:"exercises",label:"تدريبات", icon:Ic.star},
-    {id:"leaderboard",label:"الصدارة",icon:Ic.trophy},
+    {id:"home",       label:"الرئيسية",  icon:Ic.home},
+    {id:"bot",        label:"المساعد",   icon:Ic.chat},
+    {id:"history",    label:"السجل",     icon:Ic.clock},
+    {id:"exercises",  label:"تدريبات",   icon:Ic.star},
+    {id:"leaderboard",label:"الصدارة",   icon:Ic.trophy},
   ];
 
-  // ── MATCHING ────────────────────────────────────────────────────────────────
+  const AvatarDisplay = ({src,size=42,border=true})=>(
+    <div style={{width:size,height:size,borderRadius:size/2,overflow:"hidden",flexShrink:0,border:border?`2px solid ${t.primary}`:undefined,background:t.card,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:border?`0 0 0 3px ${t.glow}`:undefined}}>
+      {src?.startsWith("http")
+        ? <img src={src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="avatar"/>
+        : <span style={{fontSize:size*0.55,lineHeight:1}}>{src}</span>
+      }
+    </div>
+  );
+
+  // ── MATCHING ───────────────────────────────────────────────────────────────
   if (screen==="matching") return (
-    <div style={{background:bg,minHeight:"100vh",color:textCol,fontFamily:"system-ui,sans-serif",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:30}}>
+    <div style={{background:t.bg,minHeight:"100vh",color:textCol,fontFamily:"'Tajawal',system-ui",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24,padding:32,position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 50%,${t.glow} 0%,transparent 70%)`,pointerEvents:"none"}}/>
       {!matched ? (
         <>
-          <div style={{fontSize:80,animation:"spin 3s linear infinite"}}>🔍</div>
-          <div style={{fontSize:22,fontWeight:800,color:t.primary}}>جاري البحث...</div>
-          <div style={{color:t.muted,fontSize:15}}>وقت البحث: {fmt(searchTime)}</div>
-          <div style={{...card,textAlign:"center",width:"100%"}}>
-            <div style={{color:t.muted,fontSize:13,marginBottom:8}}>نبحث عن شريك يتحدث اللغة التي تريد تعلمها</div>
-            <div style={{display:"flex",justifyContent:"center",gap:8,marginTop:8}}>
+          <div style={{fontSize:72,animation:"spin 4s linear infinite",filter:`drop-shadow(0 0 20px ${t.primary})`}}>🔍</div>
+          <div style={{fontWeight:800,fontSize:26,background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>جاري البحث...</div>
+          <div style={{...glassCard({width:"100%",textAlign:"center"})}}>
+            <div style={{color:t.muted,fontSize:13,marginBottom:12}}>نبحث عن شريك لغوي مثالي</div>
+            <div style={{fontWeight:700,fontSize:20,color:t.primary}}>{fmt(searchTime)}</div>
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginTop:12}}>
               {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:t.primary,animation:`pulse ${0.6+i*0.2}s ease-in-out infinite alternate`}}/>)}
             </div>
           </div>
-          <button style={btnS("#ef4444")} onClick={()=>setScreen("home")}>إلغاء</button>
+          <button style={btnPrimary({background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={()=>setScreen("home")}>إلغاء</button>
         </>
       ) : (
         <>
-          <div style={{fontSize:80}}>🎉</div>
-          <div style={{fontSize:22,fontWeight:800,color:t.primary}}>تم العثور على شريك!</div>
-          <div style={{...card,textAlign:"center",width:"100%"}}>
-            <div style={{fontSize:56,marginBottom:8}}>{partner.avatar}</div>
+          <div style={{fontSize:72,animation:"bounce 0.5s ease"}}>🎉</div>
+          <div style={{fontWeight:800,fontSize:26,background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>تم العثور على شريك!</div>
+          <div style={{...glassCard({width:"100%",textAlign:"center"})}}>
+            <div style={{fontSize:60,marginBottom:8}}>{partner.avatar}</div>
             <div style={{fontWeight:800,fontSize:20}}>{partner.name}</div>
-            <div style={{color:t.muted,fontSize:13}}>🌍 {partner.country}</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginTop:8}}>
-              {Ic.shield("#22c55e")}<span style={{fontSize:12,color:"#22c55e"}}>محادثة مشفرة</span>
+            <div style={{color:t.muted,fontSize:12,marginTop:4}}>🌍 {partner.country}</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginTop:10,background:`${t.primary}11`,borderRadius:50,padding:"6px 14px",width:"fit-content",margin:"10px auto 0"}}>
+              {Ic.shield("#22c55e")}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>محادثة مشفرة</span>
             </div>
           </div>
           <div style={{display:"flex",gap:12,width:"100%"}}>
-            <button style={{...btnS("#ef4444"),flex:1}} onClick={()=>setScreen("home")}>رفض ✕</button>
-            <button style={{...btnS(t.primary),flex:1}} onClick={acceptMatch}>قبول ✓</button>
+            <button style={btnPrimary({flex:1,background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={()=>setScreen("home")}>رفض ✕</button>
+            <button style={btnPrimary({flex:1})} onClick={acceptMatch}>قبول ✓</button>
           </div>
         </>
       )}
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{to{transform:scale(1.5);opacity:.3}}`}</style>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes pulse{to{transform:scale(1.6);opacity:.2}}
+        @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+        @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+        @keyframes slideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes dot0{0%,100%{transform:translateY(0)}33%{transform:translateY(-5px)}}
+        @keyframes dot1{0%,100%{transform:translateY(0)}33%{transform:translateY(-5px)}}
+        @keyframes dot2{0%,100%{transform:translateY(0)}33%{transform:translateY(-5px)}}
+      `}</style>
     </div>
   );
 
-  // ── CALL SCREEN ─────────────────────────────────────────────────────────────
+  // ── CALL ───────────────────────────────────────────────────────────────────
   if (screen==="call") return (
-    <div style={{background:"#080810",minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"system-ui,sans-serif"}}>
-      <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          {Ic.shield("#22c55e",14)}<span style={{fontSize:11,color:"#22c55e"}}>مشفر</span>
+    <div style={{background:isDark?"#060612":t.bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${t.primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
+      <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px"}}>
+          {Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span>
         </div>
-        <div style={{color:t.primary,fontWeight:700,fontSize:18}}>{fmt(callTime)}</div>
+        <div style={{color:t.primary,fontWeight:800,fontSize:18,letterSpacing:2}}>{fmt(callTime)}</div>
       </div>
-      <div style={{flex:1,position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}}>
-        {callType==="video" && <div style={{position:"absolute",inset:0,background:"linear-gradient(135deg,#1a1a3a,#0a0a1a)",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:120,opacity:0.2}}>{partner.avatar}</div></div>}
-        <div style={{textAlign:"center",zIndex:1}}>
-          <div style={{fontSize:80}}>{partner.avatar}</div>
-          <div style={{fontSize:22,fontWeight:800,color:"white",marginTop:8}}>{partner.name}</div>
-          <div style={{color:"#aaa",fontSize:13}}>{callType==="video"?"مكالمة فيديو":"مكالمة صوتية"}</div>
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:1}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:90,marginBottom:12,filter:`drop-shadow(0 0 30px ${t.primary}44)`}}>{partner.avatar}</div>
+          <div style={{fontSize:24,fontWeight:800,color:isDark?"white":textCol}}>{partner.name}</div>
+          <div style={{color:t.muted,fontSize:13,marginTop:4}}>{callType==="video"?"مكالمة فيديو":"مكالمة صوتية"}</div>
         </div>
-        {callType==="video" && (
-          <div style={{position:"absolute",bottom:16,left:16,width:90,height:120,background:"#1a1a2e",borderRadius:12,border:`2px solid ${t.primary}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,overflow:"hidden"}}>
-            {frontCam ? profile.avatar : "🔄"}
-          </div>
-        )}
       </div>
-      <div style={{padding:"20px",display:"flex",justifyContent:"center",gap:16,background:"#00000060",paddingBottom:40}}>
+      {callType==="video" && (
+        <div style={{position:"absolute",bottom:120,left:20,width:90,height:120,borderRadius:16,border:`2px solid ${t.primary}`,overflow:"hidden",boxShadow:`0 0 20px ${t.glow}`,zIndex:2}}>
+          <AvatarDisplay src={profile.avatar} size={90} border={false}/>
+        </div>
+      )}
+      <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:20,background:`linear-gradient(0deg,${isDark?"rgba(0,0,0,0.8)":"rgba(255,255,255,0.8)"} 0%,transparent 100%)`,backdropFilter:"blur(10px)",zIndex:1}}>
         {[
-          {icon:micOn?Ic.mic("white",24):Ic.micOff("white",24), label:micOn?"صوت":"كتم", action:()=>setMicOn(m=>!m), bg:micOn?"#ffffff22":"#ef4444"},
-          {icon:Ic.phone("white",24), label:"إنهاء", action:()=>{setScreen("home");addXp(30,"مكالمة");}, bg:"#ef4444", size:68},
+          {icon:micOn?Ic.mic(isDark?"white":t.primary,22):Ic.micOff("white",22), label:micOn?"صوت":"كتم", action:()=>setMicOn(m=>!m), active:micOn},
+          {icon:Ic.phoneOff("white",26), label:"إنهاء", action:()=>{setScreen("home");addXp(30,"مكالمة");}, end:true},
           ...(callType==="video"?[
-            {icon:camOn?Ic.cam("white",24):<span style={{color:"white",fontSize:18}}>📵</span>, label:camOn?"كاميرا":"إيقاف", action:()=>setCamOn(c=>!c), bg:camOn?"#ffffff22":"#ef4444"},
-            {icon:Ic.flip("white",20), label:"تبديل", action:()=>setFrontCam(f=>!f), bg:"#ffffff22"},
+            {icon:camOn?Ic.video(isDark?"white":t.primary,22):Ic.videoOff("white",22), label:camOn?"كاميرا":"إيقاف", action:()=>setCamOn(c=>!c), active:camOn},
+            {icon:Ic.flip(isDark?"white":t.primary,18), label:"تبديل", action:()=>setFrontCam(f=>!f), active:true},
           ]:[]),
         ].map((b,i)=>(
           <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-            <button onClick={b.action} style={{width:b.size||56,height:b.size||56,borderRadius:b.size?b.size/2:28,background:b.bg,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <button onClick={b.action} style={{width:b.end?64:54,height:b.end?64:54,borderRadius:b.end?32:27,background:b.end?"linear-gradient(135deg,#ef4444,#dc2626)":b.active?`${t.primary}33`:"rgba(239,68,68,0.8)",border:b.end?"none":`1px solid ${b.active?t.primary:t.border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:b.end?`0 4px 20px rgba(239,68,68,0.5)`:b.active?`0 0 15px ${t.glow}`:undefined,transition:"all 0.2s"}}>
               {b.icon}
             </button>
-            <span style={{color:"#aaa",fontSize:10}}>{b.label}</span>
+            <span style={{color:t.muted,fontSize:10,fontWeight:500}}>{b.label}</span>
           </div>
         ))}
       </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{to{transform:scale(1.6);opacity:.2}} @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}} @keyframes dot0{0%,100%{transform:translateY(0)}33%{transform:translateY(-5px)}} @keyframes dot1{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}} @keyframes dot2{0%,100%{transform:translateY(0)}66%{transform:translateY(-5px)}} @keyframes slideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}`}</style>
     </div>
   );
 
-  // ── CHAT SCREEN ─────────────────────────────────────────────────────────────
+  // ── CHAT ───────────────────────────────────────────────────────────────────
   if (screen==="chat") return (
-    <div style={{background:bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"system-ui,sans-serif",color:textCol}}>
-      <div style={{background:cardBg,borderBottom:`1px solid ${borderCol}`,display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}}>
-        <button onClick={()=>setScreen("home")} style={{background:"none",border:"none",cursor:"pointer",display:"flex",padding:4}}>{Ic.back(t.muted)}</button>
-        <div style={{fontSize:32}}>{partner.avatar}</div>
+    <div style={{background:t.bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",color:textCol}}>
+      <div style={{background:t.card,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",borderBottom:`1px solid ${t.border}`,display:"flex",alignItems:"center",gap:10,padding:"12px 16px",boxShadow:`0 4px 20px rgba(0,0,0,0.08)`}}>
+        <button onClick={()=>setScreen("home")} style={{background:"none",border:"none",cursor:"pointer",display:"flex",padding:6,borderRadius:10,transition:"background 0.2s"}}>{Ic.back(t.muted)}</button>
+        <AvatarDisplay src={partner.avatar} size={38}/>
         <div style={{flex:1}}>
-          <div style={{fontWeight:700,fontSize:15}}>{partner.name}</div>
+          <div style={{fontWeight:700,fontSize:15,letterSpacing:0.3}}>{partner.name}</div>
           <div style={{fontSize:11,color:isTyping?"#22c55e":t.muted,display:"flex",alignItems:"center",gap:4}}>
-            {isTyping ? <>
-              <span>يكتب الآن</span>
-              <span style={{animation:"typing 1s infinite"}}>...</span>
-            </> : <>
-              <div style={{width:6,height:6,borderRadius:3,background:"#22c55e"}}/><span>متصل</span>
-            </>}
+            {isTyping ? <><span>يكتب الآن</span><span style={{letterSpacing:1}}>...</span></>
+              : <><div style={{width:6,height:6,borderRadius:3,background:"#22c55e"}}/><span>متصل</span></>}
           </div>
         </div>
-        <button onClick={()=>setShowBlockReport(true)} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>{Ic.flag(t.muted,18)}</button>
-        <button onClick={()=>{setCallType("video");setScreen("call");}} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>{Ic.cam(t.muted,20)}</button>
-        <button onClick={()=>{setCallType("voice");setScreen("call");}} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>{Ic.phone(t.muted,20)}</button>
+        <button onClick={()=>setShowBlockReport(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(t.muted)}</button>
+        <button onClick={()=>{setCallType("video");setScreen("call");}} style={{background:`${t.primary}22`,border:`1px solid ${t.border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.video(t.primary,18)}</button>
+        <button onClick={()=>{setCallType("voice");setScreen("call");}} style={{background:`${t.primary}22`,border:`1px solid ${t.border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.phone(t.primary,18)}</button>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
-        <div style={{textAlign:"center",padding:"6px 12px",background:t.primary+"22",borderRadius:50,fontSize:11,color:t.muted,alignSelf:"center",display:"flex",alignItems:"center",gap:6}}>
-          {Ic.shield("#22c55e",12)}<span>المحادثة مشفرة من طرف إلى طرف</span>
+      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{textAlign:"center",alignSelf:"center",background:`${t.primary}18`,border:`1px solid ${t.border}`,borderRadius:50,padding:"5px 14px",display:"flex",alignItems:"center",gap:6,fontSize:11,color:t.muted}}>
+          {Ic.shield("#22c55e",11)}<span>محادثة مشفرة من طرف إلى طرف</span>
         </div>
-        {messages.map(m=>(
-          <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
-            <div style={{background:m.from==="me"?t.primary:cardBg,color:m.from==="me"?"#fff":textCol,padding:"10px 14px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.5}}>
+        {messages.map((m,i)=>(
+          <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%",animation:`slideIn 0.3s ease ${i*0.05}s both`}}>
+            <div style={{background:m.from==="me"?`linear-gradient(135deg,${t.primary},${t.secondary})`:t.card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":textCol,padding:"11px 16px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,boxShadow:m.from==="me"?`0 4px 15px ${t.glow}`:`0 2px 10px rgba(0,0,0,0.08)`}}>
               {m.text}
             </div>
-            <div style={{fontSize:10,color:t.muted,marginTop:2,textAlign:m.from==="me"?"right":"left",display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start",alignItems:"center",gap:4}}>
+            <div style={{fontSize:10,color:t.muted,marginTop:3,textAlign:m.from==="me"?"right":"left",display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start",alignItems:"center",gap:4}}>
               {m.time}
-              {m.from==="me" && <span>{m.status==="read"?Ic.dblchk("#22c55e",13):m.status==="delivered"?Ic.dblchk(t.muted,13):Ic.check2(t.muted,12)}</span>}
+              {m.from==="me" && (m.status==="read"?Ic.checks("#22c55e",13):m.status==="delivered"?Ic.checks(t.muted,13):Ic.check2(t.muted,12))}
             </div>
           </div>
         ))}
         {isTyping && (
-          <div style={{alignSelf:"flex-start",background:cardBg,padding:"12px 16px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:4}}>
-            {[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:3,background:t.muted,animation:`typing${i} 1s infinite ${i*0.2}s`}}/>)}
+          <div style={{alignSelf:"flex-start",background:t.card,backdropFilter:"blur(10px)",padding:"12px 18px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${t.border}`}}>
+            {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:t.primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
           </div>
         )}
         <div ref={msgEnd}/>
       </div>
-      <div style={{padding:"10px 12px",background:cardBg,borderTop:`1px solid ${borderCol}`}}>
+      <div style={{padding:"10px 14px",background:t.card,backdropFilter:"blur(20px)",borderTop:`1px solid ${t.border}`}}>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <button style={{background:"none",border:"none",cursor:"pointer",display:"flex",padding:6}}>{Ic.attach(t.muted)}</button>
-          <button style={{background:"none",border:"none",cursor:"pointer",display:"flex",padding:6}}>{Ic.img(t.muted)}</button>
-          <button style={{background:"none",border:"none",cursor:"pointer",padding:6,fontSize:18}}>🎤</button>
-          <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="اكتب رسالة..." style={{...inp,flex:1,padding:"10px 14px"}}/>
-          <button onClick={sendMsg} style={{width:40,height:40,borderRadius:20,background:t.primary,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <button style={{background:"none",border:"none",cursor:"pointer",padding:6,display:"flex",opacity:0.6}}>{Ic.attach(t.muted)}</button>
+          <button style={{background:"none",border:"none",cursor:"pointer",padding:6,display:"flex",opacity:0.6}}>{Ic.image(t.muted)}</button>
+          <button style={{background:"none",border:"none",cursor:"pointer",padding:6,opacity:0.6,fontSize:18}}>🎤</button>
+          <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="اكتب رسالة..." style={{...inp,flex:1,padding:"10px 16px",borderRadius:50}}/>
+          <button onClick={sendMsg} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${t.primary},${t.secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 15px ${t.glow}`}}>
             {Ic.send("white")}
           </button>
         </div>
       </div>
       {showBlockReport && (
-        <div style={{position:"fixed",inset:0,background:"#00000088",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBlockReport(false)}>
-          <div style={{...card,width:"100%",borderRadius:"20px 20px 0 0",padding:24}} onClick={e=>e.stopPropagation()}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBlockReport(false)}>
+          <div style={{...glassCard({width:"100%",borderRadius:"22px 22px 0 0",padding:24}),marginBottom:0}} onClick={e=>e.stopPropagation()}>
             <div style={{fontWeight:800,fontSize:16,marginBottom:16}}>إجراءات الخصوصية</div>
-            <button onClick={()=>{setBlockedUsers(b=>[...b,partner.name]);setShowBlockReport(false);setScreen("home");}} style={{width:"100%",background:"#ef444422",border:"1px solid #ef4444",borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:10,color:"#ef4444",fontWeight:700}}>
-              {Ic.block("#ef4444")}<span>حظر {partner.name}</span>
-            </button>
-            <button onClick={()=>setShowBlockReport(false)} style={{width:"100%",background:"#f59e0b22",border:"1px solid #f59e0b",borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",color:"#f59e0b",fontWeight:700}}>
-              {Ic.flag("#f59e0b")}<span>إبلاغ عن سلوك مسيء</span>
-            </button>
+            {[
+              {icon:Ic.block("#ef4444"),label:`حظر ${partner.name}`,color:"#ef4444",action:()=>{setBlockedUsers(b=>[...b,partner.name]);setShowBlockReport(false);setScreen("home");}},
+              {icon:Ic.flag("#f59e0b"),label:"إبلاغ عن سلوك مسيء",color:"#f59e0b",action:()=>setShowBlockReport(false)},
+            ].map((b,i)=>(
+              <button key={i} onClick={b.action} style={{width:"100%",background:`${b.color}11`,border:`1px solid ${b.color}44`,borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",color:b.color,fontWeight:700,marginBottom:10,fontFamily:"'Tajawal',system-ui"}}>
+                {b.icon}<span>{b.label}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
-      <style>{`@keyframes typing0{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}} @keyframes typing1{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}} @keyframes typing2{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{to{transform:scale(1.6);opacity:.2}} @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}} @keyframes dot0{0%,100%{transform:translateY(0)}33%{transform:translateY(-5px)}} @keyframes dot1{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}} @keyframes dot2{0%,100%{transform:translateY(0)}66%{transform:translateY(-5px)}} @keyframes slideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}`}</style>
     </div>
   );
 
-  // ── MAIN APP ─────────────────────────────────────────────────────────────────
+  // ── MAIN APP ───────────────────────────────────────────────────────────────
   return (
-    <div style={{background:bg,minHeight:"100vh",color:textCol,fontFamily:"system-ui,sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:72}}>
+    <div style={{background:t.bg,minHeight:"100vh",color:textCol,fontFamily:"'Tajawal',system-ui",maxWidth:480,margin:"0 auto",paddingBottom:72,position:"relative",overflow:"hidden"}}>
+      <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet"/>
+
+      {/* Ambient glow */}
+      <div style={{position:"fixed",top:-100,right:-100,width:300,height:300,borderRadius:"50%",background:t.glow,filter:"blur(80px)",pointerEvents:"none",zIndex:0}}/>
+      <div style={{position:"fixed",bottom:-100,left:-100,width:300,height:300,borderRadius:"50%",background:`${t.accent}22`,filter:"blur(80px)",pointerEvents:"none",zIndex:0}}/>
 
       {/* XP POPUP */}
       {xpPopup && (
-        <div style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",background:t.primary,color:"white",padding:"8px 18px",borderRadius:50,fontWeight:700,fontSize:14,zIndex:300,animation:"fadeUp 0.5s ease",pointerEvents:"none"}}>
-          +{xpPopup.amount} XP · {xpPopup.label}
+        <div style={{position:"fixed",top:90,left:"50%",background:`linear-gradient(135deg,${t.primary},${t.secondary})`,color:"white",padding:"8px 20px",borderRadius:50,fontWeight:700,fontSize:13,zIndex:400,animation:"fadeUp 0.4s ease",pointerEvents:"none",boxShadow:`0 4px 20px ${t.glow}`,display:"flex",alignItems:"center",gap:6}}>
+          {Ic.zap("white",14)} +{xpPopup.amount} XP · {xpPopup.label}
         </div>
       )}
 
       {/* HEADER */}
-      <div style={{background:cardBg,borderBottom:`1px solid ${borderCol}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+      <div style={{background:t.card,backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderBottom:`1px solid ${t.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50,boxShadow:`0 4px 24px rgba(0,0,0,0.08)`}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
           <button onClick={()=>setShowProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}>
-            <div style={{width:38,height:38,borderRadius:19,overflow:"hidden",border:`2px solid ${t.primary}`,background:cardBg,display:"flex",alignItems:"center",justifyContent:"center"}}>
-              {profile.avatar?.startsWith("http")
-                ? <img src={profile.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="avatar"/>
-                : <span style={{fontSize:22}}>{profile.avatar}</span>
-              }
-            </div>
+            <AvatarDisplay src={profile.avatar} size={40}/>
           </button>
-          <div style={{fontWeight:900,fontSize:20,color:t.primary}}>🌍 Ailo</div>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontWeight:900,fontSize:22,background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:1}}>✦ Ailo</div>
+          </div>
           <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setShowNotifPanel(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",padding:4,position:"relative"}}>
-              {Ic.bell(t.muted)}
-              <div style={{position:"absolute",top:2,right:2,width:8,height:8,borderRadius:4,background:"#ef4444"}}/>
+            <button onClick={()=>setShowNotifPanel(p=>!p)} style={{background:`${t.primary}18`,border:`1px solid ${t.border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex",position:"relative"}}>
+              {Ic.bell(t.primary,17)}
+              <div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:3.5,background:"#ef4444",boxShadow:"0 0 6px #ef4444"}}/>
             </button>
-            <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>{Ic.cog(t.muted)}</button>
+            <button onClick={()=>setShowSettings(true)} style={{background:`${t.primary}18`,border:`1px solid ${t.border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>
+              {Ic.cog(t.primary,17)}
+            </button>
           </div>
         </div>
-        {/* XP BAR */}
+        {/* XP / Stats Row */}
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div style={{background:t.primary,color:"white",borderRadius:50,padding:"2px 8px",fontSize:11,fontWeight:700,flexShrink:0}}>Lv.{lvl.level}</div>
+          <div style={{background:`linear-gradient(135deg,${t.primary},${t.secondary})`,color:"white",borderRadius:50,padding:"2px 10px",fontSize:11,fontWeight:800,flexShrink:0,boxShadow:`0 2px 10px ${t.glow}`}}>
+            Lv.{lvl.level}
+          </div>
           <div style={{flex:1}}>
-            <XPBar pct={lvl.pct} color={t.primary}/>
+            <XPBar pct={lvl.pct} color={t.primary} accent={t.accent}/>
           </div>
           <span style={{fontSize:10,color:t.muted,flexShrink:0}}>{lvl.current}/{lvl.needed}</span>
-          <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-            {Ic.coin("#f59e0b")}<span style={{fontSize:12,fontWeight:700,color:"#f59e0b"}}>{coins}</span>
+          <div style={{display:"flex",alignItems:"center",gap:3,background:`rgba(245,158,11,0.15)`,borderRadius:50,padding:"3px 8px",flexShrink:0}}>
+            {Ic.coin("#f59e0b",13)}<span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>{coins}</span>
           </div>
-          <div style={{background:"#ef444422",color:"#ef4444",borderRadius:50,padding:"2px 8px",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+          <div style={{background:"rgba(239,68,68,0.15)",borderRadius:50,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#ef4444",display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
             🔥{streak}
           </div>
         </div>
@@ -522,21 +603,21 @@ function Ailo() {
 
       {/* NOTIF PANEL */}
       {showNotifPanel && (
-        <div style={{position:"fixed",top:0,inset:"0",background:"#00000088",zIndex:100}} onClick={()=>setShowNotifPanel(false)}>
-          <div style={{...card,margin:"70px 12px 0",padding:16}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontWeight:700,marginBottom:12}}>🔔 الإشعارات</div>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",backdropFilter:"blur(4px)",zIndex:100}} onClick={()=>setShowNotifPanel(false)}>
+          <div style={{...glassCard({margin:"70px 14px 0",padding:18}),borderRadius:20}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:800,marginBottom:14,fontSize:15}}>🔔 الإشعارات</div>
             {[
-              {icon:"💬",text:"Alex أرسل لك رسالة",time:"منذ 2 دقيقة",muted:false},
-              {icon:"🏆",text:"لقد وصلت للمرتبة الثالثة!",time:"منذ ساعة",muted:false},
-              {icon:"🎁",text:"مكافأة يومية جاهزة",time:"منذ 3 ساعات",muted:true},
+              {icon:"💬",text:"Alex أرسل لك رسالة",time:"منذ 2 دقيقة"},
+              {icon:"🏆",text:"وصلت للمرتبة الثالثة!",time:"منذ ساعة"},
+              {icon:"🎁",text:"مكافأة يومية جاهزة",time:"منذ 3 ساعات"},
             ].map((n,i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:i<2?`1px solid ${borderCol}`:"none",opacity:n.muted?0.5:1}}>
-                <span style={{fontSize:24}}>{n.icon}</span>
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:i<2?`1px solid ${t.border}`:"none"}}>
+                <span style={{fontSize:22}}>{n.icon}</span>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:13}}>{n.text}</div>
-                  <div style={{fontSize:11,color:t.muted}}>{n.time}</div>
+                  <div style={{fontSize:13,fontWeight:500}}>{n.text}</div>
+                  <div style={{fontSize:11,color:t.muted,marginTop:2}}>{n.time}</div>
                 </div>
-                <button onClick={()=>setNotifMuted(m=>[...m,i])} style={{background:"none",border:`1px solid ${borderCol}`,borderRadius:50,padding:"3px 8px",fontSize:10,cursor:"pointer",color:t.muted}}>
+                <button onClick={()=>setNotifMuted(m=>[...m,i])} style={{background:`${t.primary}18`,border:`1px solid ${t.border}`,borderRadius:50,padding:"3px 10px",fontSize:10,cursor:"pointer",color:t.primary,fontFamily:"'Tajawal',system-ui"}}>
                   {notifMuted.includes(i)?"صوت":"كتم"}
                 </button>
               </div>
@@ -545,97 +626,108 @@ function Ailo() {
         </div>
       )}
 
-      <div style={{padding:14}}>
+      {/* CONTENT */}
+      <div style={{padding:"14px",position:"relative",zIndex:1}}>
 
-        {/* ── HOME TAB ─────────────────────────────────────────── */}
-        {tab==="home" && <>
-          {/* Profile Card */}
-          <div style={{...card,marginBottom:14,background:`linear-gradient(135deg,${t.primary}33,${t.secondary}22)`}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <div style={{fontSize:44}}>{profile.avatar}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:800,fontSize:16}}>{profile.name}</div>
-                <div style={{color:t.muted,fontSize:12,marginTop:1}}>{profile.status}</div>
-                <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
-                  <div style={tag(t.primary)}>{profile.lang}</div>
-                  <div style={tag("#22c55e")}>🏆 {Math.floor(totalXp/100)} مستوى</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Daily Quests */}
-          <div style={{...card,marginBottom:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontWeight:700,fontSize:14}}>📋 المهام اليومية</div>
-              <div style={tag("#f59e0b")}>🎁 صندوق مكافآت</div>
-            </div>
-            {DAILY_QUESTS.map(q=>(
-              <div key={q.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                <span style={{fontSize:20}}>{q.icon}</span>
+        {/* ── HOME ──────────────────────────────────────────────── */}
+        {tab==="home" && (
+          <div style={{animation:"slideIn 0.4s ease"}}>
+            {/* Profile Hero */}
+            <div style={{...glassCard({marginBottom:14,padding:"20px",background:`linear-gradient(135deg,${t.primary}22,${t.accent}11)`})}}>
+              <div style={{display:"flex",alignItems:"center",gap:14}}>
+                <AvatarDisplay src={profile.avatar} size={58}/>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:13,color:q.done?"#22c55e":textCol,textDecoration:q.done?"line-through":"none"}}>{q.text}</div>
-                  <div style={{height:4,background:borderCol,borderRadius:2,marginTop:4}}>
-                    <div style={{width:`${(q.progress/q.total)*100}%`,height:"100%",background:q.done?"#22c55e":t.primary,borderRadius:2,transition:"width 0.5s"}}/>
+                  <div style={{fontWeight:800,fontSize:17,marginBottom:2}}>{profile.name}</div>
+                  <div style={{color:t.muted,fontSize:12,marginBottom:6}}>{profile.status}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <div style={tag(t.primary)}>{profile.lang}</div>
+                    <div style={tag("#22c55e")}>Lv.{lvl.level}</div>
                   </div>
                 </div>
-                <div style={{...tag("#f59e0b"),flexShrink:0}}>+{q.reward}XP</div>
+                {Ic.sparkle(t.primary,18)}
               </div>
+            </div>
+
+            {/* Daily Quests */}
+            <div style={{...glassCard({marginBottom:14})}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <div style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center",gap:6}}>{Ic.zap(t.primary,16)}<span>المهام اليومية</span></div>
+                <div style={tag("#f59e0b")}>🎁 صندوق مكافآت</div>
+              </div>
+              {DAILY_QUESTS.map(q=>(
+                <div key={q.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                  <span style={{fontSize:20}}>{q.icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,color:q.done?"#22c55e":textCol,textDecoration:q.done?"line-through":"none",fontWeight:q.done?400:500}}>{q.text}</div>
+                    <div style={{height:4,background:`${t.border}`,borderRadius:2,marginTop:5,overflow:"hidden"}}>
+                      <div style={{width:`${(q.progress/q.total)*100}%`,height:"100%",background:q.done?`linear-gradient(90deg,#22c55e,#4ade80)`:`linear-gradient(90deg,${t.primary},${t.secondary})`,borderRadius:2,transition:"width 0.8s ease"}}/>
+                    </div>
+                  </div>
+                  <div style={tag("#f59e0b",{flexShrink:0})}>+{q.reward}XP</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Start Chat */}
+            <div style={{fontWeight:800,fontSize:14,marginBottom:12,display:"flex",alignItems:"center",gap:6,opacity:0.8}}>
+              {Ic.zap(t.primary,14)}<span>ابدأ محادثة</span>
+            </div>
+            {[
+              {type:"video",icon:"📹",title:"مكالمة فيديو",    desc:"تحدث وجهاً لوجه", grad:`linear-gradient(135deg,#6366f155,#818cf833)`},
+              {type:"voice",icon:"📞",title:"مكالمة صوتية",    desc:"حسّن نطقك",        grad:`linear-gradient(135deg,#22c55e55,#4ade8033)`},
+              {type:"text", icon:"💬",title:"دردشة نصية",      desc:"تبادل الرسائل",   grad:`linear-gradient(135deg,#f59e0b55,#fbbf2433)`},
+            ].map(c2=>(
+              <button key={c2.type} onClick={()=>startSearch(c2.type)} style={{width:"100%",...glassCard({padding:16,display:"flex",alignItems:"center",gap:14,cursor:"pointer",marginBottom:10,textAlign:"right",background:c2.grad,transition:"transform 0.15s,box-shadow 0.15s"})}} onMouseDown={e=>e.currentTarget.style.transform="scale(0.98)"} onMouseUp={e=>e.currentTarget.style.transform="scale(1)"}>
+                <div style={{width:50,height:50,borderRadius:14,background:`rgba(255,255,255,0.15)`,backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0,border:`1px solid rgba(255,255,255,0.2)`}}>{c2.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:15,color:textCol}}>{c2.title}</div>
+                  <div style={{color:t.muted,fontSize:12,marginTop:2}}>{c2.desc}</div>
+                </div>
+                <div style={{color:t.primary,opacity:0.6,fontSize:18}}>‹</div>
+              </button>
             ))}
-          </div>
 
-          {/* Start Chat */}
-          <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>ابدأ محادثة</div>
-          {[
-            {type:"video",icon:"📹",title:"مكالمة فيديو",desc:"تحدث وجهاً لوجه",color:"#6366f1"},
-            {type:"voice",icon:"📞",title:"مكالمة صوتية",desc:"حسّن نطقك",color:"#22c55e"},
-            {type:"text", icon:"💬",title:"دردشة نصية",  desc:"تبادل الرسائل",color:"#f59e0b"},
-          ].map(c2=>(
-            <button key={c2.type} onClick={()=>startSearch(c2.type)} style={{width:"100%",background:cardBg,border:`1px solid ${borderCol}`,borderRadius:18,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:10,textAlign:"right"}}>
-              <div style={{width:48,height:48,borderRadius:14,background:c2.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{c2.icon}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:textCol}}>{c2.title}</div>
-                <div style={{color:t.muted,fontSize:12}}>{c2.desc}</div>
+            {/* Stats + Chart */}
+            <div style={{...glassCard({marginTop:4})}}>
+              <div style={{fontWeight:800,fontSize:14,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>
+                {Ic.sparkle(t.primary,14)}<span>إحصائياتك الأسبوعية</span>
               </div>
-            </button>
-          ))}
+              <WeekChart data={WEEK_DATA} color={t.primary}/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:12}}>
+                {[["12","محادثة"],["3.5h","تحدثت"],["48","تمرين"]].map(([n,l])=>(
+                  <div key={l} style={{textAlign:"center",background:`${t.primary}18`,border:`1px solid ${t.border}`,borderRadius:14,padding:"12px 6px"}}>
+                    <div style={{fontWeight:900,fontSize:20,color:t.primary}}>{n}</div>
+                    <div style={{color:t.muted,fontSize:10,marginTop:2}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-          {/* Stats */}
-          <div style={{...card,marginTop:4}}>
-            <div style={{fontWeight:700,marginBottom:12}}>📊 إحصائياتك الأسبوعية</div>
-            <WeekChart data={WEEK_DATA} color={t.primary}/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:12}}>
-              {[["12","محادثة"],["3.5h","تحدثت"],["48","تمرين"]].map(([n,l])=>(
-                <div key={l} style={{textAlign:"center",background:t.primary+"22",borderRadius:12,padding:"10px 6px"}}>
-                  <div style={{fontWeight:900,fontSize:20,color:t.primary}}>{n}</div>
-                  <div style={{color:t.muted,fontSize:10}}>{l}</div>
-                </div>
-              ))}
+            {/* Badges */}
+            <div style={{...glassCard({marginTop:12})}}>
+              <div style={{fontWeight:800,fontSize:14,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>
+                {Ic.sparkle("#f59e0b",14)}<span>شاراتي</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+                {BADGES.map(b=>(
+                  <div key={b.id} style={{textAlign:"center",padding:"12px 6px",background:b.earned?`${t.primary}18`:`rgba(0,0,0,0.05)`,borderRadius:14,border:`1px solid ${b.earned?t.primary:t.border}`,opacity:b.earned?1:0.4,transition:"all 0.2s",boxShadow:b.earned?`0 0 15px ${t.glow}`:undefined}}>
+                    <div style={{fontSize:26}}>{b.icon}</div>
+                    <div style={{fontSize:10,fontWeight:700,marginTop:4,color:b.earned?t.primary:t.muted}}>{b.name}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Badges */}
-          <div style={{...card,marginTop:12}}>
-            <div style={{fontWeight:700,marginBottom:12}}>🏅 شاراتي</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-              {BADGES.map(b=>(
-                <div key={b.id} style={{textAlign:"center",padding:10,background:b.earned?t.primary+"22":borderCol+"44",borderRadius:14,border:`1px solid ${b.earned?t.primary:borderCol}`,opacity:b.earned?1:0.5}}>
-                  <div style={{fontSize:26}}>{b.icon}</div>
-                  <div style={{fontSize:10,fontWeight:700,marginTop:4,color:b.earned?t.primary:t.muted}}>{b.name}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </>}
-
-        {/* ── BOT TAB ──────────────────────────────────────────── */}
+        {/* ── BOT ───────────────────────────────────────────────── */}
         {tab==="bot" && (
-          <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
+          <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)",animation:"slideIn 0.4s ease"}}>
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
               {botMessages.map(m=>(
                 <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"82%"}}>
-                  {m.from==="bot" && <div style={{fontSize:18,marginBottom:3}}>🤖</div>}
-                  <div style={{background:m.from==="me"?t.primary:cardBg,color:m.from==="me"?"#fff":textCol,padding:"10px 14px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6}}>
+                  {m.from==="bot" && <div style={{fontSize:16,marginBottom:4,display:"flex",alignItems:"center",gap:4}}><span>✨</span><span style={{fontSize:11,color:t.muted}}>Ailo AI</span></div>}
+                  <div style={{background:m.from==="me"?`linear-gradient(135deg,${t.primary},${t.secondary})`:t.card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":textCol,padding:"11px 16px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.7,border:`1px solid ${t.border}`,boxShadow:m.from==="me"?`0 4px 15px ${t.glow}`:`0 2px 10px rgba(0,0,0,0.06)`}}>
                     {m.text}
                   </div>
                 </div>
@@ -644,318 +736,276 @@ function Ailo() {
             </div>
             <div style={{display:"flex",gap:8,paddingTop:8}}>
               <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendBot()} placeholder="اسأل المساعد..." style={{...inp,flex:1}}/>
-              <button onClick={sendBot} style={{width:42,height:42,borderRadius:21,background:t.primary,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.send("white")}</button>
+              <button onClick={sendBot} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${t.primary},${t.secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 15px ${t.glow}`}}>
+                {Ic.send("white")}
+              </button>
             </div>
           </div>
         )}
 
-        {/* ── HISTORY TAB ──────────────────────────────────────── */}
-        {tab==="history" && <>
-          <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>سجل المحادثات</div>
-          {historyData.map(h=>(
-            <div key={h.id} style={{...card,marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:44,height:44,borderRadius:22,background:t.primary+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontSize:20}}>{h.type==="video"?"📹":h.type==="voice"?"📞":"💬"}</span>
-              </div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14}}>{h.partner}</div>
-                <div style={{color:t.muted,fontSize:12}}>{h.lang} · {h.duration}</div>
-              </div>
-              <div style={{textAlign:"left"}}>
-                <div style={{color:t.muted,fontSize:11}}>{h.date}</div>
-                <div style={{...tag("#22c55e"),marginTop:4}}>+{h.xpGained}XP</div>
-              </div>
+        {/* ── HISTORY ───────────────────────────────────────────── */}
+        {tab==="history" && (
+          <div style={{animation:"slideIn 0.4s ease"}}>
+            <div style={{fontWeight:800,fontSize:15,marginBottom:14,display:"flex",alignItems:"center",gap:6}}>
+              {Ic.clock(t.primary,16)}<span>سجل المحادثات</span>
             </div>
-          ))}
-          {blockedUsers.length>0 && (
-            <div style={{...card,marginTop:8}}>
-              <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>🚫 المحظورون</div>
-              {blockedUsers.map((u,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0"}}>
-                  <span>{u}</span>
-                  <button onClick={()=>setBlockedUsers(b=>b.filter((_,j)=>j!==i))} style={{background:"none",border:`1px solid ${borderCol}`,borderRadius:50,padding:"3px 10px",fontSize:11,cursor:"pointer",color:t.muted}}>إلغاء الحظر</button>
+            {historyData.map((h,i)=>(
+              <div key={h.id} style={{...glassCard({marginBottom:10,display:"flex",alignItems:"center",gap:12,animation:`slideIn 0.3s ease ${i*0.08}s both`})}}>
+                <div style={{width:46,height:46,borderRadius:14,background:`${t.primary}22`,border:`1px solid ${t.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
+                  {h.type==="video"?"📹":h.type==="voice"?"📞":"💬"}
                 </div>
-              ))}
-            </div>
-          )}
-        </>}
-
-        {/* ── EXERCISES / SRS TAB ────────────────────────────────── */}
-        {tab==="exercises" && <>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontWeight:700,fontSize:15}}>تمارين SRS</div>
-            <div style={{display:"flex",gap:6}}>
-              <div style={tag("#22c55e")}>🏆 {srsScore}</div>
-              {srsStreak>1 && <div style={tag("#f59e0b")}>🔥 {srsStreak}</div>}
-            </div>
-          </div>
-
-          {/* Progress */}
-          <div style={{...card,marginBottom:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:t.muted,marginBottom:6}}>
-              <span>البطاقة {srsIdx+1} من {SRS_CARDS.length}</span>
-              <span>{Math.round(((srsIdx)/SRS_CARDS.length)*100)}% مكتمل</span>
-            </div>
-            <XPBar pct={Math.round(((srsIdx)/SRS_CARDS.length)*100)} color={t.primary}/>
-          </div>
-
-          {/* Card */}
-          {(()=>{
-            const c3 = SRS_CARDS[srsIdx];
-            return (
-              <div style={{...card,textAlign:"center",marginBottom:12,background:`linear-gradient(135deg,${t.primary}22,${t.secondary}11)`}}>
-                {/* MCQ */}
-                {c3.type==="mcq" && <>
-                  <div style={{color:t.muted,fontSize:12,marginBottom:6}}>ترجم إلى العربية</div>
-                  <div style={{fontWeight:900,fontSize:34,color:t.primary,marginBottom:16}}>{c3.word}</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,textAlign:"right"}}>
-                    {c3.options.map((o,i)=>{
-                      let bg2=cardBg, bc=borderCol, col2=textCol;
-                      if (srsAnswer!==null){
-                        if (i===c3.answer){bg2="#22c55e22";bc="#22c55e";col2="#22c55e";}
-                        else if (i===srsAnswer){bg2="#ef444422";bc="#ef4444";col2="#ef4444";}
-                      }
-                      return <button key={i} onClick={()=>srsAnswer===null&&answerSrs(i)} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:14,padding:"14px 10px",fontWeight:700,fontSize:15,cursor:"pointer",color:col2,transition:"all 0.2s"}}>{o}</button>;
-                    })}
-                  </div>
-                </>}
-
-                {/* ARRANGE */}
-                {c3.type==="arrange" && <>
-                  <div style={{color:t.muted,fontSize:12,marginBottom:6}}>رتب الكلمات لتكوين جملة</div>
-                  <div style={{minHeight:44,background:borderCol+"44",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center"}}>
-                    {arrangeSelected.map((w,i)=>(
-                      <button key={i} onClick={()=>{ setArrangeSelected(s=>s.filter((_,j)=>j!==i)); setArrangeWords(w2=>[...w2,w]); }} style={{background:t.primary,color:"white",border:"none",borderRadius:8,padding:"6px 12px",fontSize:14,cursor:"pointer"}}>{w}</button>
-                    ))}
-                  </div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12}}>
-                    {arrangeWords.map((w,i)=>(
-                      <button key={i} onClick={()=>{ setArrangeSelected(s=>[...s,w]); setArrangeWords(w2=>w2.filter((_,j)=>j!==i)); }} style={{background:cardBg,border:`1px solid ${borderCol}`,borderRadius:8,padding:"8px 14px",fontSize:14,cursor:"pointer",color:textCol}}>{w}</button>
-                    ))}
-                  </div>
-                  {srsAnswer==="wrong" && <div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>الإجابة الصحيحة: {c3.answer}</div>}
-                  <button onClick={submitArrange} style={{...btnS(t.primary),width:"100%"}}>تحقق ✓</button>
-                </>}
-
-                {/* MATCH */}
-                {c3.type==="match" && <>
-                  <div style={{color:t.muted,fontSize:12,marginBottom:12}}>طابق الكلمات مع معانيها</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      {c3.pairs.map(([eng])=>(
-                        <button key={eng} onClick={()=>setMatchSelected(eng)} style={{background:matchSelected===eng?t.primary:matchPairs[eng]?"#22c55e22":cardBg,border:`2px solid ${matchSelected===eng?t.primary:matchPairs[eng]?"#22c55e":borderCol}`,borderRadius:12,padding:"10px",fontSize:14,cursor:"pointer",color:matchPairs[eng]?"#22c55e":textCol,fontWeight:700}}>{eng}</button>
-                      ))}
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      {[...c3.pairs].sort(()=>Math.random()-0.5).map(([,ar])=>(
-                        <button key={ar} onClick={()=>matchSelected&&handleMatch(matchSelected,ar)} style={{background:Object.values(matchPairs).includes(ar)?"#22c55e22":cardBg,border:`2px solid ${Object.values(matchPairs).includes(ar)?"#22c55e":borderCol}`,borderRadius:12,padding:"10px",fontSize:14,cursor:"pointer",color:Object.values(matchPairs).includes(ar)?"#22c55e":textCol}}>{ar}</button>
-                      ))}
-                    </div>
-                  </div>
-                </>}
-
-                {/* SPEECH */}
-                {c3.type==="speech" && <>
-                  <div style={{color:t.muted,fontSize:12,marginBottom:6}}>اقرأ هذه الجملة بصوت عالٍ</div>
-                  <div style={{fontWeight:700,fontSize:18,color:t.primary,marginBottom:16,lineHeight:1.5}}>"{c3.sentence}"</div>
-                  {speechResult ? (
-                    <div style={{background:"#22c55e22",border:"1px solid #22c55e",borderRadius:14,padding:14,color:"#22c55e",fontWeight:700}}>{speechResult}</div>
-                  ) : (
-                    <button onClick={startSpeech} style={{...btnS(speechActive?"#ef4444":t.primary),width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-                      {speechActive?<><span style={{animation:"pulse 0.5s infinite"}}>⏺</span><span>جاري التحليل...</span></>:<>{Ic.mic("white",20)}<span>اضغط وتحدث</span></>}
-                    </button>
-                  )}
-                  {speechResult && <button onClick={()=>{ setSpeechResult(""); setSrsIdx(i=>(i+1)%SRS_CARDS.length); }} style={{...btnS(t.primary),width:"100%",marginTop:10}}>التالي ←</button>}
-                </>}
-              </div>
-            );
-          })()}
-        </>}
-
-        {/* ── LEADERBOARD TAB ──────────────────────────────────── */}
-        {tab==="leaderboard" && <>
-          {/* Tiers */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-            {[["🥇","ذهبي","#f59e0b"],["🥈","فضي","#94a3b8"],["🥉","برونزي","#cd7f32"]].map(([ic,name,col])=>(
-              <div key={name} style={{...card,textAlign:"center",border:`1px solid ${col}44`}}>
-                <div style={{fontSize:28}}>{ic}</div>
-                <div style={{fontSize:11,color:col,fontWeight:700}}>{name}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{h.partner}</div>
+                  <div style={{color:t.muted,fontSize:12,marginTop:2}}>{h.lang} · {h.duration}</div>
+                </div>
+                <div style={{textAlign:"left"}}>
+                  <div style={{color:t.muted,fontSize:11}}>{h.date}</div>
+                  <div style={{...tag("#22c55e"),marginTop:4}}>+{h.xpGained}XP</div>
+                </div>
               </div>
             ))}
           </div>
+        )}
 
-          {/* Weekly Challenge */}
-          <div style={{...card,marginBottom:14,background:`linear-gradient(135deg,${t.primary}22,#f59e0b22)`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div style={{fontWeight:700,fontSize:14}}>⚔️ تحدٍّ مباشر</div>
-              <div style={tag("#f59e0b")}>+50 XP للفائز</div>
-            </div>
-            {!showChallenge ? (
-              <button onClick={()=>setShowChallenge(true)} style={{...btnS(t.primary),width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                {Ic.sword("white")}<span>تحدّ صديقاً</span>
-              </button>
-            ) : !challengeActive ? (
-              <div style={{textAlign:"center"}}>
-                <div style={{fontSize:36,marginBottom:8}}>🐬 Alex</div>
-                <div style={{color:t.muted,fontSize:13,marginBottom:12}}>سباق كلمات · 60 ثانية</div>
-                <button onClick={()=>{ setChallengeActive(true); setChallengeTime(60); setChallengeScore({me:0,opp:0}); }} style={{...btnS(t.primary),width:"100%"}}>ابدأ السباق ⚡</button>
+        {/* ── EXERCISES / SRS ───────────────────────────────────── */}
+        {tab==="exercises" && (
+          <div style={{animation:"slideIn 0.4s ease"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:6}}>{Ic.star(t.primary,16)}<span>تمارين SRS</span></div>
+              <div style={{display:"flex",gap:6}}>
+                <div style={tag("#22c55e")}>🏆 {srsScore}</div>
+                {srsStreak>1 && <div style={tag("#f59e0b")}>🔥 {srsStreak}</div>}
               </div>
-            ) : (
-              <div style={{textAlign:"center"}}>
-                <div style={{display:"flex",justifyContent:"center",gap:20,marginBottom:12}}>
-                  <div style={{textAlign:"center"}}>
-                    <div style={{fontSize:28}}>{profile.avatar}</div>
-                    <div style={{fontWeight:900,fontSize:28,color:t.primary}}>{challengeScore.me}</div>
-                    <div style={{fontSize:11,color:t.muted}}>أنت</div>
-                  </div>
-                  <div style={{fontWeight:900,fontSize:24,color:t.muted,alignSelf:"center"}}>VS</div>
-                  <div style={{textAlign:"center"}}>
-                    <div style={{fontSize:28}}>{partner.avatar}</div>
-                    <div style={{fontWeight:900,fontSize:28,color:"#ef4444"}}>{challengeScore.opp}</div>
-                    <div style={{fontSize:11,color:t.muted}}>{partner.name}</div>
-                  </div>
-                </div>
-                <div style={{fontWeight:700,fontSize:20,color:t.primary}}>⏱ {challengeTime}ث</div>
-                {challengeTime>0 && (
-                  <button onClick={()=>setChallengeScore(s=>({...s,me:s.me+1}))} style={{...btnS(t.primary),width:"100%",marginTop:10}}>+1 كلمة ✓</button>
-                )}
-                {challengeTime===0 && (
-                  <div style={{marginTop:10}}>
-                    <div style={{fontWeight:800,fontSize:18,color:challengeScore.me>challengeScore.opp?"#22c55e":"#ef4444"}}>
-                      {challengeScore.me>challengeScore.opp?"🏆 فزت!":"😅 حاول مجدداً"}
+            </div>
+
+            <div style={{...glassCard({marginBottom:12})}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:t.muted,marginBottom:8}}>
+                <span>البطاقة {srsIdx+1}/{SRS_CARDS.length}</span>
+                <span>{Math.round((srsIdx/SRS_CARDS.length)*100)}% مكتمل</span>
+              </div>
+              <XPBar pct={Math.round((srsIdx/SRS_CARDS.length)*100)} color={t.primary} accent={t.accent}/>
+            </div>
+
+            {(()=>{
+              const c3 = SRS_CARDS[srsIdx];
+              return (
+                <div style={{...glassCard({textAlign:"center",marginBottom:12,padding:"24px 16px",background:`linear-gradient(135deg,${t.primary}18,${t.accent}0a)`})}}>
+                  {c3.type==="mcq" && <>
+                    <div style={{color:t.muted,fontSize:12,marginBottom:8,letterSpacing:1}}>ترجم إلى العربية</div>
+                    <div style={{fontWeight:900,fontSize:38,background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:20}}>{c3.word}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,textAlign:"right"}}>
+                      {c3.options.map((o,i)=>{
+                        let bg2=t.card,bc=t.border,col2=textCol,shadow="";
+                        if(srsAnswer!==null){
+                          if(i===c3.answer){bg2="#22c55e22";bc="#22c55e";col2="#22c55e";shadow="0 0 15px rgba(34,197,94,0.3)";}
+                          else if(i===srsAnswer){bg2="#ef444422";bc="#ef4444";col2="#ef4444";}
+                        }
+                        return <button key={i} onClick={()=>srsAnswer===null&&answerSrs(i)} style={{background:bg2,backdropFilter:"blur(10px)",border:`2px solid ${bc}`,borderRadius:14,padding:"14px 10px",fontWeight:700,fontSize:15,cursor:"pointer",color:col2,transition:"all 0.2s",boxShadow:shadow,fontFamily:"'Tajawal',system-ui"}}>{o}</button>;
+                      })}
                     </div>
-                    <button onClick={()=>{ setShowChallenge(false); if(challengeScore.me>challengeScore.opp) addXp(50,"فوز في التحدي"); }} style={{...btnS(t.primary),width:"100%",marginTop:8}}>
-                      {challengeScore.me>challengeScore.opp?"استلام +50 XP 🎉":"إغلاق"}
-                    </button>
+                  </>}
+
+                  {c3.type==="arrange" && <>
+                    <div style={{color:t.muted,fontSize:12,marginBottom:8,letterSpacing:1}}>رتب الكلمات لتكوين جملة</div>
+                    <div style={{minHeight:50,background:`rgba(0,0,0,0.1)`,borderRadius:14,padding:10,marginBottom:14,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${t.border}`}}>
+                      {arrangeSelected.map((w,i)=>(
+                        <button key={i} onClick={()=>{setArrangeSelected(s=>s.filter((_,j)=>j!==i));setArrangeWords(w2=>[...w2,w]);}} style={{background:`linear-gradient(135deg,${t.primary},${t.secondary})`,color:"white",border:"none",borderRadius:8,padding:"7px 14px",fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>{w}</button>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:14}}>
+                      {arrangeWords.map((w,i)=>(
+                        <button key={i} onClick={()=>{setArrangeSelected(s=>[...s,w]);setArrangeWords(w2=>w2.filter((_,j)=>j!==i));}} style={{background:t.card,border:`1px solid ${t.border}`,borderRadius:8,padding:"8px 16px",fontSize:14,cursor:"pointer",color:textCol,fontFamily:"'Tajawal',system-ui",backdropFilter:"blur(10px)"}}>{w}</button>
+                      ))}
+                    </div>
+                    {srsAnswer==="wrong" && <div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>الإجابة الصحيحة: {c3.answer}</div>}
+                    <button onClick={submitArrange} style={btnPrimary({width:"100%"})}>تحقق ✓</button>
+                  </>}
+
+                  {c3.type==="match" && <>
+                    <div style={{color:t.muted,fontSize:12,marginBottom:14,letterSpacing:1}}>طابق الكلمات مع معانيها</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {c3.pairs.map(([eng])=>(
+                          <button key={eng} onClick={()=>setMatchSelected(eng)} style={{background:matchSelected===eng?`linear-gradient(135deg,${t.primary},${t.secondary})`:matchPairs[eng]?"rgba(34,197,94,0.2)":t.card,border:`2px solid ${matchSelected===eng?t.primary:matchPairs[eng]?"#22c55e":t.border}`,borderRadius:12,padding:"11px",fontSize:14,cursor:"pointer",color:matchPairs[eng]?"#22c55e":matchSelected===eng?"white":textCol,fontWeight:700,backdropFilter:"blur(10px)",transition:"all 0.2s",fontFamily:"'Tajawal',system-ui"}}>{eng}</button>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {[...c3.pairs].sort(()=>Math.random()-0.5).map(([,ar])=>(
+                          <button key={ar} onClick={()=>matchSelected&&handleMatch(matchSelected,ar)} style={{background:Object.values(matchPairs).includes(ar)?"rgba(34,197,94,0.2)":t.card,border:`2px solid ${Object.values(matchPairs).includes(ar)?"#22c55e":t.border}`,borderRadius:12,padding:"11px",fontSize:14,cursor:"pointer",color:Object.values(matchPairs).includes(ar)?"#22c55e":textCol,backdropFilter:"blur(10px)",transition:"all 0.2s",fontFamily:"'Tajawal',system-ui"}}>{ar}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </>}
+
+                  {c3.type==="speech" && <>
+                    <div style={{color:t.muted,fontSize:12,marginBottom:10,letterSpacing:1}}>اقرأ هذه الجملة بصوت عالٍ</div>
+                    <div style={{fontWeight:700,fontSize:18,color:t.primary,marginBottom:20,lineHeight:1.6,background:`${t.primary}11`,padding:"14px",borderRadius:14,border:`1px solid ${t.border}`}}>"{c3.sentence}"</div>
+                    {speechResult
+                      ? <><div style={{background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e",borderRadius:14,padding:14,color:"#22c55e",fontWeight:700,marginBottom:12}}>{speechResult}</div>
+                          <button onClick={()=>{setSpeechResult("");setSrsIdx(i=>(i+1)%SRS_CARDS.length);}} style={btnPrimary({width:"100%"})}>التالي ←</button></>
+                      : <button onClick={startSpeech} style={btnPrimary({width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10})}>
+                          {speechActive?<><span style={{animation:"pulse 0.5s infinite"}}>⏺</span><span>جاري التحليل...</span></>:<>{Ic.mic("white",20)}<span>اضغط وتحدث</span></>}
+                        </button>}
+                  </>}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── LEADERBOARD ───────────────────────────────────────── */}
+        {tab==="leaderboard" && (
+          <div style={{animation:"slideIn 0.4s ease"}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+              {[["🥇","ذهبي","#f59e0b"],["🥈","فضي","#94a3b8"],["🥉","برونزي","#cd7f32"]].map(([ic,n,c])=>(
+                <div key={n} style={{...glassCard({textAlign:"center",padding:"14px 6px",border:`1px solid ${c}33`})}}>
+                  <div style={{fontSize:28}}>{ic}</div>
+                  <div style={{fontSize:11,color:c,fontWeight:700,marginTop:4}}>{n}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{...glassCard({marginBottom:14,background:`linear-gradient(135deg,${t.primary}18,${t.accent}0a)`})}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center",gap:6}}>{Ic.sword(t.primary)}<span>تحدٍّ مباشر</span></div>
+                <div style={tag("#f59e0b")}>+50 XP للفائز</div>
+              </div>
+              {!showChallenge ? (
+                <button style={btnPrimary({width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})} onClick={()=>setShowChallenge(true)}>
+                  {Ic.sword("white")}<span>تحدّ صديقاً</span>
+                </button>
+              ) : !challengeActive ? (
+                <div style={{textAlign:"center"}}>
+                  <div style={{fontSize:40,marginBottom:8}}>🐬</div>
+                  <div style={{fontWeight:700,marginBottom:4}}>Alex</div>
+                  <div style={{color:t.muted,fontSize:12,marginBottom:14}}>سباق كلمات · 60 ثانية</div>
+                  <button style={btnPrimary({width:"100%"})} onClick={()=>{setChallengeActive(true);setChallengeTime(60);setChallengeScore({me:0,opp:0});}}>ابدأ السباق ⚡</button>
+                </div>
+              ) : (
+                <div style={{textAlign:"center"}}>
+                  <div style={{display:"flex",justifyContent:"center",gap:24,marginBottom:14}}>
+                    {[{av:profile.avatar,sc:challengeScore.me,lbl:"أنت",c:t.primary},{av:"🐬",sc:challengeScore.opp,lbl:partner.name,c:"#ef4444"}].map((p2,i)=>(
+                      <div key={i} style={{textAlign:"center"}}>
+                        <AvatarDisplay src={p2.av} size={44}/>
+                        <div style={{fontWeight:900,fontSize:30,color:p2.c,marginTop:4}}>{p2.sc}</div>
+                        <div style={{fontSize:11,color:t.muted}}>{p2.lbl}</div>
+                      </div>
+                    ))}
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                  <div style={{fontWeight:900,fontSize:24,background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:10}}>⏱ {challengeTime}ث</div>
+                  {challengeTime>0
+                    ? <button style={btnPrimary({width:"100%"})} onClick={()=>setChallengeScore(s=>({...s,me:s.me+1}))}>+1 كلمة ✓</button>
+                    : <div>
+                        <div style={{fontWeight:800,fontSize:18,color:challengeScore.me>challengeScore.opp?"#22c55e":"#ef4444",marginBottom:10}}>
+                          {challengeScore.me>challengeScore.opp?"🏆 فزت!":"😅 حاول مجدداً"}
+                        </div>
+                        <button style={btnPrimary({width:"100%"})} onClick={()=>{setShowChallenge(false);if(challengeScore.me>challengeScore.opp)addXp(50,"فوز");}}>
+                          {challengeScore.me>challengeScore.opp?"استلام +50 XP 🎉":"إغلاق"}
+                        </button>
+                      </div>
+                  }
+                </div>
+              )}
+            </div>
 
-          {/* Leaderboard */}
-          <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>🏆 الصدارة الأسبوعية</div>
-          {LEADERBOARD.map((u,i)=>(
-            <div key={u.rank} style={{...card,marginBottom:8,border:u.isMe?`2px solid ${t.primary}`:undefined,background:u.isMe?t.primary+"22":cardBg,display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:28,height:28,borderRadius:14,background:tierColors[u.tier]+"44",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:tierColors[u.tier],flexShrink:0}}>
-                {u.rank<=3?["🥇","🥈","🥉"][u.rank-1]:u.rank}
+            <div style={{fontWeight:800,fontSize:14,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>
+              {Ic.trophy(t.primary,16)}<span>الصدارة الأسبوعية</span>
+            </div>
+            {LEADERBOARD.map((u,i)=>(
+              <div key={u.rank} style={{...glassCard({marginBottom:8,display:"flex",alignItems:"center",gap:12,border:u.isMe?`1px solid ${t.primary}`:undefined,background:u.isMe?`${t.primary}18`:t.card,animation:`slideIn 0.3s ease ${i*0.06}s both`})}}>
+                <div style={{width:30,height:30,borderRadius:15,background:`${tierC[u.tier]}22`,border:`1px solid ${tierC[u.tier]}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:tierC[u.tier],flexShrink:0}}>
+                  {u.rank<=3?["🥇","🥈","🥉"][u.rank-1]:u.rank}
+                </div>
+                <div style={{fontSize:28,flexShrink:0}}>{u.avatar}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{u.name}{u.isMe?" (أنت)":""}</div>
+                  <div style={{color:tierC[u.tier],fontSize:11,fontWeight:700,marginTop:2}}>{u.xp.toLocaleString()} XP</div>
+                </div>
+                <div style={{fontSize:12,color:u.delta.startsWith("+")?"#22c55e":u.delta==="="?t.muted:"#ef4444",fontWeight:700}}>{u.delta}</div>
               </div>
-              <div style={{fontSize:28,flexShrink:0}}>{u.avatar}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14}}>{u.name}{u.isMe?" (أنت)":""}</div>
-                <div style={{color:tierColors[u.tier],fontSize:11,fontWeight:700}}>{u.xp.toLocaleString()} XP</div>
-              </div>
-              <div style={{fontSize:12,color:u.delta.startsWith("+")?"#22c55e":u.delta==="="?t.muted:"#ef4444",fontWeight:700}}>
-                {u.delta}
+            ))}
+
+            <div style={{...glassCard({marginTop:14})}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:6}}>❄️<span>تجميد السلسلة</span></div>
+                  <div style={{color:t.muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div>
+                </div>
+                <button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);}}} style={btnPrimary({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>
+                  {streakFrozen?"✅ مفعّل":`50 🪙`}
+                </button>
               </div>
             </div>
-          ))}
-
-          {/* Streak Freeze */}
-          <div style={{...card,marginTop:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:14}}>❄️ تجميد السلسلة</div>
-                <div style={{color:t.muted,fontSize:12,marginTop:2}}>احمِ سلسلتك ليوم واحد</div>
-              </div>
-              <button onClick={()=>{ if(coins>=50){ setCoins(c=>c-50); setStreakFrozen(true); } }} style={{...btnS(streakFrozen?"#22c55e":t.primary),padding:"10px 18px",fontSize:13,opacity:coins<50?0.5:1}}>
-                {streakFrozen?"✅ مفعّل":`50 🪙 شراء`}
-              </button>
-            </div>
           </div>
-        </>}
+        )}
       </div>
 
       {/* BOTTOM NAV */}
-      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:cardBg,borderTop:`1px solid ${borderCol}`,display:"flex",zIndex:50}}>
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:t.card,backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderTop:`1px solid ${t.border}`,display:"flex",zIndex:50,boxShadow:`0 -4px 24px rgba(0,0,0,0.1)`}}>
         {TABS.map(({id,label,icon})=>(
-          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"10px 0 12px",background:"none",border:"none",color:tab===id?t.primary:t.muted,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,transition:"color 0.2s"}}>
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"10px 4px 14px",background:"none",border:"none",color:tab===id?t.primary:t.muted,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,transition:"color 0.2s",position:"relative"}}>
+            {tab===id && <div style={{position:"absolute",top:0,left:"20%",right:"20%",height:2,background:`linear-gradient(90deg,${t.primary},${t.secondary})`,borderRadius:"0 0 2px 2px",boxShadow:`0 0 8px ${t.glow}`}}/>}
             {icon(tab===id?t.primary:t.muted,20)}
-            <span style={{fontSize:9,fontWeight:tab===id?700:400}}>{label}</span>
+            <span style={{fontSize:9,fontWeight:tab===id?700:400,letterSpacing:0.3}}>{label}</span>
           </button>
         ))}
       </div>
 
       {/* PROFILE MODAL */}
       {showProfile && (()=>{
-        const FEMALE_SEEDS = ["Aisha","Sara","Fatima","Layla","Nour","Hana","Rania","Dina","Maya","Lena","Sofia","Emma","Olivia","Ava","Isabella","Mia","Charlotte","Amelia","Harper","Evelyn","Luna","Chloe","Penelope","Grace","Zoe","Natalie","Hannah","Lily","Eleanor","Aria","Scarlett","Victoria","Aurora","Claire","Aaliyah","Savannah","Audrey","Brooklyn","Bella","Skylar","Leah","Zara","Nadia","Yasmin","Mariam","Heba","Rana","Samar","Noura","Reem"];
-        const MALE_SEEDS   = ["Ahmad","Omar","Ali","Hassan","Yusuf","Mohamed","Khalid","Tariq","Samir","Faris","James","William","Benjamin","Lucas","Henry","Alexander","Mason","Ethan","Daniel","Noah","Sebastian","Logan","Jackson","Aiden","Carter","Wyatt","Julian","Liam","Owen","Nathan","Isaac","Connor","Caleb","Ryan","Adam","Tyler","Zach","Leo","Max","Sam","Karim","Tarek","Nader","Samer","Bassem","Walid","Rami","Adel","Sherif","Amr"];
-        const femaleUrl = (seed) => `https://api.dicebear.com/7.x/lorelei/svg?seed=${seed}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
-        const maleUrl   = (seed) => `https://api.dicebear.com/7.x/micah/svg?seed=${seed}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
+        const FS = ["Aisha","Sara","Fatima","Layla","Nour","Hana","Rania","Dina","Maya","Lena","Sofia","Emma","Olivia","Ava","Isabella","Mia","Charlotte","Amelia","Harper","Evelyn","Luna","Chloe","Penelope","Grace","Zoe","Natalie","Hannah","Lily","Eleanor","Aria","Scarlett","Victoria","Aurora","Claire","Aaliyah","Savannah","Audrey","Brooklyn","Bella","Skylar","Leah","Zara","Nadia","Yasmin","Mariam","Heba","Rana","Samar","Noura","Reem"];
+        const MS = ["Felix","Oscar","Bruno","Marco","Diego","Carlos","Ivan","Maxim","Dmitri","Boris","Hunter","Ranger","Blaze","Storm","Rock","Duke","Ace","King","Titan","Atlas","Zack","Tyler","Blake","Chase","Cole","Derek","Evan","Frank","Glen","Hank","Igor","Jake","Kent","Lance","Mike","Neil","Owen","Pete","Quinn","Reed","Scott","Todd","Uri","Vince","Wade","Xander","York","Zane","Brock","Chad"];
+        const fUrl = s=>`https://api.dicebear.com/7.x/lorelei/svg?seed=${s}&backgroundColor=ffd5dc,ffdfbf,ffecd2,f8b4d9,fce4ec`;
+        const mUrl = s=>`https://api.dicebear.com/7.x/adventurer/svg?seed=${s}&backgroundColor=b6e3f4,c0aede,bfdbfe,dbeafe,e0f2fe`;
         const isUrl = profile.avatar?.startsWith("http");
         return (
-          <div style={{position:"fixed",inset:0,background:"#00000090",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowProfile(false)}>
-            <div style={{...card,width:"100%",borderRadius:"22px 22px 0 0",padding:20,maxHeight:"88vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:14,textAlign:"center"}}>✏️ تعديل الملف الشخصي</div>
-
-              {/* Current Avatar */}
-              <div style={{textAlign:"center",marginBottom:14,position:"relative",display:"inline-block",width:"100%"}}>
-                <div style={{width:90,height:90,borderRadius:45,overflow:"hidden",margin:"0 auto",border:`3px solid ${t.primary}`,background:cardBg}}>
-                  {isUrl
-                    ? <img src={profile.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.src="https://api.dicebear.com/7.x/lorelei/svg?seed=default"} alt="avatar"/>
-                    : <span style={{fontSize:60,lineHeight:"90px",display:"block"}}>{profile.avatar}</span>
-                  }
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowProfile(false)}>
+            <div style={{...glassCard({width:"100%",borderRadius:"24px 24px 0 0",padding:22,maxHeight:"88vh",overflowY:"auto"})}} onClick={e=>e.stopPropagation()}>
+              <div style={{fontWeight:900,fontSize:18,marginBottom:16,textAlign:"center",background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>✏️ تعديل الملف الشخصي</div>
+              <div style={{textAlign:"center",marginBottom:14}}>
+                <div style={{width:90,height:90,borderRadius:45,overflow:"hidden",margin:"0 auto",border:`3px solid ${t.primary}`,boxShadow:`0 0 0 4px ${t.glow},0 8px 24px rgba(0,0,0,0.2)`}}>
+                  {isUrl ? <img src={profile.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="avatar"/>
+                          : <span style={{fontSize:60,lineHeight:"90px",display:"block"}}>{profile.avatar}</span>}
                 </div>
-                <div style={{fontSize:11,color:t.muted,marginTop:6}}>اضغط على صورة أدناه لتغييرها</div>
+                <div style={{fontSize:11,color:t.muted,marginTop:8}}>اضغط على صورة لتغييرها</div>
               </div>
 
-              {/* Photo Source Tabs */}
-              <div style={{display:"flex",gap:6,marginBottom:14}}>
+              <div style={{display:"flex",gap:8,marginBottom:14}}>
                 {[["avatar","🎨 أفاتار"],["email","📧 بريد إلكتروني"]].map(([mode,label])=>(
-                  <button key={mode} onClick={()=>setPhotoMode(mode)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${photoMode===mode?t.primary:borderCol}`,background:photoMode===mode?t.primary+"22":"transparent",color:photoMode===mode?t.primary:t.muted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>
+                  <button key={mode} onClick={()=>setPhotoMode(mode)} style={{flex:1,padding:"10px",borderRadius:12,border:`1px solid ${photoMode===mode?t.primary:t.border}`,background:photoMode===mode?`${t.primary}22`:"transparent",color:photoMode===mode?t.primary:t.muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{label}</button>
                 ))}
               </div>
 
-              {/* Email Input */}
               {photoMode==="email" && (
                 <div style={{marginBottom:14}}>
                   <div style={{fontSize:12,color:t.muted,marginBottom:6}}>أدخل البريد الإلكتروني لجلب صورة Gravatar</div>
                   <div style={{display:"flex",gap:8}}>
                     <input value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="example@email.com" style={{...inp,flex:1,fontSize:13}}/>
-                    <button onClick={()=>{ if(emailInput) setProfile(p=>({...p,avatar:`https://www.gravatar.com/avatar/${btoa(emailInput.trim().toLowerCase())}?d=identicon&s=200`})); }} style={{...btnS(t.primary),padding:"10px 14px",fontSize:12,flexShrink:0}}>جلب</button>
+                    <button onClick={()=>{ if(emailInput) setProfile(p=>({...p,avatar:`https://www.gravatar.com/avatar/${btoa(emailInput.trim().toLowerCase())}?d=identicon&s=200`})); }} style={btnPrimary({padding:"10px 16px",fontSize:12,flexShrink:0})}>جلب</button>
                   </div>
                 </div>
               )}
 
-              {/* Avatar Gallery */}
               {photoMode==="avatar" && (<>
-                <div style={{display:"flex",gap:8,marginBottom:10}}>
-                  {[["female","👩 إناث"],["male","👨 ذكور"]].map(([tab2,label])=>(
-                    <button key={tab2} onClick={()=>setAvatarTab(tab2)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${avatarTab===tab2?t.primary:borderCol}`,background:avatarTab===tab2?t.primary+"22":"transparent",color:avatarTab===tab2?t.primary:t.muted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  {[["female","👩 إناث"],["male","👨 ذكور"]].map(([tb,label])=>(
+                    <button key={tb} onClick={()=>setAvatarTab(tb)} style={{flex:1,padding:"9px",borderRadius:12,border:`1px solid ${avatarTab===tb?t.primary:t.border}`,background:avatarTab===tb?`${t.primary}22`:"transparent",color:avatarTab===tb?t.primary:t.muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{label}</button>
                   ))}
                 </div>
-
-                {avatarTab==="female" && (
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:10}}>
-                    {FEMALE_SEEDS.map(seed=>{
-                      const url = femaleUrl(seed);
-                      const sel = profile.avatar===url;
-                      return (
-                        <button key={seed} onClick={()=>setProfile(p=>({...p,avatar:url}))} style={{background:sel?t.primary+"33":"transparent",border:`2px solid ${sel?t.primary:borderCol}`,borderRadius:12,padding:4,cursor:"pointer",overflow:"hidden"}}>
-                          <img src={url} style={{width:"100%",aspectRatio:"1",borderRadius:8,display:"block"}} alt={seed} loading="lazy"/>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {avatarTab==="male" && (
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:10}}>
-                    {MALE_SEEDS.map(seed=>{
-                      const url = maleUrl(seed);
-                      const sel = profile.avatar===url;
-                      return (
-                        <button key={seed} onClick={()=>setProfile(p=>({...p,avatar:url}))} style={{background:sel?t.primary+"33":"transparent",border:`2px solid ${sel?t.primary:borderCol}`,borderRadius:12,padding:4,cursor:"pointer",overflow:"hidden"}}>
-                          <img src={url} style={{width:"100%",aspectRatio:"1",borderRadius:8,display:"block"}} alt={seed} loading="lazy"/>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:12}}>
+                  {(avatarTab==="female"?FS:MS).map(seed=>{
+                    const url = avatarTab==="female"?fUrl(seed):mUrl(seed);
+                    const sel = profile.avatar===url;
+                    return (
+                      <button key={seed} onClick={()=>setProfile(p=>({...p,avatar:url}))} style={{background:sel?`${t.primary}33`:"transparent",border:`2px solid ${sel?t.primary:t.border}`,borderRadius:12,padding:4,cursor:"pointer",overflow:"hidden",transition:"all 0.2s",boxShadow:sel?`0 0 12px ${t.glow}`:undefined}}>
+                        <img src={url} style={{width:"100%",aspectRatio:"1",borderRadius:8,display:"block"}} alt={seed} loading="lazy"/>
+                      </button>
+                    );
+                  })}
+                </div>
               </>)}
 
-              {/* Fields */}
-              {[["name","اسم المستخدم"],["bio","نبذة شخصية"],["status","الحالة (Status)"]].map(([k,l])=>(
+              {[["name","اسم المستخدم"],["bio","نبذة شخصية"],["status","الحالة"]].map(([k,l])=>(
                 <div key={k} style={{marginBottom:10}}>
                   <div style={{fontSize:12,color:t.muted,marginBottom:4}}>{l}</div>
                   <input value={profile[k]||""} onChange={e=>setProfile(p=>({...p,[k]:e.target.value}))} style={inp}/>
@@ -967,16 +1017,14 @@ function Ailo() {
                   {["Arabic","English","French","Spanish","German","Chinese","Japanese","Turkish"].map(l=><option key={l} value={l}>{l}</option>)}
                 </select>
               </div>
-              {/* Level Progress */}
-              <div style={{...card,marginBottom:14,background:t.primary+"22"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                  <span style={{fontWeight:700}}>المستوى {lvl.level}</span>
-                  <span style={{color:t.muted,fontSize:12}}>{lvl.current}/{lvl.needed} XP</span>
+              <div style={{...glassCard({marginBottom:14,background:`${t.primary}18`})}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                  <span style={{fontWeight:700,fontSize:13}}>المستوى {lvl.level}</span>
+                  <span style={{color:t.muted,fontSize:11}}>{lvl.current}/{lvl.needed} XP</span>
                 </div>
-                <XPBar pct={lvl.pct} color={t.primary}/>
-                <div style={{fontSize:11,color:t.muted,marginTop:4}}>يتطلب المستوى {lvl.level+1}: {xpForLevel(lvl.level+1)} XP إضافية</div>
+                <XPBar pct={lvl.pct} color={t.primary} accent={t.accent}/>
               </div>
-              <button onClick={()=>setShowProfile(false)} style={{...btnS(t.primary),width:"100%"}}>حفظ ✓</button>
+              <button onClick={()=>setShowProfile(false)} style={btnPrimary({width:"100%"})}>حفظ التغييرات ✓</button>
             </div>
           </div>
         );
@@ -984,49 +1032,55 @@ function Ailo() {
 
       {/* SETTINGS MODAL */}
       {showSettings && (
-        <div style={{position:"fixed",inset:0,background:"#00000090",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowSettings(false)}>
-          <div style={{...card,width:"100%",borderRadius:"22px 22px 0 0",padding:22}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontWeight:800,fontSize:17,marginBottom:16,textAlign:"center"}}>الإعدادات</div>
-            <div style={{fontWeight:700,marginBottom:10}}>🎨 لون التطبيق</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:8,marginBottom:18}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowSettings(false)}>
+          <div style={{...glassCard({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:18,marginBottom:18,textAlign:"center",background:`linear-gradient(135deg,${t.primary},${t.accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>⚙️ الإعدادات</div>
+            <div style={{fontWeight:700,marginBottom:12,fontSize:13}}>🎨 الثيم</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:20}}>
               {Object.entries(THEMES).map(([name,th])=>(
-                <button key={name} onClick={()=>setTheme(name)} style={{aspectRatio:"1",borderRadius:12,background:th.primary,border:theme===name?"3px solid white":"3px solid transparent",cursor:"pointer",fontSize:14,color:"white",fontWeight:700}}>
+                <button key={name} onClick={()=>{setTheme(name);setDarkMode(th.dark!==false);}} style={{aspectRatio:"1",borderRadius:12,background:`linear-gradient(135deg,${th.primary},${th.secondary})`,border:theme===name?`2px solid ${textCol}`:"2px solid transparent",cursor:"pointer",fontSize:10,color:"white",fontWeight:800,boxShadow:theme===name?`0 0 12px ${th.primary}88`:undefined,transition:"all 0.2s",textShadow:"0 1px 3px rgba(0,0,0,0.4)"}}>
                   {theme===name?"✓":""}
                 </button>
               ))}
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-              <div style={{fontWeight:700}}>🌙 الوضع الداكن</div>
-              <button onClick={()=>setDarkMode(d=>!d)} style={{background:darkMode?t.primary:"#ccc",border:"none",borderRadius:50,width:52,height:28,position:"relative",cursor:"pointer"}}>
-                <div style={{width:20,height:20,borderRadius:10,background:"white",position:"absolute",top:4,transition:"left 0.2s",left:darkMode?28:4}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,padding:"12px 0",borderBottom:`1px solid ${t.border}`}}>
+              <div style={{fontWeight:700,fontSize:13}}>🌙 الوضع الداكن</div>
+              <button onClick={()=>setDarkMode(d=>!d)} style={{background:isDark?`linear-gradient(135deg,${t.primary},${t.secondary})`:"rgba(0,0,0,0.1)",border:"none",borderRadius:50,width:52,height:28,position:"relative",cursor:"pointer",transition:"background 0.3s",boxShadow:isDark?`0 2px 10px ${t.glow}`:undefined}}>
+                <div style={{width:20,height:20,borderRadius:10,background:"white",position:"absolute",top:4,transition:"left 0.25s",left:isDark?28:4,boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}}/>
               </button>
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,padding:"12px 0",borderBottom:`1px solid ${t.border}`}}>
               <div>
-                <div style={{fontWeight:700}}>🔔 الإشعارات</div>
+                <div style={{fontWeight:700,fontSize:13}}>🔔 الإشعارات</div>
                 <div style={{fontSize:11,color:t.muted,marginTop:2}}>إشعارات الرسائل والمكالمات</div>
               </div>
-              <button style={{background:t.primary,border:"none",borderRadius:50,width:52,height:28,position:"relative",cursor:"pointer"}}>
+              <button style={{background:`linear-gradient(135deg,${t.primary},${t.secondary})`,border:"none",borderRadius:50,width:52,height:28,position:"relative",cursor:"pointer",boxShadow:`0 2px 10px ${t.glow}`}}>
                 <div style={{width:20,height:20,borderRadius:10,background:"white",position:"absolute",top:4,left:28}}/>
               </button>
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,padding:"12px 0"}}>
               <div>
-                <div style={{fontWeight:700}}>🔒 التشفير الكامل</div>
+                <div style={{fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}>{Ic.shield("#22c55e",14)}<span>التشفير الكامل</span></div>
                 <div style={{fontSize:11,color:"#22c55e",marginTop:2}}>✅ مفعّل دائماً</div>
               </div>
-              {Ic.shield("#22c55e",18)}
             </div>
-            <button onClick={()=>setShowSettings(false)} style={{...btnS(t.primary),width:"100%"}}>حفظ ✓</button>
+            <button onClick={()=>setShowSettings(false)} style={btnPrimary({width:"100%"})}>حفظ ✓</button>
           </div>
         </div>
       )}
 
       <style>{`
-        @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
         @keyframes spin{to{transform:rotate(360deg)}}
-        @keyframes dots{0%{content:'.'}33%{content:'..'}66%{content:'...'}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+        @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+        @keyframes slideIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+        @keyframes dot0{0%,100%{transform:translateY(0)}33%{transform:translateY(-5px)}}
+        @keyframes dot1{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+        @keyframes dot2{0%,100%{transform:translateY(0)}66%{transform:translateY(-5px)}}
+        * { -webkit-tap-highlight-color: transparent; }
+        select option { background: #1a1a2e; color: white; }
       `}</style>
     </div>
   );
