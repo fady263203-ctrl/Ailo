@@ -206,13 +206,62 @@ function Ailo(){
   if(appScreen==="login"||appScreen==="register"){
     const isReg=appScreen==="register";
     const aInp={background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:14,padding:"14px 18px",color:"white",fontSize:15,outline:"none",width:"100%",fontFamily:"'Tajawal',system-ui"};
-    const handle=()=>{
+    const SUPA_URL = "https://tsdpznjarcvmpcrmmbdu.supabase.co";
+    const SUPA_KEY = "sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
+
+    const handle = async () => {
       setAuthError("");
-      if(isReg&&!authForm.name.trim()){setAuthError("الرجاء إدخال اسمك");return;}
-      if(!authForm.email.includes("@")){setAuthError("البريد الإلكتروني غير صحيح");return;}
-      if(authForm.password.length<6){setAuthError("كلمة المرور 6 أحرف على الأقل");return;}
+      if(isReg && !authForm.name.trim())      { setAuthError("الرجاء إدخال اسمك");            return; }
+      if(!authForm.email.includes("@"))       { setAuthError("البريد الإلكتروني غير صحيح");   return; }
+      if(authForm.password.length < 6)        { setAuthError("كلمة المرور 6 أحرف على الأقل"); return; }
       setAuthLoading(true);
-      setTimeout(()=>{setAuthLoading(false);if(isReg)setProfile(p=>({...p,name:authForm.name,lang:authForm.lang}));setAppScreen("main");},1400);
+      try {
+        if (isReg) {
+          // REGISTER
+          const res = await fetch(`${SUPA_URL}/auth/v1/signup`, {
+            method:"POST",
+            headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+            body: JSON.stringify({
+              email: authForm.email,
+              password: authForm.password,
+              data: { name: authForm.name, lang: authForm.lang }
+            })
+          });
+          const data = await res.json();
+          if (data.error || data.msg) {
+            setAuthError(data.error?.message || data.msg || "فشل إنشاء الحساب");
+            setAuthLoading(false); return;
+          }
+          setAuthLoading(false);
+          setAuthError("");
+          // show confirm email message
+          setAuthError("✅ تم إرسال رابط التأكيد إلى بريدك — تحقق منه ثم سجّل الدخول");
+          setAppScreen("login");
+        } else {
+          // LOGIN
+          const res = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=password`, {
+            method:"POST",
+            headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+            body: JSON.stringify({ email: authForm.email, password: authForm.password })
+          });
+          const data = await res.json();
+          if (data.error || !data.access_token) {
+            const msg = data.error_description || data.error || "البريد أو كلمة المرور غير صحيحة";
+            setAuthError(msg);
+            setAuthLoading(false); return;
+          }
+          // save token & user info
+          try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
+          const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
+          const userLang = data.user?.user_metadata?.lang || "Arabic";
+          setProfile(p => ({ ...p, name: userName, lang: userLang }));
+          setAuthLoading(false);
+          setAppScreen("main");
+        }
+      } catch(err) {
+        setAuthError("تعذّر الاتصال، تحقق من اتصالك بالإنترنت");
+        setAuthLoading(false);
+      }
     };
     return(
       <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f0c29 0%,#302b63 60%,#1a0a2e 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
@@ -231,7 +280,7 @@ function Ailo(){
             <div style={{marginBottom:14}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>البريد الإلكتروني</div><input value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} placeholder="example@email.com" type="email" style={aInp}/></div>
             <div style={{marginBottom:isReg?14:22}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>كلمة المرور</div><input value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} placeholder={isReg?"6 أحرف على الأقل":"••••••••"} type="password" style={aInp} onKeyDown={e=>e.key==="Enter"&&handle()}/></div>
             {isReg&&<div style={{marginBottom:22}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>لغتي الأم</div><select value={authForm.lang} onChange={e=>setAuthForm(f=>({...f,lang:e.target.value}))} style={{...aInp,appearance:"none"}}>{["Arabic","English","French","Spanish","German","Chinese","Japanese","Turkish"].map(l=><option key={l} value={l} style={{background:"#302b63"}}>{l}</option>)}</select></div>}
-            {authError&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>⚠️ {authError}</div>}
+            {authError&&<div style={{background:authError.startsWith("✅")?"rgba(34,197,94,0.15)":"rgba(239,68,68,0.15)",border:`1px solid ${authError.startsWith("✅")?"rgba(34,197,94,0.4)":"rgba(239,68,68,0.4)"}`,borderRadius:10,padding:"10px 14px",color:authError.startsWith("✅")?"#86efac":"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>{authError}</div>}
             <button onClick={handle} disabled={authLoading} style={{width:"100%",padding:15,borderRadius:14,border:"none",background:"linear-gradient(135deg,#6366f1,#8b5cf6)",color:"white",fontWeight:800,fontSize:16,cursor:authLoading?"not-allowed":"pointer",fontFamily:"'Tajawal',system-ui",boxShadow:"0 4px 20px rgba(99,102,241,0.5)",display:"flex",alignItems:"center",justifyContent:"center",gap:10,opacity:authLoading?0.7:1}}>
               {authLoading?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span><span>جاري التحقق...</span></>:isReg?"إنشاء الحساب ✓":"تسجيل الدخول →"}
             </button>
@@ -545,7 +594,7 @@ function Ailo(){
           <button onClick={()=>setShowSettings(false)} style={btnP({width:"100%",marginBottom:10})}>حفظ ✓</button>
 
           {/* LOGOUT */}
-          <button onClick={()=>{setShowSettings(false);setAppScreen("login");setAuthForm({name:"",email:"",password:"",lang:"Arabic"});}}
+          <button onClick={()=>{setShowSettings(false);setAppScreen("login");setAuthForm({name:"",email:"",password:"",lang:"Arabic"});try{localStorage.removeItem("ailo_token");}catch(e){}}}
             style={{width:"100%",padding:"13px",borderRadius:50,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#ef4444",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             {Ic.logout("#ef4444",17)}<span>تسجيل الخروج</span>
           </button>
