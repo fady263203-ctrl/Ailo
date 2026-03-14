@@ -327,7 +327,7 @@ function Ailo(){
     const rid = roomId || "ailo_"+Date.now();
     joinAgora(rid, callType);
     return ()=>{ leaveAgora(); };
-  },[screen]);
+  },[screen, roomId]);
 
   useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
@@ -338,8 +338,20 @@ function Ailo(){
   useEffect(()=>{if(!challengeActive)return;const i=setInterval(()=>{setChallengeTime(t=>{if(t<=1){setChallengeActive(false);clearInterval(i);return 0;}return t-1;});if(Math.random()>0.6)setChallengeScore(s=>({...s,opp:s.opp+1}));},1000);return()=>clearInterval(i);},[challengeActive]);
 
   // ── AGORA RTC refs (must be before any early return) ─────────────────────
-  const AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
-  const AGORA_TOKEN  = "007eJxTYOjMTc2yjvwhrbrhkbmvwfRkbsUzys8sFFd5Xmtw/pbQtUCBwdTYwsTUxDQ1ycjS0iQ5Lc0i0SjN1CzFJM3MJCklOdHseO/WzIZARoZ09S+MjAwQCOKzMCRm5uQzMAAA38Iewg==";
+  const AGORA_APP_ID    = "5384545eb2994cff8a2f56d4f64bdca6";
+  const AGORA_TOKEN_URL = "https://tsdpznjarcvmpcrmmbdu.supabase.co/functions/v1/ailo-token-generator";
+
+  const getAgoraToken = useCallback(async(channel)=>{
+    try{
+      const res = await fetch(AGORA_TOKEN_URL, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body: JSON.stringify({ channel, uid:0, expiry:86400 })
+      });
+      const data = await res.json();
+      return data.token || null;
+    }catch(e){ return null; }
+  },[]);
   const agoraRef       = useRef(null);
   const localAudioRef  = useRef(null);
   const localVideoRef  = useRef(null);
@@ -358,6 +370,7 @@ function Ailo(){
     if(!window.AgoraRTC) return;
     try{
       await leaveAgora();
+      const token = await getAgoraToken(channelName);
       const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
       agoraRef.current = client;
       client.on("user-published", async(user, mediaType)=>{
@@ -365,7 +378,7 @@ function Ailo(){
         if(mediaType==="audio") user.audioTrack?.play();
         if(mediaType==="video" && remoteVideoElRef.current) user.videoTrack?.play(remoteVideoElRef.current);
       });
-      await client.join(AGORA_APP_ID, "ailo", AGORA_TOKEN, null);
+      await client.join(AGORA_APP_ID, channelName, token, null);
       if(type==="voice"||type==="video"){
         const audio = await window.AgoraRTC.createMicrophoneAudioTrack();
         localAudioRef.current = audio;
@@ -378,7 +391,7 @@ function Ailo(){
         if(localVideoElRef.current) video.play(localVideoElRef.current);
       }
     }catch(e){ console.error("Agora:",e); }
-  },[leaveAgora]);
+  },[leaveAgora, getAgoraToken]);
 
   // mute/unmute effects
   useEffect(()=>{ if(localAudioRef.current) localAudioRef.current.setEnabled(micOn); },[micOn]);
