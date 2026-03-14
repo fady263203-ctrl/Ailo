@@ -322,6 +322,13 @@ function Ailo(){
     if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
     setScreen("home");
   };
+  useEffect(()=>{
+    if(screen!=="call") return;
+    const rid = roomId || "ailo_"+Date.now();
+    joinAgora(rid, callType);
+    return ()=>{ leaveAgora(); };
+  },[screen]);
+
   useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
@@ -329,6 +336,52 @@ function Ailo(){
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs]);
   useEffect(()=>{const c=SRS[srsIdx];if(c.type==="arrange")setArrWords([...c.words].sort(()=>Math.random()-0.5));if(c.type==="match")setMatchPairs({});setArrSel([]);setMatchSel(null);setSrsAnswer(null);setSpeechRes("");},[srsIdx]);
   useEffect(()=>{if(!challengeActive)return;const i=setInterval(()=>{setChallengeTime(t=>{if(t<=1){setChallengeActive(false);clearInterval(i);return 0;}return t-1;});if(Math.random()>0.6)setChallengeScore(s=>({...s,opp:s.opp+1}));},1000);return()=>clearInterval(i);},[challengeActive]);
+
+  // ── AGORA RTC refs (must be before any early return) ─────────────────────
+  const AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
+  const agoraRef       = useRef(null);
+  const localAudioRef  = useRef(null);
+  const localVideoRef  = useRef(null);
+  const localVideoElRef   = useRef(null);
+  const remoteVideoElRef  = useRef(null);
+
+  const leaveAgora = useCallback(async()=>{
+    try{
+      if(localAudioRef.current){ await localAudioRef.current.stop(); await localAudioRef.current.close(); localAudioRef.current=null; }
+      if(localVideoRef.current){ await localVideoRef.current.stop(); await localVideoRef.current.close(); localVideoRef.current=null; }
+      if(agoraRef.current){ await agoraRef.current.leave(); agoraRef.current=null; }
+    }catch(e){}
+  },[]);
+
+  const joinAgora = useCallback(async(channelName, type)=>{
+    if(!window.AgoraRTC) return;
+    try{
+      await leaveAgora();
+      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
+      agoraRef.current = client;
+      client.on("user-published", async(user, mediaType)=>{
+        await client.subscribe(user, mediaType);
+        if(mediaType==="audio") user.audioTrack?.play();
+        if(mediaType==="video" && remoteVideoElRef.current) user.videoTrack?.play(remoteVideoElRef.current);
+      });
+      await client.join(AGORA_APP_ID, channelName, null, null);
+      if(type==="voice"||type==="video"){
+        const audio = await window.AgoraRTC.createMicrophoneAudioTrack();
+        localAudioRef.current = audio;
+        await client.publish([audio]);
+      }
+      if(type==="video"){
+        const video = await window.AgoraRTC.createCameraVideoTrack();
+        localVideoRef.current = video;
+        await client.publish([video]);
+        if(localVideoElRef.current) video.play(localVideoElRef.current);
+      }
+    }catch(e){ console.error("Agora:",e); }
+  },[leaveAgora]);
+
+  // mute/unmute effects
+  useEffect(()=>{ if(localAudioRef.current) localAudioRef.current.setEnabled(micOn); },[micOn]);
+  useEffect(()=>{ if(localVideoRef.current) localVideoRef.current.setEnabled(camOn); },[camOn]);
 
   const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   const now=()=>new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"});
@@ -489,64 +542,10 @@ function Ailo(){
     </div>
   );
 
-  // ── AGORA RTC ─────────────────────────────────────────────────────────────
-  const AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
-  const agoraRef  = useRef(null); // AgoraRTC client
-  const localAudioRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const localVideoElRef = useRef(null);
-  const remoteVideoElRef = useRef(null);
-
-  const leaveAgora = useCallback(async()=>{
-    try{
-      if(localAudioRef.current){ await localAudioRef.current.stop(); await localAudioRef.current.close(); localAudioRef.current=null; }
-      if(localVideoRef.current){ await localVideoRef.current.stop(); await localVideoRef.current.close(); localVideoRef.current=null; }
-      if(agoraRef.current){ await agoraRef.current.leave(); }
-    }catch(e){}
-  },[]);
-
-  const joinAgora = useCallback(async(channelName, type)=>{
-    if(!window.AgoraRTC) return;
-    try{
-      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
-      agoraRef.current = client;
-      client.on("user-published", async(user, mediaType)=>{
-        await client.subscribe(user, mediaType);
-        if(mediaType==="audio"){ user.audioTrack?.play(); }
-        if(mediaType==="video" && remoteVideoElRef.current){ user.videoTrack?.play(remoteVideoElRef.current); }
-      });
-      await client.join(AGORA_APP_ID, channelName, null, null);
-      if(type==="voice"||type==="video"){
-        const audio = await window.AgoraRTC.createMicrophoneAudioTrack();
-        localAudioRef.current = audio;
-        await client.publish([audio]);
-      }
-      if(type==="video"){
-        const video = await window.AgoraRTC.createCameraVideoTrack();
-        localVideoRef.current = video;
-        await client.publish([video]);
-        if(localVideoElRef.current) video.play(localVideoElRef.current);
-      }
-    }catch(e){ console.error("Agora error:",e); }
-  },[]);
-
-  // mute/unmute
-  useEffect(()=>{
-    if(localAudioRef.current) localAudioRef.current.setEnabled(micOn);
-  },[micOn]);
-
-  useEffect(()=>{
-    if(localVideoRef.current) localVideoRef.current.setEnabled(camOn);
-  },[camOn]);
-
   // ── CALL ──────────────────────────────────────────────────────────────────
   if(screen==="call") return(
     <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
-      {/* Load Agora SDK */}
-      {!window.AgoraRTC && <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js" onLoad={()=>joinAgora(roomId||"ailo_"+Date.now(), callType)}/>}
-      {useEffect(()=>{ if(window.AgoraRTC) joinAgora(roomId||"ailo_test", callType); return()=>leaveAgora(); },[]) && null}
       <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
-      {/* Remote video full screen */}
       {callType==="video" && <div ref={remoteVideoElRef} style={{position:"absolute",inset:0,background:"#000",zIndex:0}}/>}
       <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:2}}>
         <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
