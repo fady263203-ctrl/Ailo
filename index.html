@@ -203,6 +203,9 @@ function Ailo(){
   const btnP=(extra={})=>({background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:50,padding:"13px 28px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"'Tajawal',system-ui",boxShadow:`0 4px 18px ${glow}`,transition:"all 0.2s",...extra});
   const tag=(c)=>({background:`${c}22`,color:c,border:`1px solid ${c}44`,borderRadius:50,padding:"3px 11px",fontSize:11,fontWeight:700,display:"inline-block"});
 
+  // XP double state
+  const[xpDouble,setXpDouble]=useState(()=>{ try{ return Date.now()<(parseInt(localStorage.getItem("ailo_xp_double_until")||"0")); }catch(e){return false;} });
+
   const addXp=useCallback((amt,label)=>{
     const multiplied = xpDouble ? amt*2 : amt;
     setTotalXp(x=>x+multiplied);
@@ -256,7 +259,6 @@ function Ailo(){
   },[userId,profile.name,profile.avatar]);
 
   // XP double state
-  const[xpDouble,setXpDouble]=useState(()=>{ try{ return Date.now()<(parseInt(localStorage.getItem("ailo_xp_double_until")||"0")); }catch(e){return false;} });
 
   // ── Supabase Realtime Matching ──────────────────────────────────────────────
   const startSearch = (type) => {
@@ -732,7 +734,7 @@ function Ailo(){
           ))}
           <div style={{...glass({marginTop:6})}}>
             <div style={{fontWeight:800,fontSize:13,marginBottom:12,color:muted}}>إحصائياتك الأسبوعية</div>
-            <WeekChart data={WEEK} primary={primary}/>
+            <WeekChart data={[0,1,2,3,4,5,6].map(i=>{const d=new Date();d.setDate(d.getDate()-6+i);const ds=d.toLocaleDateString("en",{month:"short",day:"numeric"});return Math.max(callHistory.filter(h=>h.date===ds).length*20,5);})} primary={primary}/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:12}}>{[["12","محادثة"],["3.5h","تحدثت"],["48","تمرين"]].map(([n,l])=>(<div key={l} style={{textAlign:"center",background:`${primary}18`,border:`1px solid ${border}`,borderRadius:12,padding:"11px 6px"}}><div style={{fontWeight:900,fontSize:20,color:primary}}>{n}</div><div style={{color:muted,fontSize:10,marginTop:2}}>{l}</div></div>))}</div>
           </div>
           <div style={{...glass({marginTop:12})}}>
