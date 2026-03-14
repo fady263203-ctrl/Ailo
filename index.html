@@ -339,6 +339,7 @@ function Ailo(){
 
   // ── AGORA RTC refs (must be before any early return) ─────────────────────
   const AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
+  const AGORA_TOKEN  = "007eJxTYOjMTc2yjvwhrbrhkbmvwfRkbsUzys8sFFd5Xmtw/pbQtUCBwdTYwsTUxDQ1ycjS0iQ5Lc0i0SjN1CzFJM3MJCklOdHseO/WzIZARoZ09S+MjAwQCOKzMCRm5uQzMAAA38Iewg==";
   const agoraRef       = useRef(null);
   const localAudioRef  = useRef(null);
   const localVideoRef  = useRef(null);
@@ -364,7 +365,7 @@ function Ailo(){
         if(mediaType==="audio") user.audioTrack?.play();
         if(mediaType==="video" && remoteVideoElRef.current) user.videoTrack?.play(remoteVideoElRef.current);
       });
-      await client.join(AGORA_APP_ID, channelName, null, null);
+      await client.join(AGORA_APP_ID, "ailo", AGORA_TOKEN, null);
       if(type==="voice"||type==="video"){
         const audio = await window.AgoraRTC.createMicrophoneAudioTrack();
         localAudioRef.current = audio;
