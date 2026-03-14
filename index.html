@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Ailo — تعلم اللغات</title>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
+<script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -28,6 +29,7 @@ const{useState,useEffect,useRef,useCallback}=React;
 const LIGHT = { bg:"linear-gradient(135deg,#f8fafc 0%,#eef2ff 50%,#faf5ff 100%)", card:"rgba(255,255,255,0.82)", border:"rgba(99,102,241,0.15)", text:"#1e1b4b", muted:"#6b7280", input:"rgba(0,0,0,0.05)" };
 const DARK  = { bg:"linear-gradient(135deg,#0f0c29 0%,#1a1040 50%,#0f0c29 100%)", card:"rgba(30,25,80,0.65)", border:"rgba(129,140,248,0.18)", text:"#e0e7ff", muted:"#8b8fa8", input:"rgba(255,255,255,0.08)" };
 const ACCENTS = {
+  gray:    { primary:"#64748b", secondary:"#94a3b8", accent:"#7c3aed", glow:"rgba(100,116,139,0.3)"  },
   indigo:  { primary:"#6366f1", secondary:"#a5b4fc", accent:"#f0abfc", glow:"rgba(99,102,241,0.3)"   },
   rose:    { primary:"#f43f5e", secondary:"#fb7185", accent:"#fbbf24", glow:"rgba(244,63,94,0.3)"    },
   emerald: { primary:"#10b981", secondary:"#34d399", accent:"#06b6d4", glow:"rgba(16,185,129,0.3)"   },
@@ -41,12 +43,22 @@ const getLvl = (xp) => { let l=1,acc=0; while(acc+xpForLevel(l)<=xp){acc+=xpForL
 const SEEDS=["Aisha","Sara","Fatima","Layla","Nour","Hana","Rania","Dina","Maya","Lena","Sofia","Emma","Olivia","Ava","Isabella","Mia","Charlotte","Amelia","Harper","Evelyn","Luna","Chloe","Penelope","Grace","Zoe","Natalie","Hannah","Lily","Eleanor","Aria","Scarlett","Victoria","Aurora","Claire","Aaliyah","Savannah","Audrey","Brooklyn","Bella","Skylar","Leah","Zara","Nadia","Yasmin","Mariam","Heba","Rana","Samar","Noura","Reem"];
 const avUrl = s=>`https://api.dicebear.com/7.x/lorelei/svg?seed=${s}&backgroundColor=ffd5dc,ffdfbf,ffecd2,f8b4d9,b6e3f4`;
 const SRS=[{word:"Hello",type:"mcq",options:["مرحباً","وداعاً","شكراً","آسف"],answer:0},{word:"Beautiful",type:"arrange",words:["جميل","هذا","الطقس"],answer:"هذا الطقس جميل"},{word:"Thank you",type:"mcq",options:["من فضلك","شكراً","آسف","نعم"],answer:1},{word:"Friend",type:"mcq",options:["عدو","صديق","أخ","جار"],answer:1},{word:"Water",type:"match",pairs:[["Water","ماء"],["Fire","نار"],["Sky","سماء"],["Earth","أرض"]],answer:null},{word:"Love",type:"mcq",options:["كره","خوف","حب","فرح"],answer:2},{word:"Goodbye",type:"arrange",words:["وداعاً","يا","صديقي"],answer:"وداعاً يا صديقي"},{word:"Food",type:"speech",sentence:"I would like some food please",answer:null}];
-const LB=[{rank:1,av:"🦁",name:"Ahmad",xp:4820,tier:"gold",delta:"+2"},{rank:2,av:"🐯",name:"Sara",xp:4310,tier:"gold",delta:"="},{rank:3,av:"🦊",name:"أنت",xp:3950,tier:"gold",delta:"-1",isMe:true},{rank:4,av:"🐬",name:"Alex",xp:3210,tier:"silver",delta:"+1"},{rank:5,av:"🌸",name:"Maria",xp:2890,tier:"silver",delta:"-2"},{rank:6,av:"🐻",name:"Jin",xp:2340,tier:"silver",delta:"+"},{rank:7,av:"🦋",name:"Lena",xp:1890,tier:"bronze",delta:"="},{rank:8,av:"🎭",name:"Omar",xp:1420,tier:"bronze",delta:"-1"}];
-const QUESTS=[{id:1,icon:"💬",text:"أرسل 5 رسائل",xp:20,done:false,progress:3,total:5},{id:2,icon:"📚",text:"تعلم 5 كلمات",xp:30,done:true,progress:5,total:5},{id:3,icon:"🤝",text:"شارك نتيجتك",xp:15,done:false,progress:0,total:1}];
-const BADGES=[{icon:"💬",name:"أول محادثة",earned:true},{icon:"🔥",name:"سلسلة 5 أيام",earned:true},{icon:"🎤",name:"المتحدث",earned:false},{icon:"📚",name:"حافظ الكلمات",earned:true},{icon:"🥇",name:"في القمة",earned:false},{icon:"⚔️",name:"المتحدي",earned:false}];
-const HIST=[{id:1,partner:"Alex 🐬",lang:"English",dur:"12 min",date:"Mar 10",type:"video",xp:45},{id:2,partner:"Maria 🌸",lang:"Spanish",dur:"8 min",date:"Mar 9",type:"voice",xp:30},{id:3,partner:"Jin 🐯",lang:"Japanese",dur:"25 min",date:"Mar 8",type:"video",xp:80},{id:4,partner:"Sara 🦋",lang:"French",dur:"5 min",date:"Mar 7",type:"text",xp:20}];
 const BOTS=["رائع! هل يمكنك استخدامها في جملة؟ 😊","ممتاز! أنت تتعلم بسرعة! 🌟","نطق مثالي! استمر! 🎯","سؤال رائع! 💡","أنت تتقدم بشكل مذهل! 🏆"];
-const WEEK=[40,65,30,80,55,90,70];
+// Daily quests template - reset each day
+const QUESTS_TPL=[
+  {id:1,icon:"💬",text:"أرسل 5 رسائل",       xp:20,total:5,  key:"msgs"},
+  {id:2,icon:"📚",text:"أكمل 3 تمارين SRS",   xp:30,total:3,  key:"srs"},
+  {id:3,icon:"📞",text:"أجرِ مكالمة واحدة",   xp:40,total:1,  key:"calls"},
+];
+// Badge definitions with unlock conditions
+const BADGE_DEFS=[
+  {icon:"💬",name:"أول محادثة",    key:"first_msg",   cond:(s)=>s.totalMsgs>=1},
+  {icon:"🔥",name:"سلسلة 5 أيام", key:"streak5",      cond:(s)=>s.streak>=5},
+  {icon:"🎤",name:"المتحدث",      key:"speech10",     cond:(s)=>s.speechDone>=3},
+  {icon:"📚",name:"حافظ الكلمات", key:"vocab10",      cond:(s)=>s.srsTotal>=10},
+  {icon:"🥇",name:"في القمة",     key:"top3",         cond:(s)=>s.lbRank<=3&&s.lbRank>0},
+  {icon:"⚔️", name:"المتحدي",     key:"winner",       cond:(s)=>s.challengeWins>=1},
+];
 
 const Ic={
   home:   (c,s=22)=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z"/></svg>,
@@ -91,26 +103,35 @@ function WeekChart({data,primary}){
 }
 
 function Ailo(){
-  const[accentKey,setAccentKey]=useState("indigo");
-  const[darkMode,setDarkMode]=useState(true);
-  const[appScreen,setAppScreen]=useState("splash");
+  // ── load saved state from localStorage ──
+  const load=(k,def)=>{ try{ const v=localStorage.getItem("ailo_"+k); return v!==null?JSON.parse(v):def; }catch(e){return def;} };
+  const save=(k,v)=>{ try{ localStorage.setItem("ailo_"+k,JSON.stringify(v)); }catch(e){} };
+
+  const[accentKey,setAccentKeyRaw]=useState(()=>load("accent","gray"));
+  const setAccentKey=(v)=>{ setAccentKeyRaw(v); save("accent",v); };
+  const[darkMode,setDarkModeRaw]=useState(()=>load("dark",true));
+  const setDarkMode=(v)=>{ const nv=typeof v==="function"?v(darkMode):v; setDarkModeRaw(nv); save("dark",nv); };
+  const[appScreen,setAppScreen]=useState(()=>{ try{ return localStorage.getItem("ailo_token")?"main":"splash"; }catch(e){return "splash";} });
   const[authForm,setAuthForm]=useState({name:"",email:"",password:"",lang:"Arabic"});
   const[authError,setAuthError]=useState("");
   const[authLoading,setAuthLoading]=useState(false);
   const[tab,setTab]=useState("home");
   const[screen,setScreen]=useState("home");
-  const[callType,setCallType]=useState("video");
+  const[callType,setCallType]=useState("text");
   const[showProfile,setShowProfile]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[showNotif,setShowNotif]=useState(false);
   const[showBlock,setShowBlock]=useState(false);
-  const[profile,setProfile]=useState({avatar:avUrl("Aisha"),name:"مستخدم جديد",status:"👋 مرحباً!",lang:"Arabic",bio:"أتعلم لغة جديدة"});
+  const[profile,setProfileRaw]=useState(()=>load("profile",{avatar:avUrl("Aisha"),name:"مستخدم جديد",status:"👋 مرحباً!",lang:"Arabic",bio:"أتعلم لغة جديدة"}));
+  const setProfile=(fn)=>{ setProfileRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("profile",nv); return nv; }); };
   const[emailInput,setEmailInput]=useState("");
   const[photoMode,setPhotoMode]=useState("gallery");
-  const[totalXp,setTotalXp]=useState(0);
-  const[coins,setCoins]=useState(0);
-  const[streak,setStreak]=useState(0);
-  const[streakFrozen,setStreakFrozen]=useState(false);
+  const[totalXp,setTotalXpRaw]=useState(()=>load("xp",0));
+  const setTotalXp=(fn)=>{ setTotalXpRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("xp",nv); return nv; }); };
+  const[coins,setCoinsRaw]=useState(()=>load("coins",0));
+  const setCoins=(fn)=>{ setCoinsRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("coins",nv); return nv; }); };
+  const[streak,setStreak]=useState(()=>load("streak",0));
+  const[streakFrozen,setStreakFrozen]=useState(()=>load("streakFrozen",false));
   const[searchTime,setSearchTime]=useState(0);
   const[matched,setMatched]=useState(false);
   const[partner,setPartner]=useState({av:"🐬",name:"Alex",country:"?"});
@@ -122,6 +143,21 @@ function Ailo(){
   const[micOn,setMicOn]=useState(true);
   const[camOn,setCamOn]=useState(true);
   const[frontCam,setFrontCam]=useState(true);
+  const[callHistory,setCallHistory]=useState(()=>load("callhist",[]));
+  // Real stats counters
+  const[stats,setStatsRaw]=useState(()=>load("stats",{totalMsgs:0,srsTotal:0,speechDone:0,streak:0,challengeWins:0,lbRank:0,callsTotal:0}));
+  const setStats=(fn)=>{ setStatsRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("stats",nv); return nv; }); };
+  // Daily quests - reset each day
+  const[quests,setQuests]=useState(()=>{
+    const saved=load("quests_v2",null);
+    const today=new Date().toDateString();
+    if(saved && saved.date===today) return saved.quests;
+    return QUESTS_TPL.map(q=>({...q,progress:0,done:false,claimed:false}));
+  });
+  const saveQuests=(qs)=>{ save("quests_v2",{date:new Date().toDateString(),quests:qs}); };
+  // Leaderboard from Supabase
+  const[lbData,setLbData]=useState([]);
+  const[lbLoading,setLbLoading]=useState(false);
   const[botMsgs,setBotMsgs]=useState([{id:1,from:"bot",text:"مرحباً! أنا مساعدك للغات ✨ كيف يمكنني مساعدتك؟",time:"10:00"}]);
   const[botInput,setBotInput]=useState("");
   const[srsIdx,setSrsIdx]=useState(0);
@@ -140,6 +176,7 @@ function Ailo(){
   const[challengeScore,setChallengeScore]=useState({me:0,opp:0});
   const[xpPopup,setXpPopup]=useState(null);
   const[notifMuted,setNotifMuted]=useState([]);
+  const[storeTab,setStoreTab]=useState(false);
   // Supabase realtime
   const[userId,setUserId]=useState("");
   const[roomId,setRoomId]=useState("");
@@ -147,6 +184,7 @@ function Ailo(){
   const roomRef=useRef(null);
   const msgEnd=useRef(null);
   const botEnd=useRef(null);
+  const fileRef=useRef(null);
 
   const SUPA_URL="https://tsdpznjarcvmpcrmmbdu.supabase.co";
   const SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
@@ -165,7 +203,60 @@ function Ailo(){
   const btnP=(extra={})=>({background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:50,padding:"13px 28px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"'Tajawal',system-ui",boxShadow:`0 4px 18px ${glow}`,transition:"all 0.2s",...extra});
   const tag=(c)=>({background:`${c}22`,color:c,border:`1px solid ${c}44`,borderRadius:50,padding:"3px 11px",fontSize:11,fontWeight:700,display:"inline-block"});
 
-  const addXp=useCallback((amt,label)=>{setTotalXp(x=>x+amt);setXpPopup({amt,label});setTimeout(()=>setXpPopup(null),2000);},[]);
+  const addXp=useCallback((amt,label)=>{
+    const multiplied = xpDouble ? amt*2 : amt;
+    setTotalXp(x=>x+multiplied);
+    setXpPopup({amt:multiplied,label});
+    setTimeout(()=>setXpPopup(null),2000);
+  },[]);
+
+  // Update quest progress
+  const updateQuest=(key,inc=1)=>{
+    setQuests(qs=>{
+      const nqs=qs.map(q=>{
+        if(q.key!==key||q.claimed) return q;
+        const np=Math.min(q.progress+inc,q.total);
+        return {...q,progress:np,done:np>=q.total};
+      });
+      saveQuests(nqs); return nqs;
+    });
+  };
+
+  // Check and unlock badges automatically
+  const checkBadges=useCallback((s)=>{
+    const earned=load("badges_earned",[]);
+    const newBadges=[];
+    BADGE_DEFS.forEach(b=>{ if(!earned.includes(b.key)&&b.cond(s)){ newBadges.push(b.key); } });
+    if(newBadges.length){ save("badges_earned",[...earned,...newBadges]); setXpPopup({amt:0,label:`🏅 شارة جديدة: ${BADGE_DEFS.find(b=>b.key===newBadges[0])?.name}`}); setTimeout(()=>setXpPopup(null),3000); }
+    return [...earned,...newBadges];
+  },[]);
+
+  // Fetch real leaderboard from Supabase
+  const fetchLB=useCallback(async()=>{
+    setLbLoading(true);
+    try{
+      const res=await fetch(`${SUPA_URL}/rest/v1/leaderboard?select=*&order=xp.desc&limit=20`,{
+        headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${load("token","")}`}
+      });
+      if(res.ok){ const data=await res.json(); if(data&&data.length) setLbData(data); }
+    }catch(e){}
+    setLbLoading(false);
+  },[]);
+
+  // Push my XP to Supabase leaderboard
+  const pushLB=useCallback(async(xp)=>{
+    const token=load("token",""); if(!token) return;
+    try{
+      await fetch(`${SUPA_URL}/rest/v1/leaderboard`,{
+        method:"POST",
+        headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${token}`,"Content-Type":"application/json","Prefer":"resolution=merge-duplicates"},
+        body:JSON.stringify({user_id:userId,name:profile.name,avatar:profile.avatar,xp,updated_at:new Date().toISOString()})
+      });
+    }catch(e){}
+  },[userId,profile.name,profile.avatar]);
+
+  // XP double state
+  const[xpDouble,setXpDouble]=useState(()=>{ try{ return Date.now()<(parseInt(localStorage.getItem("ailo_xp_double_until")||"0")); }catch(e){return false;} });
 
   // ── Supabase Realtime Matching ──────────────────────────────────────────────
   const startSearch = (type) => {
@@ -215,10 +306,12 @@ function Ailo(){
 
   const acceptMatch = () => {
     addXp(10,"مطابقة");
-    // Leave lobby
     const supa = getSupa();
     if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
-    joinRoom(roomId);
+    const rid = roomId || "ailo_"+Date.now();
+    setRoomId(rid);
+    joinRoom(rid);
+    if(callType!=="text") setTimeout(()=>joinAgora(rid, callType),500);
     setScreen(callType==="text"?"chat":"call");
   };
 
@@ -227,6 +320,7 @@ function Ailo(){
     if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
     setScreen("home");
   };
+  useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
@@ -393,27 +487,112 @@ function Ailo(){
     </div>
   );
 
+  // ── AGORA RTC ─────────────────────────────────────────────────────────────
+  const AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
+  const agoraRef  = useRef(null); // AgoraRTC client
+  const localAudioRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const localVideoElRef = useRef(null);
+  const remoteVideoElRef = useRef(null);
+
+  const leaveAgora = useCallback(async()=>{
+    try{
+      if(localAudioRef.current){ await localAudioRef.current.stop(); await localAudioRef.current.close(); localAudioRef.current=null; }
+      if(localVideoRef.current){ await localVideoRef.current.stop(); await localVideoRef.current.close(); localVideoRef.current=null; }
+      if(agoraRef.current){ await agoraRef.current.leave(); }
+    }catch(e){}
+  },[]);
+
+  const joinAgora = useCallback(async(channelName, type)=>{
+    if(!window.AgoraRTC) return;
+    try{
+      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
+      agoraRef.current = client;
+      client.on("user-published", async(user, mediaType)=>{
+        await client.subscribe(user, mediaType);
+        if(mediaType==="audio"){ user.audioTrack?.play(); }
+        if(mediaType==="video" && remoteVideoElRef.current){ user.videoTrack?.play(remoteVideoElRef.current); }
+      });
+      await client.join(AGORA_APP_ID, channelName, null, null);
+      if(type==="voice"||type==="video"){
+        const audio = await window.AgoraRTC.createMicrophoneAudioTrack();
+        localAudioRef.current = audio;
+        await client.publish([audio]);
+      }
+      if(type==="video"){
+        const video = await window.AgoraRTC.createCameraVideoTrack();
+        localVideoRef.current = video;
+        await client.publish([video]);
+        if(localVideoElRef.current) video.play(localVideoElRef.current);
+      }
+    }catch(e){ console.error("Agora error:",e); }
+  },[]);
+
+  // mute/unmute
+  useEffect(()=>{
+    if(localAudioRef.current) localAudioRef.current.setEnabled(micOn);
+  },[micOn]);
+
+  useEffect(()=>{
+    if(localVideoRef.current) localVideoRef.current.setEnabled(camOn);
+  },[camOn]);
+
   // ── CALL ──────────────────────────────────────────────────────────────────
   if(screen==="call") return(
     <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
+      {/* Load Agora SDK */}
+      {!window.AgoraRTC && <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js" onLoad={()=>joinAgora(roomId||"ailo_"+Date.now(), callType)}/>}
+      {useEffect(()=>{ if(window.AgoraRTC) joinAgora(roomId||"ailo_test", callType); return()=>leaveAgora(); },[]) && null}
       <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
-      <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:1}}>
+      {/* Remote video full screen */}
+      {callType==="video" && <div ref={remoteVideoElRef} style={{position:"absolute",inset:0,background:"#000",zIndex:0}}/>}
+      <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:2}}>
         <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
         <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>{fmt(callTime)}</div>
       </div>
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:1}}>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:90,filter:`drop-shadow(0 0 30px ${primary}44)`}}>{partner.av}</div>
-          <div style={{fontSize:24,fontWeight:800,color:darkMode?"white":text,marginTop:12}}>{partner.name}</div>
-          <div style={{color:muted,fontSize:13,marginTop:4}}>{callType==="video"?"مكالمة فيديو":"مكالمة صوتية"}</div>
-        </div>
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>
+        {callType!=="video" && <div style={{textAlign:"center"}}>
+          <div style={{width:100,height:100,borderRadius:50,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 30px ${primary}44`}}>
+            {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:80,lineHeight:"100px",display:"block"}}>{partner.av}</span>}
+          </div>
+          <div style={{fontSize:24,fontWeight:800,color:"white"}}>{partner.name}</div>
+          <div style={{color:muted,fontSize:13,marginTop:4}}>مكالمة صوتية 🎙️</div>
+          <div style={{marginTop:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
+          </div>
+        </div>}
       </div>
-      {callType==="video"&&<div style={{position:"absolute",bottom:120,left:20,width:88,height:118,borderRadius:16,border:`2px solid ${primary}`,overflow:"hidden",boxShadow:`0 0 20px ${glow}`,zIndex:2}}><Av src={profile.avatar} size={88}/></div>}
-      <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:darkMode?"rgba(0,0,0,0.7)":"rgba(255,255,255,0.8)",backdropFilter:"blur(10px)",zIndex:1}}>
-        {[{icon:micOn?Ic.mic(darkMode?"white":primary,22):Ic.micOff("white",22),label:micOn?"صوت":"كتم",active:micOn,action:()=>setMicOn(m=>!m)},{icon:Ic.endCall("white",24),label:"إنهاء",end:true,action:()=>{setScreen("home");addXp(30,"مكالمة");}},...(callType==="video"?[{icon:camOn?Ic.video(darkMode?"white":primary,22):Ic.video("white",22),label:camOn?"كاميرا":"إيقاف",active:camOn,action:()=>setCamOn(c=>!c)},{icon:Ic.flip(darkMode?"white":primary,18),label:"تبديل",active:true,action:()=>setFrontCam(f=>!f)}]:[])].map((b,i)=>(
+      {/* Local video preview */}
+      {callType==="video" && <div ref={localVideoElRef} style={{position:"absolute",bottom:120,left:16,width:90,height:120,borderRadius:16,border:`2px solid ${primary}`,overflow:"hidden",boxShadow:`0 0 20px ${glow}`,zIndex:3,background:"#111"}}/>}
+      <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:3}}>
+        {[
+          {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"صوت":"كتم",  active:micOn,  action:()=>setMicOn(m=>!m)},
+          {icon:Ic.endCall("white",24), label:"إنهاء", end:true, action:()=>{
+            leaveAgora();
+            const dur=fmt(callTime);
+            const entry={id:Date.now(),partner:`${partner.name} ${partner.av}`,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
+            setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
+            setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
+            updateQuest("calls");
+            // update streak
+            const today=new Date().toDateString();
+            const lastDay=load("last_call_day","");
+            if(lastDay!==today){
+              const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+              const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
+              setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
+              setStats(s=>{const ns={...s,streak:newStreak};checkBadges(ns);return ns;});
+            }
+            setScreen("home");addXp(30,"مكالمة");
+          }},
+          ...(callType==="video"?[
+            {icon:camOn?Ic.video("white",22):Ic.video("white",22), label:camOn?"كاميرا":"إيقاف", active:camOn, action:()=>setCamOn(c=>!c)},
+            {icon:Ic.flip("white",18), label:"تبديل", active:true, action:()=>setFrontCam(f=>!f)},
+          ]:[]),
+        ].map((b,i)=>(
           <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
-            <button onClick={b.action} style={{width:b.end?62:52,height:b.end?62:52,borderRadius:b.end?31:26,background:b.end?"linear-gradient(135deg,#ef4444,#dc2626)":b.active?`${primary}33`:"rgba(239,68,68,0.8)",border:`1px solid ${b.end?"transparent":b.active?primary:border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:b.end?"0 4px 20px rgba(239,68,68,0.5)":b.active?`0 0 14px ${glow}`:undefined}}>{b.icon}</button>
-            <span style={{color:muted,fontSize:10}}>{b.label}</span>
+            <button onClick={b.action} style={{width:b.end?62:52,height:b.end?62:52,borderRadius:b.end?31:26,background:b.end?"linear-gradient(135deg,#ef4444,#dc2626)":b.active?`${primary}55`:"rgba(239,68,68,0.8)",border:`1px solid ${b.end?"transparent":b.active?primary:"transparent"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:b.end?"0 4px 20px rgba(239,68,68,0.5)":undefined}}>{b.icon}</button>
+            <span style={{color:"#aaa",fontSize:10}}>{b.label}</span>
           </div>
         ))}
       </div>
@@ -428,7 +607,9 @@ function Ailo(){
       const t=now();
       const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
       setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
-      // broadcast via Supabase
+      // update real stats and quests
+      setStats(s=>{ const ns={...s,totalMsgs:s.totalMsgs+1}; checkBadges(ns); return ns; });
+      updateQuest("msgs");
       if(roomRef.current){
         roomRef.current.send({type:"broadcast",event:"msg",payload:{text:chatInput,time:t}});
         setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),600);
@@ -457,9 +638,18 @@ function Ailo(){
           <div ref={msgEnd}/>
         </div>
         <div style={{padding:"10px 12px",background:card,backdropFilter:"blur(20px)",borderTop:`1px solid ${border}`}}>
+          <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={e=>{
+            const f=e.target.files?.[0]; if(!f)return;
+            const isImg=f.type.startsWith("image/");
+            const nm={id:Date.now(),from:"me",text:isImg?`📷 صورة: ${f.name}`:`📎 ملف: ${f.name}`,time:now(),status:"sent"};
+            setMessages(p=>[...p,nm]); addXp(3,"مرفق");
+            if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:nm.text,time:nm.time}});
+            setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1000);
+            e.target.value="";
+          }}/>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button style={{background:"none",border:"none",cursor:"pointer",opacity:0.5}}>{Ic.attach(muted)}</button>
-            <button style={{background:"none",border:"none",cursor:"pointer",opacity:0.5}}>{Ic.image(muted)}</button>
+            <button onClick={()=>{if(fileRef.current){fileRef.current.accept="application/pdf,.doc,.docx,.txt";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex"}}>{Ic.attach(muted)}</button>
+            <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex"}}>{Ic.image(muted)}</button>
             <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="اكتب رسالة..." style={{...inp,flex:1,padding:"10px 14px",borderRadius:50}}/>
             <button onClick={sendMsg} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
           </div>
@@ -493,7 +683,7 @@ function Ailo(){
       <div style={{background:card,backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderBottom:`1px solid ${border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50,boxShadow:"0 4px 20px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
           <button onClick={()=>setShowProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
-          <div style={{fontWeight:900,fontSize:22,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:1}}>✦ Ailo</div>
+          <div style={{fontWeight:900,fontSize:22,color:primary,letterSpacing:1}}>✦ Ailo</div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={()=>setDarkMode(d=>!d)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:"7px 8px",display:"flex",alignItems:"center",gap:4}}>
               {darkMode?Ic.sun(primary,16):Ic.moon(primary,16)}
@@ -529,7 +719,9 @@ function Ailo(){
           </div>
           <div style={{...glass({marginBottom:14})}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center",gap:6}}>{Ic.zap(primary,15)}<span>المهام اليومية</span></div><div style={tag("#f59e0b")}>🎁 مكافآت</div></div>
-            {QUESTS.map(q=>(<div key={q.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:11}}><span style={{fontSize:19}}>{q.icon}</span><div style={{flex:1}}><div style={{fontSize:13,color:q.done?"#22c55e":text,textDecoration:q.done?"line-through":"none"}}>{q.text}</div><div style={{height:4,background:"rgba(128,128,128,0.2)",borderRadius:2,marginTop:4}}><div style={{width:`${(q.progress/q.total)*100}%`,height:"100%",background:q.done?`linear-gradient(90deg,#22c55e,#4ade80)`:`linear-gradient(90deg,${primary},${secondary})`,borderRadius:2,transition:"width 0.8s"}}/></div></div><div style={tag("#f59e0b")}>+{q.xp}XP</div></div>))}
+            {quests.map((q,qi)=>(<div key={q.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:11}}><span style={{fontSize:19}}>{q.icon}</span><div style={{flex:1}}><div style={{fontSize:13,color:q.claimed?"#22c55e":q.done?text:text,textDecoration:q.claimed?"line-through":"none"}}>{q.text}</div><div style={{height:4,background:"rgba(128,128,128,0.2)",borderRadius:2,marginTop:4}}><div style={{width:`${(q.progress/q.total)*100}%`,height:"100%",background:q.claimed||q.done?`linear-gradient(90deg,#22c55e,#4ade80)`:`linear-gradient(90deg,${primary},${secondary})`,borderRadius:2,transition:"width 0.8s"}}/></div></div>
+              {q.claimed?<div style={tag("#22c55e")}>✅ تم</div>:q.done?<button onClick={()=>{ setQuests(qs=>{ const nqs=qs.map((x,i)=>i===qi?{...x,claimed:true}:x); saveQuests(nqs); return nqs; }); addXp(q.xp,"مهمة"); setCoins(c=>c+10); }} style={{...tag("#f59e0b"),cursor:"pointer",border:"none",fontFamily:"'Tajawal',system-ui"}}>استلام +{q.xp}XP</button>:<div style={tag("#f59e0b")}>+{q.xp}XP</div>}
+            </div>))}
           </div>
           <div style={{fontWeight:800,fontSize:13,marginBottom:10,color:muted}}>ابدأ محادثة</div>
           {[{type:"video",icon:"📹",title:"مكالمة فيديو",desc:"تحدث وجهاً لوجه",grad:`linear-gradient(135deg,${primary}33,${secondary}22)`},{type:"voice",icon:"📞",title:"مكالمة صوتية",desc:"حسّن نطقك",grad:`linear-gradient(135deg,#22c55e33,#4ade8022)`},{type:"text",icon:"💬",title:"دردشة نصية",desc:"تبادل الرسائل",grad:`linear-gradient(135deg,#f59e0b33,#fbbf2422)`}].map(c2=>(
@@ -545,7 +737,13 @@ function Ailo(){
           </div>
           <div style={{...glass({marginTop:12})}}>
             <div style={{fontWeight:800,fontSize:13,marginBottom:12,color:muted}}>🏅 شاراتي</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{BADGES.map((b,i)=>(<div key={i} style={{textAlign:"center",padding:"11px 6px",background:b.earned?`${primary}18`:"rgba(128,128,128,0.08)",borderRadius:14,border:`1px solid ${b.earned?primary:border}`,opacity:b.earned?1:0.4,boxShadow:b.earned?`0 0 14px ${glow}`:undefined}}><div style={{fontSize:24}}>{b.icon}</div><div style={{fontSize:10,fontWeight:700,marginTop:4,color:b.earned?primary:muted}}>{b.name}</div></div>))}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{BADGE_DEFS.map((b,i)=>{
+              const earned=load("badges_earned",[]).includes(b.key)||b.cond({...stats,streak});
+              return(<div key={i} style={{textAlign:"center",padding:"11px 6px",background:earned?`${primary}18`:"rgba(128,128,128,0.08)",borderRadius:14,border:`1px solid ${earned?primary:border}`,opacity:earned?1:0.4,boxShadow:earned?`0 0 14px ${glow}`:undefined}}>
+                <div style={{fontSize:24}}>{b.icon}</div>
+                <div style={{fontSize:10,fontWeight:700,marginTop:4,color:earned?primary:muted}}>{b.name}</div>
+              </div>);
+            })}</div>
           </div>
         </div>}
 
@@ -564,7 +762,8 @@ function Ailo(){
         {/* HISTORY */}
         {tab==="history"&&<div style={{animation:"slideIn 0.4s ease"}}>
           <div style={{fontWeight:800,fontSize:15,marginBottom:12,color:muted}}>سجل المحادثات</div>
-          {HIST.map((h,i)=>(<div key={h.id} style={{...glass({marginBottom:10,display:"flex",alignItems:"center",gap:12,animation:`slideIn 0.3s ease ${i*0.07}s both`})}}>
+          {callHistory.length===0&&<div style={{...glass({textAlign:"center",padding:32,color:muted})}}>لا توجد محادثات بعد 💬</div>}
+          {callHistory.map((h,i)=>(<div key={h.id||i} style={{...glass({marginBottom:10,display:"flex",alignItems:"center",gap:12,animation:`slideIn 0.3s ease ${i*0.07}s both`})}}>
             <div style={{width:44,height:44,borderRadius:13,background:`${primary}22`,border:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{h.type==="video"?"📹":h.type==="voice"?"📞":"💬"}</div>
             <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{h.partner}</div><div style={{color:muted,fontSize:12,marginTop:2}}>{h.lang} · {h.dur}</div></div>
             <div style={{textAlign:"left"}}><div style={{color:muted,fontSize:11}}>{h.date}</div><div style={{...tag("#22c55e"),marginTop:4}}>+{h.xp}XP</div></div>
@@ -573,39 +772,95 @@ function Ailo(){
 
         {/* EXERCISES */}
         {tab==="exercises"&&<div style={{animation:"slideIn 0.4s ease"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-            <div style={{fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:6}}>{Ic.star(primary,16)}<span>تمارين SRS</span></div>
-            <div style={{display:"flex",gap:6}}><div style={tag("#22c55e")}>🏆 {srsScore}</div>{srsStreak>1&&<div style={tag("#f59e0b")}>🔥 {srsStreak}</div>}</div>
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <button onClick={()=>setStoreTab(false)} style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${!storeTab?primary:border}`,background:!storeTab?`${primary}22`:"transparent",color:!storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>📚 تدريبات</button>
+            <button onClick={()=>setStoreTab(true)}  style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${storeTab?primary:border}`,background:storeTab?`${primary}22`:"transparent",color:storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>🛍️ المتجر</button>
           </div>
+
+          {storeTab&&<div>
+            <div style={{fontWeight:800,fontSize:14,marginBottom:12,color:muted}}>🛍️ المتجر — رصيدك: <span style={{color:"#f59e0b"}}>{coins} 🪙</span></div>
+            {[
+              {icon:"❄️",name:"تجميد السلسلة",desc:"احمِ سلسلتك ليوم واحد",price:50,action:()=>{setStreakFrozen(true);save("streakFrozen",true);}},
+              {icon:"💎",name:"XP مضاعف",desc:"ضاعف XP لمدة ساعة",price:100,action:()=>{const until=Date.now()+3600000;try{localStorage.setItem("ailo_xp_double_until",until);}catch(e){}setXpDouble(true);setTimeout(()=>setXpDouble(false),3600000);}},
+              {icon:"🎨",name:"إطار ذهبي",desc:"إطار مميز للملف الشخصي",price:200,action:()=>save("golden_frame",true)},
+              {icon:"🏆",name:"شارة VIP",desc:"شارة حصرية على ملفك",price:500,action:()=>{const e=load("badges_earned",[]);if(!e.includes("vip"))save("badges_earned",[...e,"vip"]);}},
+            ].map(item=>(
+              <div key={item.id} style={{...glass({marginBottom:10,display:"flex",alignItems:"center",gap:12})}}>
+                <div style={{fontSize:32,flexShrink:0}}>{item.icon}</div>
+                <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{item.name}</div><div style={{color:muted,fontSize:12,marginTop:2}}>{item.desc}</div></div>
+                <button onClick={()=>{ if(coins>=item.price){setCoins(c=>c-item.price);item.action();addXp(5,"شراء"); } }} disabled={coins<item.price} style={{background:coins>=item.price?`linear-gradient(135deg,${primary},${secondary})`:"rgba(128,128,128,0.2)",border:"none",borderRadius:50,padding:"7px 14px",color:"white",fontSize:12,fontWeight:700,cursor:coins>=item.price?"pointer":"not-allowed",fontFamily:"'Tajawal',system-ui",flexShrink:0}}>{item.price} 🪙</button>
+              </div>
+            ))}
+          </div>}
+
+          {!storeTab&&<>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:6}}>{Ic.star(primary,16)}<span>تمارين SRS</span></div>
+              <div style={{display:"flex",gap:6}}><div style={tag("#22c55e")}>🏆 {srsScore}</div>{srsStreak>1&&<div style={tag("#f59e0b")}>🔥 {srsStreak}</div>}</div>
+            </div>
           <div style={{...glass({marginBottom:12})}}>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:muted,marginBottom:7}}><span>البطاقة {srsIdx+1}/{SRS.length}</span><span>{Math.round((srsIdx/SRS.length)*100)}%</span></div>
             <XPBar pct={Math.round((srsIdx/SRS.length)*100)} primary={primary} accent={accent}/>
           </div>
           {(()=>{const c=SRS[srsIdx];return(
             <div style={{...glass({textAlign:"center",padding:"22px 16px",background:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
-              {c.type==="mcq"&&<><div style={{color:muted,fontSize:12,marginBottom:6}}>ترجم إلى العربية</div><div style={{fontWeight:900,fontSize:36,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:18}}>{c.word}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,textAlign:"right"}}>{c.options.map((o,i)=>{let bg2=card,bc=border,co=text;if(srsAnswer!==null){if(i===c.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}else if(i===srsAnswer){bg2="#ef444422";bc="#ef4444";co="#ef4444";}}return<button key={i} onClick={()=>{if(srsAnswer!==null)return;setSrsAnswer(i);if(i===c.answer){setSrsScore(s=>s+1);setSrsStreak(s=>s+1);addXp(15,"إجابة صحيحة");}else setSrsStreak(0);setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1200);}} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:15,cursor:"pointer",color:co,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{o}</button>;})}</div></>}
-              {c.type==="arrange"&&<><div style={{color:muted,fontSize:12,marginBottom:8}}>رتب الكلمات لتكوين جملة</div><div style={{minHeight:46,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${border}`}}>{arrSel.map((w,i)=><button key={i} onClick={()=>{setArrSel(s=>s.filter((_,j)=>j!==i));setArrWords(w2=>[...w2,w]);}} style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:8,padding:"7px 13px",fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>{w}</button>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12}}>{arrWords.map((w,i)=><button key={i} onClick={()=>{setArrSel(s=>[...s,w]);setArrWords(w2=>w2.filter((_,j)=>j!==i));}} style={{background:card,border:`1px solid ${border}`,borderRadius:8,padding:"8px 14px",fontSize:14,cursor:"pointer",color:text,fontFamily:"'Tajawal',system-ui"}}>{w}</button>)}</div>{srsAnswer==="wrong"&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>الإجابة: {c.answer}</div>}<button onClick={()=>{const ok=arrSel.join(" ")===c.answer;setSrsAnswer(ok?c.answer:"wrong");if(ok){setSrsScore(s=>s+1);addXp(20,"ترتيب صحيح");}setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1200);}} style={btnP({width:"100%"})}>تحقق ✓</button></>}
+              {c.type==="mcq"&&<><div style={{color:muted,fontSize:12,marginBottom:6}}>ترجم إلى العربية</div><div style={{fontWeight:900,fontSize:36,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:18}}>{c.word}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,textAlign:"right"}}>{c.options.map((o,i)=>{let bg2=card,bc=border,co=text;if(srsAnswer!==null){if(i===c.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}else if(i===srsAnswer){bg2="#ef444422";bc="#ef4444";co="#ef4444";}}return<button key={i} onClick={()=>{if(srsAnswer!==null)return;setSrsAnswer(i);if(i===c.answer){setSrsScore(s=>s+1);setSrsStreak(s=>s+1);addXp(15,"إجابة صحيحة");setStats(s=>{const ns={...s,srsTotal:s.srsTotal+1};checkBadges(ns);return ns;});updateQuest("srs");}else setSrsStreak(0);setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1200);}} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:15,cursor:"pointer",color:co,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{o}</button>;})}</div></>}
+              {c.type==="arrange"&&<><div style={{color:muted,fontSize:12,marginBottom:8}}>رتب الكلمات لتكوين جملة</div><div style={{minHeight:46,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${border}`}}>{arrSel.map((w,i)=><button key={i} onClick={()=>{setArrSel(s=>s.filter((_,j)=>j!==i));setArrWords(w2=>[...w2,w]);}} style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:8,padding:"7px 13px",fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>{w}</button>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12}}>{arrWords.map((w,i)=><button key={i} onClick={()=>{setArrSel(s=>[...s,w]);setArrWords(w2=>w2.filter((_,j)=>j!==i));}} style={{background:card,border:`1px solid ${border}`,borderRadius:8,padding:"8px 14px",fontSize:14,cursor:"pointer",color:text,fontFamily:"'Tajawal',system-ui"}}>{w}</button>)}</div>{srsAnswer==="wrong"&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>الإجابة: {c.answer}</div>}<button onClick={()=>{const ok=arrSel.join(" ")===c.answer;setSrsAnswer(ok?c.answer:"wrong");if(ok){setSrsScore(s=>s+1);addXp(20,"ترتيب صحيح");setStats(s=>{const ns={...s,srsTotal:s.srsTotal+1};checkBadges(ns);return ns;});updateQuest("srs");}setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1200);}} style={btnP({width:"100%"})}>تحقق ✓</button></>}
               {c.type==="match"&&<><div style={{color:muted,fontSize:12,marginBottom:12}}>طابق الكلمات مع معانيها</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><div style={{display:"flex",flexDirection:"column",gap:7}}>{c.pairs.map(([e])=><button key={e} onClick={()=>setMatchSel(e)} style={{background:matchSel===e?`linear-gradient(135deg,${primary},${secondary})`:matchPairs[e]?"rgba(34,197,94,0.2)":card,border:`2px solid ${matchSel===e?primary:matchPairs[e]?"#22c55e":border}`,borderRadius:11,padding:11,fontSize:14,cursor:"pointer",color:matchPairs[e]?"#22c55e":matchSel===e?"white":text,fontWeight:700,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{e}</button>)}</div><div style={{display:"flex",flexDirection:"column",gap:7}}>{[...c.pairs].sort(()=>Math.random()-0.5).map(([,a])=><button key={a} onClick={()=>{if(!matchSel)return;const np={...matchPairs,[matchSel]:a};setMatchPairs(np);setMatchSel(null);if(Object.keys(np).length===4){addXp(25,"مطابقة");setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1000);}}} style={{background:Object.values(matchPairs).includes(a)?"rgba(34,197,94,0.2)":card,border:`2px solid ${Object.values(matchPairs).includes(a)?"#22c55e":border}`,borderRadius:11,padding:11,fontSize:14,cursor:"pointer",color:Object.values(matchPairs).includes(a)?"#22c55e":text,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{a}</button>)}</div></div></>}
-              {c.type==="speech"&&<><div style={{color:muted,fontSize:12,marginBottom:10}}>اقرأ هذه الجملة بصوت عالٍ</div><div style={{fontWeight:700,fontSize:16,color:primary,marginBottom:18,padding:"12px",background:`${primary}11`,borderRadius:12,border:`1px solid ${border}`,lineHeight:1.6}}>"{c.sentence}"</div>{speechRes?<><div style={{background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e",borderRadius:12,padding:12,color:"#22c55e",fontWeight:700,marginBottom:12}}>{speechRes}</div><button onClick={()=>{setSpeechRes("");setSrsIdx(x=>(x+1)%SRS.length);}} style={btnP({width:"100%"})}>التالي ←</button></>:<button onClick={()=>{setSpeechOn(true);setTimeout(()=>{setSpeechOn(false);setSpeechRes("جيد جداً! نطقك واضح ✅");addXp(20,"تمرين صوتي");},2500);}} style={btnP({width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10})}>{speechOn?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span><span>جاري التحليل...</span></>:<>{Ic.mic("white",20)}<span>اضغط وتحدث</span></>}</button>}</>}
+              {c.type==="speech"&&<><div style={{color:muted,fontSize:12,marginBottom:10}}>اقرأ هذه الجملة بصوت عالٍ</div><div style={{fontWeight:700,fontSize:16,color:primary,marginBottom:18,padding:"12px",background:`${primary}11`,borderRadius:12,border:`1px solid ${border}`,lineHeight:1.6}}>"{c.sentence}"</div>{speechRes?<><div style={{background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e",borderRadius:12,padding:12,color:"#22c55e",fontWeight:700,marginBottom:12}}>{speechRes}</div><button onClick={()=>{setSpeechRes("");setSrsIdx(x=>(x+1)%SRS.length);}} style={btnP({width:"100%"})}>التالي ←</button></>:<button onClick={()=>{
+                const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+                if(!SR){setSpeechRes("✅ تمرين مكتمل! (المتصفح لا يدعم التعرف على الكلام)");addXp(20,"تمرين صوتي");setStats(s=>{const ns={...s,speechDone:s.speechDone+1};checkBadges(ns);return ns;});updateQuest("srs");return;}
+                setSpeechOn(true);
+                const rec=new SR();
+                rec.lang="en-US"; rec.interimResults=false; rec.maxAlternatives=1;
+                rec.onresult=(e)=>{
+                  const said=e.results[0][0].transcript.toLowerCase();
+                  const target=c.sentence.toLowerCase();
+                  const words=target.split(" "); const saidWords=said.split(" ");
+                  const matches=words.filter(w=>saidWords.includes(w)).length;
+                  const pct=Math.round((matches/words.length)*100);
+                  if(pct>=60){setSpeechRes(`✅ ممتاز! دقة النطق: ${pct}%`);addXp(20,"تمرين صوتي");setStats(s=>{const ns={...s,speechDone:s.speechDone+1};checkBadges(ns);return ns;});updateQuest("srs");}
+                  else{setSpeechRes(`⚠️ حاول مجدداً — دقة: ${pct}% — قلت: "${e.results[0][0].transcript}"`);}
+                  setSpeechOn(false);
+                };
+                rec.onerror=()=>{setSpeechOn(false);setSpeechRes("❌ تعذّر التعرف على الصوت، تأكد من الإذن");};
+                rec.start();
+              }} style={btnP({width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10})}>{speechOn?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span><span>جاري التحليل...</span></>:<>{Ic.mic("white",20)}<span>اضغط وتحدث</span></>}</button>}</>}
             </div>
           );})()}
+          </>}
         </div>}
 
         {/* LEADERBOARD */}
         {tab==="leaderboard"&&<div style={{animation:"slideIn 0.4s ease"}}>
+          {(()=>{
+            const days=[0,1,2,3,4,5,6].map(i=>{const d=new Date();d.setDate(d.getDate()-6+i);const ds=d.toLocaleDateString("en",{month:"short",day:"numeric"});return Math.max(callHistory.filter(h=>h.date===ds).length*20,5);});
+            return(<div style={{...glass({marginBottom:14})}}>
+              <div style={{fontWeight:700,fontSize:13,marginBottom:10,color:muted}}>📊 نشاطك هذا الأسبوع</div>
+              <WeekChart data={days} primary={primary}/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:10}}>
+                {[[callHistory.length,"محادثة"],[callHistory.filter(h=>h.type!=="text").length,"مكالمة"],[stats.srsTotal,"تمرين"]].map(([n,l])=>(
+                  <div key={l} style={{textAlign:"center",background:`${primary}18`,border:`1px solid ${border}`,borderRadius:12,padding:"10px 6px"}}>
+                    <div style={{fontWeight:900,fontSize:20,color:primary}}>{n}</div>
+                    <div style={{color:muted,fontSize:10,marginTop:2}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>);
+          })()}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>{[["🥇","ذهبي","#f59e0b"],["🥈","فضي","#94a3b8"],["🥉","برونزي","#cd7f32"]].map(([ic,n,c])=>(<div key={n} style={{...glass({textAlign:"center",padding:"12px 6px",border:`1px solid ${c}33`})}}>  <div style={{fontSize:26}}>{ic}</div><div style={{fontSize:11,color:c,fontWeight:700,marginTop:3}}>{n}</div></div>))}</div>
-          <div style={{...glass({marginBottom:14,background:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div style={{fontWeight:800,fontSize:14,display:"flex",alignItems:"center",gap:6}}>{Ic.sword(primary)}<span>تحدٍّ مباشر</span></div><div style={tag("#f59e0b")}>+50 XP</div></div>
-            {!showChallenge?<button style={btnP({width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})} onClick={()=>setShowChallenge(true)}>{Ic.sword("white")}<span>تحدّ صديقاً</span></button>:!challengeActive?<div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:8}}>🐬</div><div style={{fontWeight:700,marginBottom:4}}>Alex</div><div style={{color:muted,fontSize:12,marginBottom:14}}>سباق كلمات · 60 ثانية</div><button style={btnP({width:"100%"})} onClick={()=>{setChallengeActive(true);setChallengeTime(60);setChallengeScore({me:0,opp:0});}}>ابدأ ⚡</button></div>:<div style={{textAlign:"center"}}><div style={{display:"flex",justifyContent:"center",gap:24,marginBottom:14}}>{[{av:profile.avatar,sc:challengeScore.me,lbl:"أنت",c:primary},{av:"🐬",sc:challengeScore.opp,lbl:partner.name,c:"#ef4444"}].map((p2,pi)=>(<div key={pi}><Av src={p2.av} size={44}/><div style={{fontWeight:900,fontSize:28,color:p2.c,marginTop:4}}>{p2.sc}</div><div style={{fontSize:11,color:muted}}>{p2.lbl}</div></div>))}</div><div style={{fontWeight:900,fontSize:22,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:10}}>⏱ {challengeTime}ث</div>{challengeTime>0?<button style={btnP({width:"100%"})} onClick={()=>setChallengeScore(s=>({...s,me:s.me+1}))}>+1 كلمة ✓</button>:<div><div style={{fontWeight:800,fontSize:18,color:challengeScore.me>challengeScore.opp?"#22c55e":"#ef4444",marginBottom:10}}>{challengeScore.me>challengeScore.opp?"🏆 فزت!":"😅 حاول مجدداً"}</div><button style={btnP({width:"100%"})} onClick={()=>{setShowChallenge(false);if(challengeScore.me>challengeScore.opp)addXp(50,"فوز");}}>{challengeScore.me>challengeScore.opp?"استلام +50 XP 🎉":"إغلاق"}</button></div>}</div>}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:800,fontSize:14,color:muted}}>🏆 الصدارة الحقيقية</div>
+            <button onClick={fetchLB} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:50,padding:"4px 12px",fontSize:11,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui"}}>{lbLoading?"جاري...":"تحديث 🔄"}</button>
           </div>
-          <div style={{fontWeight:800,fontSize:14,marginBottom:12,color:muted}}>🏆 الصدارة الأسبوعية</div>
-          {LB.map((u,i)=>(<div key={u.rank} style={{...glass({marginBottom:8,display:"flex",alignItems:"center",gap:12,border:u.isMe?`1px solid ${primary}`:undefined,background:u.isMe?`${primary}18`:card,animation:`slideIn 0.3s ease ${i*0.05}s both`})}}>
-            <div style={{width:30,height:30,borderRadius:15,background:`${tierC[u.tier]}22`,border:`1px solid ${tierC[u.tier]}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:tierC[u.tier],flexShrink:0}}>{u.rank<=3?["🥇","🥈","🥉"][u.rank-1]:u.rank}</div>
-            <div style={{fontSize:26,flexShrink:0}}>{u.av}</div>
-            <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{u.name}{u.isMe?" (أنت)":""}</div><div style={{color:tierC[u.tier],fontSize:11,fontWeight:700}}>{u.xp.toLocaleString()} XP</div></div>
-            <div style={{fontSize:12,color:u.delta.startsWith("+")?"#22c55e":u.delta==="="?muted:"#ef4444",fontWeight:700}}>{u.delta}</div>
-          </div>))}
-          <div style={{...glass({marginTop:14})}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>❄️ تجميد السلسلة</div><div style={{color:muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div></div><button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);}}} style={btnP({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>{streakFrozen?"✅ مفعّل":"50 🪙"}</button></div></div>
+          {lbData.length===0&&<div style={{...glass({textAlign:"center",padding:24,color:muted,marginBottom:14})}}>لا يوجد بيانات بعد<br/>اضغط "نشر نتيجتي" لتظهر في الصدارة 🚀</div>}
+          {lbData.map((u,i)=>{const isMe=u.user_id===userId;const tier=i===0?"gold":i<=2?"silver":"bronze";return(<div key={u.user_id||i} style={{...glass({marginBottom:8,display:"flex",alignItems:"center",gap:12,border:isMe?`1px solid ${primary}`:undefined,background:isMe?`${primary}18`:card})}}>
+            <div style={{width:30,height:30,borderRadius:15,background:`${tierC[tier]}22`,border:`1px solid ${tierC[tier]}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:tierC[tier],flexShrink:0}}>{i<3?["🥇","🥈","🥉"][i]:i+1}</div>
+            <div style={{width:32,height:32,borderRadius:16,overflow:"hidden",flexShrink:0,border:`1px solid ${border}`}}>{u.avatar?.startsWith("http")?<img src={u.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:20,lineHeight:"32px",display:"block",textAlign:"center"}}>{u.avatar||"🌍"}</span>}</div>
+            <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{u.name}{isMe?" (أنت)":""}</div><div style={{color:tierC[tier],fontSize:11,fontWeight:700}}>{(u.xp||0).toLocaleString()} XP</div></div>
+          </div>);})}
+          <button onClick={()=>pushLB(totalXp).then(()=>fetchLB())} style={btnP({width:"100%",marginBottom:12,fontSize:13})}>📤 نشر نتيجتي في الصدارة</button>
+          <div style={{...glass({marginBottom:14})}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>❄️ تجميد السلسلة</div><div style={{color:muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div></div><button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);save("streakFrozen",true);}}} disabled={coins<50||streakFrozen} style={btnP({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>{streakFrozen?"✅ مفعّل":"50 🪙"}</button></div></div>
         </div>}
       </div>
 
