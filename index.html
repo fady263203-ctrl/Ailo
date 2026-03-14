@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Ailo — تعلم اللغات</title>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -106,14 +107,14 @@ function Ailo(){
   const[profile,setProfile]=useState({avatar:avUrl("Aisha"),name:"مستخدم جديد",status:"👋 مرحباً!",lang:"Arabic",bio:"أتعلم لغة جديدة"});
   const[emailInput,setEmailInput]=useState("");
   const[photoMode,setPhotoMode]=useState("gallery");
-  const[totalXp,setTotalXp]=useState(3950);
-  const[coins,setCoins]=useState(240);
-  const[streak,setStreak]=useState(7);
+  const[totalXp,setTotalXp]=useState(0);
+  const[coins,setCoins]=useState(0);
+  const[streak,setStreak]=useState(0);
   const[streakFrozen,setStreakFrozen]=useState(false);
   const[searchTime,setSearchTime]=useState(0);
   const[matched,setMatched]=useState(false);
-  const[partner]=useState({av:"🐬",name:"Alex",country:"USA"});
-  const[messages,setMessages]=useState([{id:1,from:"partner",text:"Hey! أنا Alex، أريد تعلم العربية 😊",time:"10:00",status:"read"},{id:2,from:"me",text:"أهلاً Alex! يسعدني مساعدتك",time:"10:01",status:"read"}]);
+  const[partner,setPartner]=useState({av:"🐬",name:"Alex",country:"?"});
+  const[messages,setMessages]=useState([]);
   const[chatInput,setChatInput]=useState("");
   const[isTyping,setIsTyping]=useState(false);
   const[blocked,setBlocked]=useState([]);
@@ -139,8 +140,17 @@ function Ailo(){
   const[challengeScore,setChallengeScore]=useState({me:0,opp:0});
   const[xpPopup,setXpPopup]=useState(null);
   const[notifMuted,setNotifMuted]=useState([]);
+  // Supabase realtime
+  const[userId,setUserId]=useState("");
+  const[roomId,setRoomId]=useState("");
+  const lobbyRef=useRef(null);
+  const roomRef=useRef(null);
   const msgEnd=useRef(null);
   const botEnd=useRef(null);
+
+  const SUPA_URL="https://tsdpznjarcvmpcrmmbdu.supabase.co";
+  const SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
+  const getSupa=()=>window.supabase?.createClient(SUPA_URL,SUPA_KEY);
 
   // theme computed
   const mode=darkMode?DARK:LIGHT;
@@ -157,7 +167,67 @@ function Ailo(){
 
   const addXp=useCallback((amt,label)=>{setTotalXp(x=>x+amt);setXpPopup({amt,label});setTimeout(()=>setXpPopup(null),2000);},[]);
 
-  useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);const m=setTimeout(()=>setMatched(true),4000);return()=>{clearInterval(i);clearTimeout(m);};},[screen]);
+  // ── Supabase Realtime Matching ──────────────────────────────────────────────
+  const startSearch = (type) => {
+    setCallType(type); setScreen("matching"); setSearchTime(0); setMatched(false);
+    setMessages([]); setCallTime(0);
+    const supa = getSupa(); if(!supa) return;
+    const myId = userId || ("guest_"+Math.random().toString(36).slice(2));
+    // Leave old lobby
+    if(lobbyRef.current){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
+    const ch = supa.channel("lobby_"+type, { config:{ presence:{ key: myId } } });
+    ch.on("presence",{event:"sync"},()=>{
+      const state = ch.presenceState();
+      const ids = Object.keys(state);
+      if(ids.length >= 2){
+        const otherId = ids.find(id=>id!==myId);
+        if(!otherId) return;
+        const otherData = state[otherId]?.[0] || {};
+        setPartner({ av: otherData.avatar||"🌍", name: otherData.name||"مستخدم", country: otherData.lang||"?" });
+        const rid = [myId,otherId].sort().join("__");
+        setRoomId(rid);
+        setMatched(true);
+      }
+    });
+    ch.subscribe(async(status)=>{
+      if(status==="SUBSCRIBED"){
+        await ch.track({ name: profile.name, avatar: profile.avatar, lang: profile.lang });
+      }
+    });
+    lobbyRef.current = ch;
+  };
+
+  // ── Join room for chat ──────────────────────────────────────────────────────
+  const joinRoom = (rid) => {
+    const supa = getSupa(); if(!supa||!rid) return;
+    if(roomRef.current){ supa.removeChannel(roomRef.current); roomRef.current=null; }
+    const ch = supa.channel("room_"+rid);
+    ch.on("broadcast",{event:"msg"},({payload})=>{
+      setMessages(p=>[...p,{id:Date.now()+Math.random(),from:"partner",text:payload.text,time:payload.time,status:"read"}]);
+      setIsTyping(false);
+    });
+    ch.on("broadcast",{event:"typing"},()=>{
+      setIsTyping(true); setTimeout(()=>setIsTyping(false),2000);
+    });
+    ch.subscribe();
+    roomRef.current = ch;
+  };
+
+  const acceptMatch = () => {
+    addXp(10,"مطابقة");
+    // Leave lobby
+    const supa = getSupa();
+    if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
+    joinRoom(roomId);
+    setScreen(callType==="text"?"chat":"call");
+  };
+
+  const cancelSearch = () => {
+    const supa = getSupa();
+    if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
+    setScreen("home");
+  };
+  useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs]);
@@ -254,6 +324,7 @@ function Ailo(){
           try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
           const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
           const userLang = data.user?.user_metadata?.lang || "Arabic";
+          setUserId(data.user?.id || "");
           setProfile(p => ({ ...p, name: userName, lang: userLang }));
           setAuthLoading(false);
           setAppScreen("main");
@@ -308,14 +379,14 @@ function Ailo(){
           <div style={{fontWeight:700,fontSize:22,color:primary}}>{fmt(searchTime)}</div>
           <div style={{display:"flex",justifyContent:"center",gap:8,marginTop:12}}>{[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:primary,animationName:"dot"+i,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>
         </div>
-        <button style={btnP({background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={()=>setScreen("home")}>إلغاء</button>
+        <button style={btnP({background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={cancelSearch}>إلغاء</button>
       </>):(<>
         <div style={{fontSize:72}}>🎉</div>
         <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>تم العثور على شريك!</div>
         <div style={{...glass({width:"100%",textAlign:"center"})}}><div style={{fontSize:60,marginBottom:8}}>{partner.av}</div><div style={{fontWeight:800,fontSize:20}}>{partner.name}</div><div style={{color:muted,fontSize:12,marginTop:4}}>🌍 {partner.country}</div></div>
         <div style={{display:"flex",gap:12,width:"100%"}}>
-          <button style={btnP({flex:1,background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={()=>setScreen("home")}>رفض ✕</button>
-          <button style={btnP({flex:1})} onClick={()=>{addXp(10,"مطابقة");setScreen(callType==="text"?"chat":"call");}}>قبول ✓</button>
+          <button style={btnP({flex:1,background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={cancelSearch}>رفض ✕</button>
+          <button style={btnP({flex:1})} onClick={acceptMatch}>قبول ✓</button>
         </div>
       </>)}
       <style>{CSS}</style>
@@ -354,11 +425,15 @@ function Ailo(){
   if(screen==="chat"){
     const sendMsg=()=>{
       if(!chatInput.trim())return;
-      const nm={id:Date.now(),from:"me",text:chatInput,time:now(),status:"sent"};
-      setMessages(p=>[...p,nm]);setChatInput("");addXp(5,"رسالة");setIsTyping(true);
-      setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),800);
-      const reps=["That's interesting! 😊","Great! Can you repeat that? 🎯","You're improving! ⭐","Wow really? Tell me more!"];
-      setTimeout(()=>{setIsTyping(false);setMessages(p=>[...p.map(m=>m.id===nm.id?{...m,status:"read"}:m),{id:Date.now()+1,from:"partner",text:reps[Math.floor(Math.random()*reps.length)],time:now(),status:"read"}]);},2000);
+      const t=now();
+      const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
+      setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
+      // broadcast via Supabase
+      if(roomRef.current){
+        roomRef.current.send({type:"broadcast",event:"msg",payload:{text:chatInput,time:t}});
+        setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),600);
+        setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1200);
+      }
     };
     return(
       <div style={{background:bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",color:text}}>
@@ -458,7 +533,7 @@ function Ailo(){
           </div>
           <div style={{fontWeight:800,fontSize:13,marginBottom:10,color:muted}}>ابدأ محادثة</div>
           {[{type:"video",icon:"📹",title:"مكالمة فيديو",desc:"تحدث وجهاً لوجه",grad:`linear-gradient(135deg,${primary}33,${secondary}22)`},{type:"voice",icon:"📞",title:"مكالمة صوتية",desc:"حسّن نطقك",grad:`linear-gradient(135deg,#22c55e33,#4ade8022)`},{type:"text",icon:"💬",title:"دردشة نصية",desc:"تبادل الرسائل",grad:`linear-gradient(135deg,#f59e0b33,#fbbf2422)`}].map(c2=>(
-            <button key={c2.type} onClick={()=>{setCallType(c2.type);setScreen("matching");setSearchTime(0);setMatched(false);setCallTime(0);}} style={{width:"100%",background:c2.grad,backdropFilter:"blur(10px)",border:`1px solid ${border}`,borderRadius:18,padding:14,display:"flex",alignItems:"center",gap:14,cursor:"pointer",marginBottom:10,textAlign:"right"}}>
+            <button key={c2.type} onClick={()=>startSearch(c2.type)} style={{width:"100%",background:c2.grad,backdropFilter:"blur(10px)",border:`1px solid ${border}`,borderRadius:18,padding:14,display:"flex",alignItems:"center",gap:14,cursor:"pointer",marginBottom:10,textAlign:"right"}}>
               <div style={{width:48,height:48,borderRadius:14,background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{c2.icon}</div>
               <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:text}}>{c2.title}</div><div style={{color:muted,fontSize:12,marginTop:2}}>{c2.desc}</div></div>
             </button>
