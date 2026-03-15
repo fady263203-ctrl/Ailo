@@ -177,6 +177,23 @@ function Ailo(){
   const[xpPopup,setXpPopup]=useState(null);
   const[notifMuted,setNotifMuted]=useState([]);
   const[storeTab,setStoreTab]=useState(false);
+  // Feature 1: language picker before search
+  const[showLangPicker,setShowLangPicker]=useState(false);
+  const[pendingCallType,setPendingCallType]=useState("");
+  const[targetLang,setTargetLang]=useState(()=>load("targetLang","English"));
+  // Feature 2: user search by ID
+  const[showUserSearch,setShowUserSearch]=useState(false);
+  const[searchId,setSearchId]=useState("");
+  const[searchResult,setSearchResult]=useState(null);
+  const[searchError,setSearchError]=useState("");
+  const[searchLoading,setSearchLoading]=useState(false);
+  // Feature 3: profile view modal (separate from edit)
+  const[showProfileView,setShowProfileView]=useState(false);
+  // Feature 4: first time tutorial
+  const[showTutorial,setShowTutorial]=useState(()=>!load("tutorial_done",false));
+  const[tutorialStep,setTutorialStep]=useState(0);
+  // Feature 5: coins info modal
+  const[showCoinsInfo,setShowCoinsInfo]=useState(false);
   // Supabase realtime
   const[userId,setUserId]=useState("");
   const[roomId,setRoomId]=useState("");
@@ -262,13 +279,19 @@ function Ailo(){
 
   // ── Supabase Realtime Matching ──────────────────────────────────────────────
   const startSearch = (type) => {
+    setPendingCallType(type);
+    setShowLangPicker(true);
+  };
+
+  const doSearch = (type, lang) => {
+    setShowLangPicker(false);
     setCallType(type); setScreen("matching"); setSearchTime(0); setMatched(false);
     setMessages([]); setCallTime(0);
+    save("targetLang", lang);
     const supa = getSupa(); if(!supa) return;
     const myId = userId || ("guest_"+Math.random().toString(36).slice(2));
-    // Leave old lobby
     if(lobbyRef.current){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
-    const ch = supa.channel("lobby_"+type, { config:{ presence:{ key: myId } } });
+    const ch = supa.channel("lobby_"+type+"_"+lang, { config:{ presence:{ key: myId } } });
     ch.on("presence",{event:"sync"},()=>{
       const state = ch.presenceState();
       const ids = Object.keys(state);
@@ -276,7 +299,7 @@ function Ailo(){
         const otherId = ids.find(id=>id!==myId);
         if(!otherId) return;
         const otherData = state[otherId]?.[0] || {};
-        setPartner({ av: otherData.avatar||"🌍", name: otherData.name||"مستخدم", country: otherData.lang||"?" });
+        setPartner({ av: otherData.avatar||"🌍", name: otherData.name||"مستخدم", country: otherData.nativeLang||"?" });
         const rid = [myId,otherId].sort().join("__");
         setRoomId(rid);
         setMatched(true);
@@ -284,7 +307,7 @@ function Ailo(){
     });
     ch.subscribe(async(status)=>{
       if(status==="SUBSCRIBED"){
-        await ch.track({ name: profile.name, avatar: profile.avatar, lang: profile.lang });
+        await ch.track({ name: profile.name, avatar: profile.avatar, nativeLang: profile.lang, targetLang: lang });
       }
     });
     lobbyRef.current = ch;
@@ -396,6 +419,20 @@ function Ailo(){
   // mute/unmute effects
   useEffect(()=>{ if(localAudioRef.current) localAudioRef.current.setEnabled(micOn); },[micOn]);
   useEffect(()=>{ if(localVideoRef.current) localVideoRef.current.setEnabled(camOn); },[camOn]);
+
+  const searchUserById = async() => {
+    if(!searchId.trim()){ setSearchError("أدخل ID المستخدم"); return; }
+    setSearchLoading(true); setSearchError(""); setSearchResult(null);
+    try{
+      const res = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${encodeURIComponent(searchId.trim())}&select=*`,{
+        headers:{"apikey":SUPA_KEY}
+      });
+      const data = await res.json();
+      if(data&&data.length>0){ setSearchResult(data[0]); }
+      else{ setSearchError("لم يُعثر على مستخدم بهذا الـ ID"); }
+    }catch(e){ setSearchError("خطأ في الاتصال"); }
+    setSearchLoading(false);
+  };
 
   const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   const now=()=>new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"});
@@ -625,6 +662,7 @@ function Ailo(){
       // update real stats and quests
       setStats(s=>{ const ns={...s,totalMsgs:s.totalMsgs+1}; checkBadges(ns); return ns; });
       updateQuest("msgs");
+      setCoins(c=>c+1);
       if(roomRef.current){
         roomRef.current.send({type:"broadcast",event:"msg",payload:{text:chatInput,time:t}});
         setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),600);
@@ -697,7 +735,7 @@ function Ailo(){
       {/* HEADER */}
       <div style={{background:card,backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderBottom:`1px solid ${border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50,boxShadow:"0 4px 20px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-          <button onClick={()=>setShowProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
+          <button onClick={()=>setShowProfileView(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
           <div style={{fontWeight:900,fontSize:22,color:primary,letterSpacing:1}}>✦ Ailo</div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={()=>setDarkMode(d=>!d)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:"7px 8px",display:"flex",alignItems:"center",gap:4}}>
@@ -714,7 +752,7 @@ function Ailo(){
           <div style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",borderRadius:50,padding:"2px 10px",fontSize:11,fontWeight:800,flexShrink:0,boxShadow:`0 2px 10px ${glow}`}}>Lv.{lvl.level}</div>
           <div style={{flex:1}}><XPBar pct={lvl.pct} primary={primary} accent={accent}/></div>
           <span style={{fontSize:10,color:muted,flexShrink:0}}>{lvl.current}/{lvl.needed}</span>
-          <div style={{background:"rgba(245,158,11,0.15)",borderRadius:50,padding:"2px 8px",display:"flex",alignItems:"center",gap:3,flexShrink:0}}><span style={{fontSize:12}}>🪙</span><span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>{coins}</span></div>
+          <button onClick={()=>setShowCoinsInfo(true)} style={{background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:50,padding:"2px 8px",display:"flex",alignItems:"center",gap:3,flexShrink:0,cursor:"pointer"}}><span style={{fontSize:12}}>🪙</span><span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>{coins}</span></button>
           <div style={{background:"rgba(239,68,68,0.15)",borderRadius:50,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#ef4444",flexShrink:0}}>🔥{streak}</div>
         </div>
       </div>
@@ -738,7 +776,12 @@ function Ailo(){
               {q.claimed?<div style={tag("#22c55e")}>✅ تم</div>:q.done?<button onClick={()=>{ setQuests(qs=>{ const nqs=qs.map((x,i)=>i===qi?{...x,claimed:true}:x); saveQuests(nqs); return nqs; }); addXp(q.xp,"مهمة"); setCoins(c=>c+10); }} style={{...tag("#f59e0b"),cursor:"pointer",border:"none",fontFamily:"'Tajawal',system-ui"}}>استلام +{q.xp}XP</button>:<div style={tag("#f59e0b")}>+{q.xp}XP</div>}
             </div>))}
           </div>
-          <div style={{fontWeight:800,fontSize:13,marginBottom:10,color:muted}}>ابدأ محادثة</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:800,fontSize:13,color:muted}}>ابدأ محادثة</div>
+            <button onClick={()=>{setSearchId("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={{background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"5px 12px",fontSize:11,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui",fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+              🔍 ابحث عن صديق
+            </button>
+          </div>
           {[{type:"video",icon:"📹",title:"مكالمة فيديو",desc:"تحدث وجهاً لوجه",grad:`linear-gradient(135deg,${primary}33,${secondary}22)`},{type:"voice",icon:"📞",title:"مكالمة صوتية",desc:"حسّن نطقك",grad:`linear-gradient(135deg,#22c55e33,#4ade8022)`},{type:"text",icon:"💬",title:"دردشة نصية",desc:"تبادل الرسائل",grad:`linear-gradient(135deg,#f59e0b33,#fbbf2422)`}].map(c2=>(
             <button key={c2.type} onClick={()=>startSearch(c2.type)} style={{width:"100%",background:c2.grad,backdropFilter:"blur(10px)",border:`1px solid ${border}`,borderRadius:18,padding:14,display:"flex",alignItems:"center",gap:14,cursor:"pointer",marginBottom:10,textAlign:"right"}}>
               <div style={{width:48,height:48,borderRadius:14,background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{c2.icon}</div>
@@ -793,7 +836,12 @@ function Ailo(){
           </div>
 
           {storeTab&&<div>
-            <div style={{fontWeight:800,fontSize:14,marginBottom:12,color:muted}}>🛍️ المتجر — رصيدك: <span style={{color:"#f59e0b"}}>{coins} 🪙</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{fontWeight:800,fontSize:14,color:muted}}>🛍️ المتجر</div>
+              <button onClick={()=>setShowCoinsInfo(true)} style={{background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:50,padding:"4px 12px",fontSize:11,cursor:"pointer",color:"#f59e0b",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",gap:4,fontWeight:700}}>
+                🪙 {coins} — كيف أربح؟
+              </button>
+            </div>
             {[
               {icon:"❄️",name:"تجميد السلسلة",desc:"احمِ سلسلتك ليوم واحد",price:50,action:()=>{setStreakFrozen(true);save("streakFrozen",true);}},
               {icon:"💎",name:"XP مضاعف",desc:"ضاعف XP لمدة ساعة",price:100,action:()=>{const until=Date.now()+3600000;try{localStorage.setItem("ailo_xp_double_until",until);}catch(e){}setXpDouble(true);setTimeout(()=>setXpDouble(false),3600000);}},
@@ -809,6 +857,11 @@ function Ailo(){
           </div>}
 
           {!storeTab&&<>
+            {!load("tutorial_done",false)&&<div style={{...glass({marginBottom:14,background:`linear-gradient(135deg,${primary}22,${accent}11)`,textAlign:"center",padding:18})}}>
+              <div style={{fontSize:28,marginBottom:8}}>📚</div>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>مرحباً في التدريبات!</div>
+              <div style={{color:muted,fontSize:12,lineHeight:1.7}}>كل يوم ستجد بطاقات تعليمية جديدة — أجب بدقة لكسب XP وتحسين مستواك. كلما أجبت صحيحاً زاد نقاطك!</div>
+            </div>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <div style={{fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:6}}>{Ic.star(primary,16)}<span>تمارين SRS</span></div>
               <div style={{display:"flex",gap:6}}><div style={tag("#22c55e")}>🏆 {srsScore}</div>{srsStreak>1&&<div style={tag("#f59e0b")}>🔥 {srsStreak}</div>}</div>
@@ -947,6 +1000,153 @@ function Ailo(){
       </div>)}
 
       <style>{CSS}</style>
+
+      {/* ── MODAL 1: LANGUAGE PICKER ─────────────────────────── */}
+      {showLangPicker&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowLangPicker(false)}>
+          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:6,textAlign:"center",color:primary}}>
+              {pendingCallType==="video"?"📹":pendingCallType==="voice"?"📞":"💬"} اختر اللغة المستهدفة
+            </div>
+            <div style={{color:muted,fontSize:12,textAlign:"center",marginBottom:18}}>ستُطابَق مع من يتحدث هذه اللغة</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+              {["English","Arabic","French","Spanish","German","Chinese","Japanese","Turkish"].map(lang=>(
+                <button key={lang} onClick={()=>{ setTargetLang(lang); doSearch(pendingCallType,lang); }}
+                  style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${targetLang===lang?primary:border}`,background:targetLang===lang?`${primary}22`:card,color:targetLang===lang?primary:text,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all 0.2s"}}>
+                  {{"English":"🇬🇧","Arabic":"🇸🇦","French":"🇫🇷","Spanish":"🇪🇸","German":"🇩🇪","Chinese":"🇨🇳","Japanese":"🇯🇵","Turkish":"🇹🇷"}[lang]} {lang}
+                </button>
+              ))}
+            </div>
+            <button onClick={()=>setShowLangPicker(false)} style={{width:"100%",padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui",marginTop:6}}>إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL 2: SEARCH BY ID ─────────────────────────────── */}
+      {showUserSearch&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowUserSearch(false)}>
+          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary}}>🔍 ابحث عن صديق</div>
+            <div style={{color:muted,fontSize:12,marginBottom:16}}>أدخل ID المستخدم للتواصل معه مباشرةً</div>
+            <div style={{background:`${primary}11`,border:`1px solid ${primary}33`,borderRadius:14,padding:"10px 14px",marginBottom:14,fontSize:12,color:muted}}>
+              💡 ID خاصك: <span style={{color:primary,fontWeight:700,userSelect:"all"}}>{userId||"—"}</span>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:14}}>
+              <input value={searchId} onChange={e=>setSearchId(e.target.value)} placeholder="أدخل ID المستخدم..." style={{...inp,flex:1}} onKeyDown={e=>e.key==="Enter"&&searchUserById()}/>
+              <button onClick={searchUserById} style={btnP({padding:"12px 18px",fontSize:13,flexShrink:0})}>{searchLoading?"...":"بحث"}</button>
+            </div>
+            {searchError&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>⚠️ {searchError}</div>}
+            {searchResult&&(
+              <div style={{...glass({display:"flex",alignItems:"center",gap:12,marginBottom:14})}}>
+                <div style={{width:44,height:44,borderRadius:22,overflow:"hidden",flexShrink:0,border:`2px solid ${primary}`}}>
+                  {searchResult.avatar?.startsWith("http")?<img src={searchResult.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:28,lineHeight:"44px",display:"block",textAlign:"center"}}>{searchResult.avatar||"🌍"}</span>}
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:15}}>{searchResult.name}</div>
+                  <div style={{color:muted,fontSize:12,marginTop:2}}>{searchResult.xp?.toLocaleString()||0} XP</div>
+                </div>
+                <button onClick={()=>{
+                  setSearchResult(null); setShowUserSearch(false);
+                  setPartner({av:searchResult.avatar||"🌍",name:searchResult.name,country:"—"});
+                  const rid="direct_"+[userId,searchResult.user_id].sort().join("__");
+                  setRoomId(rid); setCallType("text");
+                  joinRoom(rid); setScreen("chat");
+                }} style={btnP({padding:"10px 16px",fontSize:13})}>دردشة 💬</button>
+              </div>
+            )}
+            <button onClick={()=>setShowUserSearch(false)} style={{width:"100%",padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إغلاق</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL 3: PROFILE VIEW ────────────────────────────── */}
+      {showProfileView&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowProfileView(false)}>
+          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:24})}} onClick={e=>e.stopPropagation()}>
+            <div style={{textAlign:"center",marginBottom:16}}>
+              <div style={{width:90,height:90,borderRadius:45,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 0 4px ${glow}`}}>
+                {profile.avatar?.startsWith("http")?<img src={profile.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:60,lineHeight:"90px",display:"block"}}>{profile.avatar}</span>}
+              </div>
+              <div style={{fontWeight:900,fontSize:20}}>{profile.name}</div>
+              <div style={{color:muted,fontSize:13,marginTop:4}}>{profile.status}</div>
+              <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:10,flexWrap:"wrap"}}>
+                <div style={tag(primary)}>{profile.lang}</div>
+                <div style={tag("#22c55e")}>Lv.{lvl.level}</div>
+                <div style={tag("#f59e0b")}>{totalXp.toLocaleString()} XP</div>
+              </div>
+            </div>
+            {profile.bio&&<div style={{background:`${primary}11`,border:`1px solid ${border}`,borderRadius:14,padding:"12px 16px",color:muted,fontSize:13,textAlign:"center",marginBottom:16}}>"{profile.bio}"</div>}
+            <div style={{background:`${primary}11`,border:`1px solid ${border}`,borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:11,color:muted,textAlign:"center"}}>
+              🆔 ID: <span style={{color:primary,fontWeight:700,userSelect:"all",fontSize:10}}>{userId||"—"}</span>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setShowProfileView(false);setShowProfile(true);}} style={btnP({flex:1,fontSize:13})}>✏️ تعديل</button>
+              <button onClick={()=>setShowProfileView(false)} style={{flex:1,padding:"13px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL 4: TUTORIAL ────────────────────────────────── */}
+      {showTutorial&&(()=>{
+        const steps=[
+          {icon:"🌍",title:"مرحباً في Ailo!",desc:"تعلّم لغات جديدة من خلال المحادثة مع أشخاص حقيقيين حول العالم."},
+          {icon:"🔍",title:"كيف تبدأ محادثة؟",desc:"اضغط على أحد أزرار (فيديو / صوت / نص) في الصفحة الرئيسية، ثم اختر اللغة التي تريد تعلمها."},
+          {icon:"📚",title:"التدريبات اليومية",desc:"اذهب لقسم 'تدريبات' لممارسة المفردات والجمل يومياً. كل إجابة صحيحة تكسبك XP!"},
+          {icon:"🪙",title:"كيف تربح العملات؟",desc:"تكسب عملات من: إكمال مهام يومية، إجراء مكالمات، تمارين SRS. استخدمها في المتجر!"},
+          {icon:"🏆",title:"الصدارة",desc:"انشر نتيجتك في الصدارة وتنافس مع مستخدمين حول العالم. اضغط 'نشر نتيجتي' في قسم الصدارة."},
+        ];
+        const s=steps[tutorialStep];
+        return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(8px)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+            <div style={{...glass({width:"100%",maxWidth:380,textAlign:"center",padding:32,borderRadius:24})}}>
+              <div style={{fontSize:64,marginBottom:16}}>{s.icon}</div>
+              <div style={{fontWeight:900,fontSize:20,color:primary,marginBottom:12}}>{s.title}</div>
+              <div style={{color:muted,fontSize:14,lineHeight:1.8,marginBottom:24}}>{s.desc}</div>
+              <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:20}}>
+                {steps.map((_,i)=><div key={i} style={{width:i===tutorialStep?20:8,height:8,borderRadius:4,background:i===tutorialStep?primary:`${primary}44`,transition:"all 0.3s"}}/>)}
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                {tutorialStep>0&&<button onClick={()=>setTutorialStep(t=>t-1)} style={{flex:1,padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>السابق</button>}
+                <button onClick={()=>{
+                  if(tutorialStep<steps.length-1){ setTutorialStep(t=>t+1); }
+                  else{ setShowTutorial(false); save("tutorial_done",true); }
+                }} style={btnP({flex:1})}>
+                  {tutorialStep<steps.length-1?"التالي ←":"ابدأ الآن 🚀"}
+                </button>
+              </div>
+              <button onClick={()=>{setShowTutorial(false);save("tutorial_done",true);}} style={{background:"none",border:"none",color:muted,fontSize:12,cursor:"pointer",marginTop:12,fontFamily:"'Tajawal',system-ui"}}>تخطي</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── MODAL 5: COINS INFO ───────────────────────────────── */}
+      {showCoinsInfo&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowCoinsInfo(false)}>
+          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:4,color:"#f59e0b"}}>🪙 رصيدك: {coins} عملة</div>
+            <div style={{color:muted,fontSize:12,marginBottom:18}}>كيف تربح العملات؟</div>
+            {[
+              {icon:"💬",desc:"أرسل رسالة في محادثة",coins:"+1"},
+              {icon:"📞",desc:"أكمل مكالمة",coins:"+10"},
+              {icon:"📚",desc:"أكمل تمرين SRS",coins:"+3"},
+              {icon:"✅",desc:"استلام مهمة يومية",coins:"+10"},
+              {icon:"🏆",desc:"الفوز في التحدي",coins:"+20"},
+            ].map((r,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<4?`1px solid ${border}`:"none"}}>
+                <span style={{fontSize:22,flexShrink:0}}>{r.icon}</span>
+                <div style={{flex:1,fontSize:13}}>{r.desc}</div>
+                <div style={{...tag("#f59e0b"),flexShrink:0}}>{r.coins} 🪙</div>
+              </div>
+            ))}
+            <div style={{background:`${primary}11`,border:`1px solid ${border}`,borderRadius:14,padding:"12px 16px",marginTop:14,fontSize:12,color:muted,textAlign:"center"}}>
+              💡 استخدم العملات في <strong style={{color:primary}}>المتجر</strong> للحصول على مزايا حصرية
+            </div>
+            <button onClick={()=>setShowCoinsInfo(false)} style={btnP({width:"100%",marginTop:14})}>حسناً ✓</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
