@@ -390,30 +390,62 @@ function Ailo(){
   },[]);
 
   const joinAgora = useCallback(async(channelName, type)=>{
-    if(!window.AgoraRTC) return;
+    if(!window.AgoraRTC) { console.error("AgoraRTC not loaded"); return; }
     try{
       await leaveAgora();
+
+      // Request permissions explicitly first
+      if(type==="voice"||type==="video"){
+        try{ await navigator.mediaDevices.getUserMedia({audio:true, video:type==="video"}); }
+        catch(e){ console.warn("Permission denied:",e); }
+      }
+
       const token = await getAgoraToken(channelName);
-      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
+
+      window.AgoraRTC.setLogLevel(3); // reduce logs
+      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"h264"});
       agoraRef.current = client;
+
       client.on("user-published", async(user, mediaType)=>{
         await client.subscribe(user, mediaType);
-        if(mediaType==="audio") user.audioTrack?.play();
-        if(mediaType==="video" && remoteVideoElRef.current) user.videoTrack?.play(remoteVideoElRef.current);
+        if(mediaType==="audio"){ user.audioTrack?.play(); }
+        if(mediaType==="video" && remoteVideoElRef.current){
+          user.videoTrack?.play(remoteVideoElRef.current);
+        }
       });
-      await client.join(AGORA_APP_ID, channelName, token, null);
+      client.on("user-unpublished",(user,mediaType)=>{
+        if(mediaType==="audio") user.audioTrack?.stop();
+        if(mediaType==="video") user.videoTrack?.stop();
+      });
+
+      const uid = await client.join(AGORA_APP_ID, channelName, token, null);
+      console.log("Agora joined, uid:", uid);
+
       if(type==="voice"||type==="video"){
-        const audio = await window.AgoraRTC.createMicrophoneAudioTrack();
-        localAudioRef.current = audio;
-        await client.publish([audio]);
+        try{
+          const audio = await window.AgoraRTC.createMicrophoneAudioTrack({
+            encoderConfig:"music_standard"
+          });
+          localAudioRef.current = audio;
+          await client.publish([audio]);
+          console.log("Audio published");
+        }catch(e){ console.error("Audio error:",e); }
       }
+
       if(type==="video"){
-        const video = await window.AgoraRTC.createCameraVideoTrack();
-        localVideoRef.current = video;
-        await client.publish([video]);
-        if(localVideoElRef.current) video.play(localVideoElRef.current);
+        try{
+          const video = await window.AgoraRTC.createCameraVideoTrack({
+            encoderConfig:"480p_1",
+            facingMode:"user"
+          });
+          localVideoRef.current = video;
+          await client.publish([video]);
+          if(localVideoElRef.current) video.play(localVideoElRef.current);
+          console.log("Video published");
+        }catch(e){ console.error("Video error:",e); }
       }
-    }catch(e){ console.error("Agora:",e); }
+
+    }catch(e){ console.error("Agora join error:",e); }
   },[leaveAgora, getAgoraToken]);
 
   // mute/unmute effects
