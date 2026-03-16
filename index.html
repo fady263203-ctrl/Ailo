@@ -448,7 +448,8 @@ function Ailo(){
       if(type==="voice"||type==="video"){
         try{
           const audio = await window.AgoraRTC.createMicrophoneAudioTrack({
-            encoderConfig:"music_standard"
+            encoderConfig: "music_standard",
+            bypassWebAudio: true  // prevents audio leaking on mobile browsers
           });
           localAudioRef.current = audio;
           await client.publish([audio]);
@@ -476,13 +477,12 @@ function Ailo(){
   const toggleMic = useCallback(async()=>{
     if(!localAudioRef.current) return;
     try{
-      const newState = !micOn;
-      await localAudioRef.current.setEnabled(newState);
-      setMicOn(newState);
-      // Broadcast status so remote knows
+      const newMuted = micOn; // micOn=true means currently active → mute it
+      await localAudioRef.current.setMuted(newMuted);
+      setMicOn(!newMuted);
       if(roomRef.current) roomRef.current.send({
         type:"broadcast", event:"media_status",
-        payload:{ mic: newState, cam: camOn }
+        payload:{ mic: !newMuted, cam: camOn }
       });
     }catch(e){ console.error("toggleMic:",e); }
   },[micOn, camOn]);
@@ -490,13 +490,12 @@ function Ailo(){
   const toggleCam = useCallback(async()=>{
     if(!localVideoRef.current) return;
     try{
-      const newState = !camOn;
-      await localVideoRef.current.setEnabled(newState);
-      setCamOn(newState);
-      // Broadcast status so remote knows
+      const newMuted = camOn;
+      await localVideoRef.current.setMuted(newMuted);
+      setCamOn(!newMuted);
       if(roomRef.current) roomRef.current.send({
         type:"broadcast", event:"media_status",
-        payload:{ mic: micOn, cam: newState }
+        payload:{ mic: micOn, cam: !newMuted }
       });
     }catch(e){ console.error("toggleCam:",e); }
   },[camOn, micOn]);
