@@ -177,7 +177,6 @@ function Ailo(){
   const[challengeTime,setChallengeTime]=useState(60);
   const[challengeScore,setChallengeScore]=useState({me:0,opp:0});
   const[xpPopup,setXpPopup]=useState(null);
-  const[notifMuted,setNotifMuted]=useState([]);
   const[storeTab,setStoreTab]=useState(false);
   const[activeChat,setActiveChat]=useState("bot"); // "bot" or "friend"
   // Feature 1: language picker before search
@@ -197,6 +196,21 @@ function Ailo(){
   const[tutorialStep,setTutorialStep]=useState(0);
   // Feature 5: coins info modal
   const[showCoinsInfo,setShowCoinsInfo]=useState(false);
+  // ── Notifications system ──
+  const[notifications,setNotifications]=useState(()=>load("notifications",[]));
+  const saveNotifications=(ns)=>{ save("notifications",ns); };
+  const addNotif=(icon,title,body,type="info")=>{
+    setNotifications(prev=>{
+      const n={id:Date.now()+Math.random(),icon,title,body,type,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),read:false};
+      const ns=[n,...prev.slice(0,29)];
+      saveNotifications(ns);
+      return ns;
+    });
+  };
+  const markAllRead=()=>setNotifications(prev=>{ const ns=prev.map(n=>({...n,read:true})); saveNotifications(ns); return ns; });
+  const deleteNotif=(id)=>setNotifications(prev=>{ const ns=prev.filter(n=>n.id!==id); saveNotifications(ns); return ns; });
+  const unreadCount=notifications.filter(n=>!n.read).length;
+
   // Supabase realtime
   const[userId,setUserId]=useState("");
   const[roomId,setRoomId]=useState("");
@@ -228,7 +242,13 @@ function Ailo(){
 
   const addXp=useCallback((amt,label)=>{
     const multiplied = xpDouble ? amt*2 : amt;
-    setTotalXp(x=>x+multiplied);
+    setTotalXp(x=>{
+      const oldLvl=getLvl(x).level;
+      const newXp=x+multiplied;
+      const newLvl=getLvl(newXp).level;
+      if(newLvl>oldLvl) addNotif("⬆️","ارتقيت مستوى!",`وصلت إلى المستوى ${newLvl} 🎉`,"levelup");
+      return newXp;
+    });
     setXpPopup({amt:multiplied,label});
     setTimeout(()=>setXpPopup(null),2000);
   },[]);
@@ -239,6 +259,8 @@ function Ailo(){
       const nqs=qs.map(q=>{
         if(q.key!==key||q.claimed) return q;
         const np=Math.min(q.progress+inc,q.total);
+        const justDone=np>=q.total&&q.progress<q.total;
+        if(justDone) addNotif("✅","مهمة مكتملة!",`أكملت مهمة: ${q.text} — اضغط لاستلام ${q.xp} XP`,"quest");
         return {...q,progress:np,done:np>=q.total};
       });
       saveQuests(nqs); return nqs;
@@ -249,9 +271,14 @@ function Ailo(){
   const checkBadges=useCallback((s)=>{
     const earned=load("badges_earned",[]);
     const newBadges=[];
-    BADGE_DEFS.forEach(b=>{ if(!earned.includes(b.key)&&b.cond(s)){ newBadges.push(b.key); } });
-    if(newBadges.length){ save("badges_earned",[...earned,...newBadges]); setXpPopup({amt:0,label:`🏅 شارة جديدة: ${BADGE_DEFS.find(b=>b.key===newBadges[0])?.name}`}); setTimeout(()=>setXpPopup(null),3000); }
-    return [...earned,...newBadges];
+    BADGE_DEFS.forEach(b=>{ if(!earned.includes(b.key)&&b.cond(s)){ newBadges.push(b); } });
+    if(newBadges.length){
+      save("badges_earned",[...earned,...newBadges.map(b=>b.key)]);
+      newBadges.forEach(b=>addNotif("🏅","شارة جديدة!",`حصلت على شارة: ${b.icon} ${b.name}`,"badge"));
+      setXpPopup({amt:0,label:`🏅 شارة جديدة: ${newBadges[0]?.name}`});
+      setTimeout(()=>setXpPopup(null),3000);
+    }
+    return [...earned,...newBadges.map(b=>b.key)];
   },[]);
 
   // Fetch real leaderboard from Supabase
@@ -306,6 +333,7 @@ function Ailo(){
         const rid = [myId,otherId].sort().join("__");
         setRoomId(rid);
         setMatched(true);
+        addNotif("🎉","تم العثور على شريك!",`${otherData.name||"مستخدم"} جاهز للمحادثة معك`,"match");
       }
     });
     ch.subscribe(async(status)=>{
@@ -324,6 +352,8 @@ function Ailo(){
     ch.on("broadcast",{event:"msg"},({payload})=>{
       setMessages(p=>[...p,{id:Date.now()+Math.random(),from:"partner",text:payload.text,time:payload.time,status:"read",isImage:payload.isImage||false,imageData:payload.imageData||null}]);
       setIsTyping(false);
+      if(!payload.isImage) addNotif("💬","رسالة جديدة",payload.text.length>40?payload.text.slice(0,40)+"…":payload.text,"msg");
+      else addNotif("📷","أرسل صورة","شريكك أرسل لك صورة","msg");
     });
     ch.on("broadcast",{event:"media_status"},({payload})=>{
       if(payload.mic !== undefined) setRemoteMicOff(!payload.mic);
@@ -334,11 +364,11 @@ function Ailo(){
     });
     ch.on("broadcast",{event:"call_end"},async()=>{
       try{ await leaveAgora(); }catch(e){}
-      // Also cleanup the room channel itself
       const supa2=getSupa();
       if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
       setMicOn(true); setCamOn(true);
       setRemoteMicOff(false); setRemoteCamOff(false);
+      addNotif("📞","انتهت المكالمة","أنهى شريكك المكالمة","call");
       setScreen("home");
       addXp(30,"مكالمة");
     });
@@ -658,6 +688,7 @@ function Ailo(){
           const userLang = data.user?.user_metadata?.lang || "Arabic";
           setUserId(data.user?.id || "");
           setProfile(p => ({ ...p, name: userName, lang: userLang }));
+          addNotif("👋","مرحباً بعودتك!",`أهلاً ${userName}، جاهز لتعلم لغة جديدة اليوم؟`,"info");
           setAuthLoading(false);
           setAppScreen("main");
         }
@@ -807,17 +838,25 @@ function Ailo(){
           ...(callType==="video"?[
             {icon:camOn?Ic.video("white",22):Ic.video("#ef4444",22), label:camOn?"كاميرا":"مغلق", active:camOn, action:toggleCam},
             {icon:Ic.flip("white",18), label:"تبديل", active:true, action:async()=>{
-              if(!localVideoRef.current) return;
+              if(!localVideoRef.current || !agoraRef.current) return;
               const newFront = !frontCam;
               setFrontCam(newFront);
               try{
-                // Get available video devices and switch
-                const devices = await window.AgoraRTC.getDevices();
-                const cams = devices.filter(d=>d.kind==="videoinput");
-                if(cams.length>1){
-                  const targetCam = cams.find(d=>newFront?d.label.toLowerCase().includes("front"):d.label.toLowerCase().includes("back")) || cams[newFront?0:1];
-                  await localVideoRef.current.setDevice(targetCam.deviceId);
-                }
+                const client = agoraRef.current;
+                // Stop and close old video track
+                await client.unpublish([localVideoRef.current]);
+                localVideoRef.current.stop();
+                await localVideoRef.current.close();
+                localVideoRef.current = null;
+                // Create new track with opposite facingMode
+                const newVideo = await window.AgoraRTC.createCameraVideoTrack({
+                  encoderConfig: "480p_1",
+                  facingMode: newFront ? "user" : "environment"
+                });
+                localVideoRef.current = newVideo;
+                await client.publish([newVideo]);
+                // Re-play local preview
+                if(localVideoElRef.current) newVideo.play(localVideoElRef.current);
               }catch(e){ console.error("flipCam:",e); }
             }},
           ]:[]),
@@ -950,9 +989,9 @@ function Ailo(){
             <button onClick={()=>setDarkMode(d=>!d)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:"7px 8px",display:"flex",alignItems:"center",gap:4}}>
               {darkMode?Ic.sun(primary,16):Ic.moon(primary,16)}
             </button>
-            <button onClick={()=>setShowNotif(p=>!p)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex",position:"relative"}}>
+            <button onClick={()=>{setShowNotif(p=>!p);}} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex",position:"relative"}}>
               {Ic.bell(primary,17)}
-              <div style={{position:"absolute",top:5,right:5,width:7,height:7,borderRadius:3.5,background:"#ef4444",boxShadow:"0 0 5px #ef4444"}}/>
+              {unreadCount>0&&<div style={{position:"absolute",top:3,right:3,minWidth:16,height:16,borderRadius:8,background:"#ef4444",color:"white",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px",boxShadow:"0 0 5px #ef4444"}}>{unreadCount>9?"9+":unreadCount}</div>}
             </button>
             <button onClick={()=>setShowSettings(true)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.cog(primary,17)}</button>
           </div>
@@ -966,8 +1005,49 @@ function Ailo(){
         </div>
       </div>
 
-      {/* NOTIF */}
-      {showNotif&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",backdropFilter:"blur(4px)",zIndex:100}} onClick={()=>setShowNotif(false)}><div style={{...glass({margin:"68px 14px 0",borderRadius:20,padding:16})}} onClick={e=>e.stopPropagation()}><div style={{fontWeight:800,marginBottom:12,fontSize:15}}>🔔 الإشعارات</div>{["Alex أرسل لك رسالة","وصلت للمرتبة الثالثة!","مكافأة يومية جاهزة"].map((n,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:i<2?`1px solid ${border}`:"none"}}><span style={{fontSize:20}}>{"💬🏆🎁"[i]}</span><div style={{flex:1,fontSize:13}}>{n}</div><button onClick={()=>setNotifMuted(m=>[...m,i])} style={{background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"2px 9px",fontSize:10,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui"}}>{notifMuted.includes(i)?"صوت":"كتم"}</button></div>))}</div></div>}
+      {/* NOTIF PANEL */}
+      {showNotif&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",backdropFilter:"blur(4px)",zIndex:100}} onClick={()=>setShowNotif(false)}>
+          <div style={{...glass({margin:"68px 14px 0",borderRadius:20,padding:0,overflow:"hidden",maxHeight:"75vh",display:"flex",flexDirection:"column"})}} onClick={e=>e.stopPropagation()}>
+            {/* Header */}
+            <div style={{padding:"14px 16px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontWeight:800,fontSize:15}}>🔔 الإشعارات</span>
+                {unreadCount>0&&<div style={{background:"#ef4444",color:"white",borderRadius:50,padding:"1px 7px",fontSize:11,fontWeight:700}}>{unreadCount}</div>}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                {unreadCount>0&&<button onClick={markAllRead} style={{background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"3px 10px",fontSize:11,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui"}}>قراءة الكل</button>}
+                {notifications.length>0&&<button onClick={()=>{setNotifications([]);saveNotifications([]);}} style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:50,padding:"3px 10px",fontSize:11,cursor:"pointer",color:"#ef4444",fontFamily:"'Tajawal',system-ui"}}>مسح الكل</button>}
+              </div>
+            </div>
+            {/* List */}
+            <div style={{overflowY:"auto",flex:1}}>
+              {notifications.length===0?(
+                <div style={{textAlign:"center",padding:"40px 20px",color:muted}}>
+                  <div style={{fontSize:40,marginBottom:10}}>🔕</div>
+                  <div style={{fontSize:13}}>لا توجد إشعارات</div>
+                </div>
+              ):notifications.map((n,i)=>{
+                const typeColor={info:primary,match:"#10b981",msg:"#6366f1",call:"#f59e0b",badge:"#f472b6",quest:"#22c55e",levelup:"#8b5cf6"}[n.type]||primary;
+                return(
+                  <div key={n.id} onClick={()=>{setNotifications(prev=>{const ns=prev.map(x=>x.id===n.id?{...x,read:true}:x);saveNotifications(ns);return ns;});}} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 16px",borderBottom:i<notifications.length-1?`1px solid ${border}`:"none",background:n.read?"transparent":`${typeColor}08`,cursor:"pointer",transition:"background 0.2s"}}>
+                    <div style={{width:38,height:38,borderRadius:19,background:`${typeColor}20`,border:`1px solid ${typeColor}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{n.icon}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,marginBottom:2}}>
+                        <span style={{fontWeight:700,fontSize:13,color:n.read?text:typeColor}}>{n.title}</span>
+                        <span style={{fontSize:10,color:muted,flexShrink:0}}>{n.time}</span>
+                      </div>
+                      <div style={{fontSize:12,color:muted,lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.body}</div>
+                    </div>
+                    {!n.read&&<div style={{width:8,height:8,borderRadius:4,background:typeColor,flexShrink:0,marginTop:4}}/>}
+                    <button onClick={e=>{e.stopPropagation();deleteNotif(n.id);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:16,padding:"0 2px",flexShrink:0,lineHeight:1}}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{padding:14,position:"relative",zIndex:1}}>
 
