@@ -143,6 +143,8 @@ function Ailo(){
   const[micOn,setMicOn]=useState(true);
   const[camOn,setCamOn]=useState(true);
   const[frontCam,setFrontCam]=useState(true);
+  const[remoteMicOff,setRemoteMicOff]=useState(false);  // remote muted mic
+  const[remoteCamOff,setRemoteCamOff]=useState(false);  // remote turned off cam
   const[callHistory,setCallHistory]=useState(()=>load("callhist",[]));
   // Real stats counters
   const[stats,setStatsRaw]=useState(()=>load("stats",{totalMsgs:0,srsTotal:0,speechDone:0,streak:0,challengeWins:0,lbRank:0,callsTotal:0}));
@@ -328,6 +330,8 @@ function Ailo(){
     });
     ch.on("broadcast",{event:"call_end"},async()=>{
       try{ await leaveAgora(); }catch(e){}
+      setMicOn(true); setCamOn(true);
+      setRemoteMicOff(false); setRemoteCamOff(false);
       setScreen("home");
       addXp(30,"مكالمة");
     });
@@ -414,14 +418,24 @@ function Ailo(){
 
       client.on("user-published", async(user, mediaType)=>{
         await client.subscribe(user, mediaType);
-        if(mediaType==="audio"){ user.audioTrack?.play(); }
+        if(mediaType==="audio"){
+          user.audioTrack?.play();
+          setRemoteMicOff(false);
+        }
         if(mediaType==="video" && remoteVideoElRef.current){
           user.videoTrack?.play(remoteVideoElRef.current);
+          setRemoteCamOff(false);
         }
       });
       client.on("user-unpublished",(user,mediaType)=>{
-        if(mediaType==="audio") user.audioTrack?.stop();
-        if(mediaType==="video") user.videoTrack?.stop();
+        if(mediaType==="audio"){
+          user.audioTrack?.stop();
+          setRemoteMicOff(true);
+        }
+        if(mediaType==="video"){
+          user.videoTrack?.stop();
+          setRemoteCamOff(true);
+        }
       });
 
       const uid = await client.join(AGORA_APP_ID, safeChannel, token, null);
@@ -454,9 +468,32 @@ function Ailo(){
     }catch(e){ console.error("Agora join error:",e); }
   },[leaveAgora, getAgoraToken]);
 
-  // mute/unmute effects
-  useEffect(()=>{ if(localAudioRef.current) localAudioRef.current.setEnabled(micOn); },[micOn]);
-  useEffect(()=>{ if(localVideoRef.current) localVideoRef.current.setEnabled(camOn); },[camOn]);
+  // Fix 3 & 4: use publish/unpublish for proper mute/cam toggle
+  const toggleMic = useCallback(async()=>{
+    if(!localAudioRef.current || !agoraRef.current) return;
+    try{
+      if(micOn){
+        await agoraRef.current.unpublish([localAudioRef.current]);
+      } else {
+        await agoraRef.current.publish([localAudioRef.current]);
+      }
+      setMicOn(m=>!m);
+    }catch(e){ console.error("toggleMic:",e); }
+  },[micOn]);
+
+  const toggleCam = useCallback(async()=>{
+    if(!localVideoRef.current || !agoraRef.current) return;
+    try{
+      if(camOn){
+        await agoraRef.current.unpublish([localVideoRef.current]);
+        localVideoRef.current.stop();
+      } else {
+        localVideoRef.current.play(localVideoElRef.current);
+        await agoraRef.current.publish([localVideoRef.current]);
+      }
+      setCamOn(c=>!c);
+    }catch(e){ console.error("toggleCam:",e); }
+  },[camOn]);
 
   const searchUserById = async() => {
     if(!searchId.trim()){ setSearchError("أدخل ID أو اسم المستخدم"); return; }
@@ -647,31 +684,55 @@ function Ailo(){
   if(screen==="call") return(
     <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
-      {callType==="video" && <div ref={remoteVideoElRef} style={{position:"absolute",inset:0,background:"#000",zIndex:0}}/>}
-      <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:2}}>
-        <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
+      {callType==="video" && <div ref={remoteVideoElRef} style={{position:"absolute",inset:0,background:"#111",zIndex:0}}/>}
+      {/* Remote cam off overlay */}
+      {callType==="video" && remoteCamOff && (
+        <div style={{position:"absolute",inset:0,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"#111"}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",margin:"0 auto 10px",border:`2px solid ${primary}`}}>
+              {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:56,lineHeight:"80px",display:"block"}}>{partner.av||"🌍"}</span>}
+            </div>
+            <div style={{color:"#aaa",fontSize:13}}>أوقف الكاميرا 📷</div>
+          </div>
+        </div>
+      )}
+      {/* Header with status indicators */}
+      <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:4}}>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
+          {/* Remote status indicators */}
+          {remoteMicOff && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}>{Ic.micOff("#ef4444",12)}<span style={{fontSize:10,color:"#ef4444"}}>كتم الصوت</span></div>}
+          {remoteCamOff && callType==="video" && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:10}}>📷</span><span style={{fontSize:10,color:"#ef4444"}}>أوقف الكاميرا</span></div>}
+        </div>
         <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>{fmt(callTime)}</div>
       </div>
+      {/* Voice call partner display */}
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>
         {callType!=="video" && <div style={{textAlign:"center"}}>
           <div style={{width:100,height:100,borderRadius:50,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 30px ${primary}44`}}>
-            {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:80,lineHeight:"100px",display:"block"}}>{partner.av}</span>}
+            {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:80,lineHeight:"100px",display:"block"}}>{partner.av||"🌍"}</span>}
           </div>
           <div style={{fontSize:24,fontWeight:800,color:"white"}}>{partner.name}</div>
-          <div style={{color:muted,fontSize:13,marginTop:4}}>مكالمة صوتية 🎙️</div>
+          <div style={{color:muted,fontSize:13,marginTop:4,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            <span>🎙️ مكالمة صوتية</span>
+            {remoteMicOff && <span style={{color:"#ef4444",fontSize:12}}>• كتم الصوت 🔇</span>}
+          </div>
           <div style={{marginTop:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
+            {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:remoteMicOff?"#ef4444":primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
           </div>
         </div>}
       </div>
       {/* Local video preview */}
-      {callType==="video" && <div ref={localVideoElRef} style={{position:"absolute",bottom:120,left:16,width:90,height:120,borderRadius:16,border:`2px solid ${primary}`,overflow:"hidden",boxShadow:`0 0 20px ${glow}`,zIndex:3,background:"#111"}}/>}
-      <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:3}}>
+      {callType==="video" && <div ref={localVideoElRef} style={{position:"absolute",bottom:120,left:16,width:90,height:120,borderRadius:16,border:`2px solid ${camOn?primary:"#ef4444"}`,overflow:"hidden",boxShadow:`0 0 20px ${glow}`,zIndex:4,background:"#111"}}>
+        {!camOn && <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#aaa",fontSize:11}}>كاميرا مغلقة</div>}
+      </div>}
+      {/* Controls */}
+      <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:4}}>
         {[
-          {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"صوت":"كتم",  active:micOn,  action:()=>setMicOn(m=>!m)},
-          {icon:Ic.endCall("white",24), label:"إنهاء", end:true, action:()=>{
+          {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"كتم":"تشغيل", active:micOn, action:toggleMic},
+          {icon:Ic.endCall("white",24), label:"إنهاء", end:true, action:async()=>{
             if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
-            leaveAgora();
+            await leaveAgora();
             const dur=fmt(callTime);
             const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
             setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
@@ -683,12 +744,12 @@ function Ailo(){
               const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
               const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
               setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
-              setStats(s=>{const ns={...s,streak:newStreak};checkBadges(ns);return ns;});
             }
+            setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
             setScreen("home");addXp(30,"مكالمة");setCoins(c=>c+10);
           }},
           ...(callType==="video"?[
-            {icon:camOn?Ic.video("white",22):Ic.video("white",22), label:camOn?"كاميرا":"إيقاف", active:camOn, action:()=>setCamOn(c=>!c)},
+            {icon:camOn?Ic.video("white",22):Ic.video("#ef4444",22), label:camOn?"كاميرا":"مغلق", active:camOn, action:toggleCam},
             {icon:Ic.flip("white",18), label:"تبديل", active:true, action:()=>setFrontCam(f=>!f)},
           ]:[]),
         ].map((b,i)=>(
