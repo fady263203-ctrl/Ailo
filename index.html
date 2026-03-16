@@ -325,6 +325,10 @@ function Ailo(){
       setMessages(p=>[...p,{id:Date.now()+Math.random(),from:"partner",text:payload.text,time:payload.time,status:"read",isImage:payload.isImage||false,imageData:payload.imageData||null}]);
       setIsTyping(false);
     });
+    ch.on("broadcast",{event:"media_status"},({payload})=>{
+      if(payload.mic !== undefined) setRemoteMicOff(!payload.mic);
+      if(payload.cam !== undefined) setRemoteCamOff(!payload.cam);
+    });
     ch.on("broadcast",{event:"typing"},()=>{
       setIsTyping(true); setTimeout(()=>setIsTyping(false),2000);
     });
@@ -393,10 +397,24 @@ function Ailo(){
 
   const leaveAgora = useCallback(async()=>{
     try{
-      if(localAudioRef.current){ await localAudioRef.current.stop(); await localAudioRef.current.close(); localAudioRef.current=null; }
-      if(localVideoRef.current){ await localVideoRef.current.stop(); await localVideoRef.current.close(); localVideoRef.current=null; }
-      if(agoraRef.current){ await agoraRef.current.leave(); agoraRef.current=null; }
-    }catch(e){}
+      // Stop and close audio
+      if(localAudioRef.current){
+        try{ localAudioRef.current.stop(); }catch(e){}
+        try{ await localAudioRef.current.close(); }catch(e){}
+        localAudioRef.current = null;
+      }
+      // Stop and close video
+      if(localVideoRef.current){
+        try{ localVideoRef.current.stop(); }catch(e){}
+        try{ await localVideoRef.current.close(); }catch(e){}
+        localVideoRef.current = null;
+      }
+      // Leave channel
+      if(agoraRef.current){
+        try{ await agoraRef.current.leave(); }catch(e){}
+        agoraRef.current = null;
+      }
+    }catch(e){ console.error("leaveAgora:",e); }
   },[]);
 
   const joinAgora = useCallback(async(channelName, type)=>{
@@ -418,23 +436,9 @@ function Ailo(){
 
       client.on("user-published", async(user, mediaType)=>{
         await client.subscribe(user, mediaType);
-        if(mediaType==="audio"){
-          user.audioTrack?.play();
-          setRemoteMicOff(false);
-        }
+        if(mediaType==="audio") user.audioTrack?.play();
         if(mediaType==="video" && remoteVideoElRef.current){
           user.videoTrack?.play(remoteVideoElRef.current);
-          setRemoteCamOff(false);
-        }
-      });
-      client.on("user-unpublished",(user,mediaType)=>{
-        if(mediaType==="audio"){
-          user.audioTrack?.stop();
-          setRemoteMicOff(true);
-        }
-        if(mediaType==="video"){
-          user.videoTrack?.stop();
-          setRemoteCamOff(true);
         }
       });
 
@@ -468,48 +472,59 @@ function Ailo(){
     }catch(e){ console.error("Agora join error:",e); }
   },[leaveAgora, getAgoraToken]);
 
-  // Fix 3 & 4: use publish/unpublish for proper mute/cam toggle
+  // Fix 3: use setEnabled (not unpublish) - only affects local track, not remote
   const toggleMic = useCallback(async()=>{
-    if(!localAudioRef.current || !agoraRef.current) return;
+    if(!localAudioRef.current) return;
     try{
-      if(micOn){
-        await agoraRef.current.unpublish([localAudioRef.current]);
-      } else {
-        await agoraRef.current.publish([localAudioRef.current]);
-      }
-      setMicOn(m=>!m);
+      const newState = !micOn;
+      await localAudioRef.current.setEnabled(newState);
+      setMicOn(newState);
+      // Broadcast status so remote knows
+      if(roomRef.current) roomRef.current.send({
+        type:"broadcast", event:"media_status",
+        payload:{ mic: newState, cam: camOn }
+      });
     }catch(e){ console.error("toggleMic:",e); }
-  },[micOn]);
+  },[micOn, camOn]);
 
   const toggleCam = useCallback(async()=>{
-    if(!localVideoRef.current || !agoraRef.current) return;
+    if(!localVideoRef.current) return;
     try{
-      if(camOn){
-        await agoraRef.current.unpublish([localVideoRef.current]);
-        localVideoRef.current.stop();
-      } else {
-        localVideoRef.current.play(localVideoElRef.current);
-        await agoraRef.current.publish([localVideoRef.current]);
-      }
-      setCamOn(c=>!c);
+      const newState = !camOn;
+      await localVideoRef.current.setEnabled(newState);
+      setCamOn(newState);
+      // Broadcast status so remote knows
+      if(roomRef.current) roomRef.current.send({
+        type:"broadcast", event:"media_status",
+        payload:{ mic: micOn, cam: newState }
+      });
     }catch(e){ console.error("toggleCam:",e); }
-  },[camOn]);
+  },[camOn, micOn]);
 
   const searchUserById = async() => {
-    if(!searchId.trim()){ setSearchError("أدخل ID أو اسم المستخدم"); return; }
+    if(!searchId.trim()){ setSearchError("أدخل ID المستخدم"); return; }
     setSearchLoading(true); setSearchError(""); setSearchResult(null);
+    const q = searchId.trim();
+
+    // If input looks like a UUID → start direct chat immediately
+    const isUUID = /^[0-9a-f-]{30,}$/i.test(q);
+    if(isUUID){
+      setSearchLoading(false);
+      setSearchResult([{user_id:q, name:"مستخدم", avatar:"🌍", xp:0, direct:true}]);
+      return;
+    }
+
+    // Otherwise search leaderboard by name
     try{
-      const q = searchId.trim();
-      // Try by user_id first, then by name
       const res = await fetch(
         `${SUPA_URL}/rest/v1/leaderboard?name=ilike.*${encodeURIComponent(q)}*&select=*&limit=5`,
         { headers:{"apikey":SUPA_KEY} }
       );
-      if(!res.ok) throw new Error("request failed");
+      if(!res.ok) throw new Error("failed");
       const data = await res.json();
-      if(data&&data.length>0){ setSearchResult(data); }
-      else{ setSearchError("لم يُعثر على مستخدم — تأكد من نشر نتيجتك في الصدارة أولاً"); }
-    }catch(e){ setSearchError("خطأ في الاتصال بالخادم"); }
+      if(data && data.length>0){ setSearchResult(data); }
+      else{ setSearchError("لم يُعثر على مستخدم بهذا الاسم"); }
+    }catch(e){ setSearchError("خطأ في الاتصال"); }
     setSearchLoading(false);
   };
 
@@ -1227,12 +1242,12 @@ function Ailo(){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowUserSearch(false)}>
           <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
             <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary}}>🔍 ابحث عن صديق</div>
-            <div style={{color:muted,fontSize:12,marginBottom:16}}>أدخل ID المستخدم للتواصل معه مباشرةً</div>
+            <div style={{color:muted,fontSize:12,marginBottom:16}}>أدخل <strong style={{color:primary}}>ID المستخدم</strong> للدردشة المباشرة، أو <strong style={{color:primary}}>الاسم</strong> للبحث</div>
             <div style={{background:`${primary}11`,border:`1px solid ${primary}33`,borderRadius:14,padding:"10px 14px",marginBottom:14,fontSize:12,color:muted}}>
-              💡 ID خاصك: <span style={{color:primary,fontWeight:700,userSelect:"all"}}>{userId||"—"}</span>
+              💡 ID خاصك: <span style={{color:primary,fontWeight:700,fontSize:11,wordBreak:"break-all",userSelect:"all"}}>{userId||"—"}</span>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:14}}>
-              <input value={searchId} onChange={e=>setSearchId(e.target.value)} placeholder="أدخل ID المستخدم..." style={{...inp,flex:1}} onKeyDown={e=>e.key==="Enter"&&searchUserById()}/>
+              <input value={searchId} onChange={e=>setSearchId(e.target.value)} placeholder="ID أو اسم المستخدم..." style={{...inp,flex:1}} onKeyDown={e=>e.key==="Enter"&&searchUserById()}/>
               <button onClick={searchUserById} style={btnP({padding:"12px 18px",fontSize:13,flexShrink:0})}>{searchLoading?"...":"بحث"}</button>
             </div>
             {searchError&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>⚠️ {searchError}</div>}
