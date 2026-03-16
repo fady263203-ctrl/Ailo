@@ -363,7 +363,7 @@ function Ailo(){
     if(screen!=="call") return;
     const rid = (roomId || "ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64);
     joinAgora(rid, callType);
-    return ()=>{ leaveAgora(); };
+    return ()=>{ leaveAgora(); }; // cleanup when leaving call screen
   },[screen, roomId]);
 
   useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
@@ -397,21 +397,31 @@ function Ailo(){
 
   const leaveAgora = useCallback(async()=>{
     try{
-      // Stop and close audio
+      const client = agoraRef.current;
+      // Step 1: unpublish all tracks first
+      if(client){
+        const tracks = [];
+        if(localAudioRef.current) tracks.push(localAudioRef.current);
+        if(localVideoRef.current) tracks.push(localVideoRef.current);
+        if(tracks.length > 0){
+          try{ await client.unpublish(tracks); }catch(e){}
+        }
+      }
+      // Step 2: stop + close audio
       if(localAudioRef.current){
         try{ localAudioRef.current.stop(); }catch(e){}
         try{ await localAudioRef.current.close(); }catch(e){}
         localAudioRef.current = null;
       }
-      // Stop and close video
+      // Step 3: stop + close video
       if(localVideoRef.current){
         try{ localVideoRef.current.stop(); }catch(e){}
         try{ await localVideoRef.current.close(); }catch(e){}
         localVideoRef.current = null;
       }
-      // Leave channel
-      if(agoraRef.current){
-        try{ await agoraRef.current.leave(); }catch(e){}
+      // Step 4: leave channel
+      if(client){
+        try{ await client.leave(); }catch(e){}
         agoraRef.current = null;
       }
     }catch(e){ console.error("leaveAgora:",e); }
@@ -477,8 +487,11 @@ function Ailo(){
   const toggleMic = useCallback(async()=>{
     if(!localAudioRef.current) return;
     try{
-      const newMuted = micOn; // micOn=true means currently active → mute it
+      const newMuted = micOn;
+      // setMuted is the correct Agora API to stop sending audio to remote
       await localAudioRef.current.setMuted(newMuted);
+      // Also setEnabled to stop the mic hardware on device
+      await localAudioRef.current.setEnabled(!newMuted);
       setMicOn(!newMuted);
       if(roomRef.current) roomRef.current.send({
         type:"broadcast", event:"media_status",
@@ -492,6 +505,7 @@ function Ailo(){
     try{
       const newMuted = camOn;
       await localVideoRef.current.setMuted(newMuted);
+      await localVideoRef.current.setEnabled(!newMuted);
       setCamOn(!newMuted);
       if(roomRef.current) roomRef.current.send({
         type:"broadcast", event:"media_status",
