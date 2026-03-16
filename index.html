@@ -177,6 +177,7 @@ function Ailo(){
   const[xpPopup,setXpPopup]=useState(null);
   const[notifMuted,setNotifMuted]=useState([]);
   const[storeTab,setStoreTab]=useState(false);
+  const[activeChat,setActiveChat]=useState("bot"); // "bot" or "friend"
   // Feature 1: language picker before search
   const[showLangPicker,setShowLangPicker]=useState(false);
   const[pendingCallType,setPendingCallType]=useState("");
@@ -319,11 +320,16 @@ function Ailo(){
     if(roomRef.current){ supa.removeChannel(roomRef.current); roomRef.current=null; }
     const ch = supa.channel("room_"+rid);
     ch.on("broadcast",{event:"msg"},({payload})=>{
-      setMessages(p=>[...p,{id:Date.now()+Math.random(),from:"partner",text:payload.text,time:payload.time,status:"read"}]);
+      setMessages(p=>[...p,{id:Date.now()+Math.random(),from:"partner",text:payload.text,time:payload.time,status:"read",isImage:payload.isImage||false,imageData:payload.imageData||null}]);
       setIsTyping(false);
     });
     ch.on("broadcast",{event:"typing"},()=>{
       setIsTyping(true); setTimeout(()=>setIsTyping(false),2000);
+    });
+    ch.on("broadcast",{event:"call_end"},async()=>{
+      try{ await leaveAgora(); }catch(e){}
+      setScreen("home");
+      addXp(30,"مكالمة");
     });
     ch.subscribe();
     roomRef.current = ch;
@@ -347,7 +353,7 @@ function Ailo(){
   };
   useEffect(()=>{
     if(screen!=="call") return;
-    const rid = roomId || "ailo_"+Date.now();
+    const rid = (roomId || "ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64);
     joinAgora(rid, callType);
     return ()=>{ leaveAgora(); };
   },[screen, roomId]);
@@ -400,10 +406,10 @@ function Ailo(){
         catch(e){ console.warn("Permission denied:",e); }
       }
 
-      const token = await getAgoraToken(channelName);
-
-      window.AgoraRTC.setLogLevel(3); // reduce logs
-      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"h264"});
+      const safeChannel = channelName.replace(/[^a-zA-Z0-9_]/g,'').slice(0,64) || 'ailo';
+      const token = await getAgoraToken(safeChannel);
+      window.AgoraRTC.setLogLevel(4);
+      const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
       agoraRef.current = client;
 
       client.on("user-published", async(user, mediaType)=>{
@@ -418,7 +424,7 @@ function Ailo(){
         if(mediaType==="video") user.videoTrack?.stop();
       });
 
-      const uid = await client.join(AGORA_APP_ID, channelName, token, null);
+      const uid = await client.join(AGORA_APP_ID, safeChannel, token, null);
       console.log("Agora joined, uid:", uid);
 
       if(type==="voice"||type==="video"){
@@ -453,16 +459,20 @@ function Ailo(){
   useEffect(()=>{ if(localVideoRef.current) localVideoRef.current.setEnabled(camOn); },[camOn]);
 
   const searchUserById = async() => {
-    if(!searchId.trim()){ setSearchError("أدخل ID المستخدم"); return; }
+    if(!searchId.trim()){ setSearchError("أدخل ID أو اسم المستخدم"); return; }
     setSearchLoading(true); setSearchError(""); setSearchResult(null);
     try{
-      const res = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${encodeURIComponent(searchId.trim())}&select=*`,{
-        headers:{"apikey":SUPA_KEY}
-      });
+      const q = searchId.trim();
+      // Try by user_id first, then by name
+      const res = await fetch(
+        `${SUPA_URL}/rest/v1/leaderboard?name=ilike.*${encodeURIComponent(q)}*&select=*&limit=5`,
+        { headers:{"apikey":SUPA_KEY} }
+      );
+      if(!res.ok) throw new Error("request failed");
       const data = await res.json();
-      if(data&&data.length>0){ setSearchResult(data[0]); }
-      else{ setSearchError("لم يُعثر على مستخدم بهذا الـ ID"); }
-    }catch(e){ setSearchError("خطأ في الاتصال"); }
+      if(data&&data.length>0){ setSearchResult(data); }
+      else{ setSearchError("لم يُعثر على مستخدم — تأكد من نشر نتيجتك في الصدارة أولاً"); }
+    }catch(e){ setSearchError("خطأ في الاتصال بالخادم"); }
     setSearchLoading(false);
   };
 
@@ -615,7 +625,15 @@ function Ailo(){
       </>):(<>
         <div style={{fontSize:72}}>🎉</div>
         <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>تم العثور على شريك!</div>
-        <div style={{...glass({width:"100%",textAlign:"center"})}}><div style={{fontSize:60,marginBottom:8}}>{partner.av}</div><div style={{fontWeight:800,fontSize:20}}>{partner.name}</div><div style={{color:muted,fontSize:12,marginTop:4}}>🌍 {partner.country}</div></div>
+        <div style={{...glass({width:"100%",textAlign:"center"})}}>
+          <div style={{display:"flex",justifyContent:"center",marginBottom:12}}>
+            <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",border:`3px solid ${primary}`,boxShadow:`0 0 0 3px ${glow}`}}>
+              {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="" onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="block";}}/>:<span style={{fontSize:56,lineHeight:"80px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
+            </div>
+          </div>
+          <div style={{fontWeight:800,fontSize:20}}>{partner.name}</div>
+          <div style={{color:muted,fontSize:12,marginTop:4}}>🌍 {partner.country}</div>
+        </div>
         <div style={{display:"flex",gap:12,width:"100%"}}>
           <button style={btnP({flex:1,background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={cancelSearch}>رفض ✕</button>
           <button style={btnP({flex:1})} onClick={acceptMatch}>قبول ✓</button>
@@ -652,13 +670,13 @@ function Ailo(){
         {[
           {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"صوت":"كتم",  active:micOn,  action:()=>setMicOn(m=>!m)},
           {icon:Ic.endCall("white",24), label:"إنهاء", end:true, action:()=>{
+            if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
             leaveAgora();
             const dur=fmt(callTime);
-            const entry={id:Date.now(),partner:`${partner.name} ${partner.av}`,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
+            const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
             setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
             setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
             updateQuest("calls");
-            // update streak
             const today=new Date().toDateString();
             const lastDay=load("last_call_day","");
             if(lastDay!==today){
@@ -667,7 +685,7 @@ function Ailo(){
               setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
               setStats(s=>{const ns={...s,streak:newStreak};checkBadges(ns);return ns;});
             }
-            setScreen("home");addXp(30,"مكالمة");
+            setScreen("home");addXp(30,"مكالمة");setCoins(c=>c+10);
           }},
           ...(callType==="video"?[
             {icon:camOn?Ic.video("white",22):Ic.video("white",22), label:camOn?"كاميرا":"إيقاف", active:camOn, action:()=>setCamOn(c=>!c)},
@@ -715,7 +733,9 @@ function Ailo(){
           <div style={{alignSelf:"center",background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"5px 14px",display:"flex",alignItems:"center",gap:5,fontSize:11,color:muted}}>{Ic.shield("#22c55e",11)}<span>محادثة مشفرة</span></div>
           {messages.map(m=>(
             <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
-              <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,boxShadow:m.from==="me"?`0 4px 14px ${glow}`:"0 2px 8px rgba(0,0,0,0.07)"}}>{m.text}</div>
+              <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:m.isImage?"6px":"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,boxShadow:m.from==="me"?`0 4px 14px ${glow}`:"0 2px 8px rgba(0,0,0,0.07)",overflow:"hidden"}}>
+                {m.isImage&&m.imageData?<img src={m.imageData} style={{maxWidth:220,maxHeight:200,borderRadius:12,display:"block"}} alt=""/>:m.text}
+              </div>
               <div style={{fontSize:10,color:muted,marginTop:3,display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start",alignItems:"center",gap:4}}>{m.time}{m.from==="me"&&(m.status==="read"?Ic.checks("#22c55e",13):m.status==="delivered"?Ic.checks(muted,13):Ic.check(muted,12))}</div>
             </div>
           ))}
@@ -726,10 +746,31 @@ function Ailo(){
           <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={e=>{
             const f=e.target.files?.[0]; if(!f)return;
             const isImg=f.type.startsWith("image/");
-            const nm={id:Date.now(),from:"me",text:isImg?`📷 صورة: ${f.name}`:`📎 ملف: ${f.name}`,time:now(),status:"sent"};
-            setMessages(p=>[...p,nm]); addXp(3,"مرفق");
-            if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:nm.text,time:nm.time}});
-            setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1000);
+            if(isImg){
+              const reader=new FileReader();
+              reader.onload=(ev)=>{
+                // Compress image before sending (max 400px, quality 0.6)
+                const img=new Image();
+                img.onload=()=>{
+                  const canvas=document.createElement("canvas");
+                  const max=400; const ratio=Math.min(max/img.width,max/img.height,1);
+                  canvas.width=img.width*ratio; canvas.height=img.height*ratio;
+                  canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+                  const imageData=canvas.toDataURL("image/jpeg",0.6);
+                  const nm={id:Date.now(),from:"me",text:`📷 صورة`,time:now(),status:"sent",isImage:true,imageData};
+                  setMessages(p=>[...p,nm]); addXp(3,"صورة"); setCoins(c=>c+1);
+                  if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:`📷 صورة`,time:now(),isImage:true,imageData}});
+                  setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1000);
+                };
+                img.src=ev.target.result;
+              };
+              reader.readAsDataURL(f);
+            } else {
+              const nm={id:Date.now(),from:"me",text:`📎 ${f.name}`,time:now(),status:"sent"};
+              setMessages(p=>[...p,nm]); addXp(3,"مرفق");
+              if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:`📎 ${f.name}`,time:now()}});
+              setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1000);
+            }
             e.target.value="";
           }}/>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -755,7 +796,13 @@ function Ailo(){
   }
 
   // ── MAIN ──────────────────────────────────────────────────────────────────
-  const TABS=[{id:"home",label:"الرئيسية",icon:Ic.home},{id:"bot",label:"المساعد",icon:Ic.chat},{id:"history",label:"السجل",icon:Ic.clock},{id:"exercises",label:"تدريبات",icon:Ic.star},{id:"leaderboard",label:"الصدارة",icon:Ic.trophy}];
+  const TABS=[
+    {id:"home",     label:"الرئيسية", icon:Ic.home},
+    {id:"messages", label:"الرسائل",  icon:Ic.chat},
+    {id:"exercises",label:"تدريبات",  icon:Ic.star},
+    {id:"leaderboard",label:"الصدارة",icon:Ic.trophy},
+    {id:"history",  label:"السجل",    icon:Ic.clock},
+  ];
 
   return(
     <div style={{background:bg,minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",maxWidth:480,margin:"0 auto",paddingBottom:72,position:"relative",overflow:"hidden"}}>
@@ -837,16 +884,62 @@ function Ailo(){
           </div>
         </div>}
 
-        {/* BOT */}
-        {tab==="bot"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)",animation:"slideIn 0.4s ease"}}>
-          <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
-            {botMsgs.map(m=>(<div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"82%"}}>{m.from==="bot"&&<div style={{fontSize:14,marginBottom:3,color:muted}}>✨ Ailo AI</div>}<div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.7,border:`1px solid ${border}`}}>{m.text}</div></div>))}
-            <div ref={botEnd}/>
+        {/* MESSAGES TAB - combines friend chat + bot */}
+        {tab==="messages"&&<div style={{animation:"slideIn 0.4s ease"}}>
+          {/* Chat selector */}
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <button onClick={()=>setActiveChat("bot")} style={{flex:1,padding:"10px",borderRadius:12,border:`1px solid ${activeChat==="bot"?primary:border}`,background:activeChat==="bot"?`${primary}22`:"transparent",color:activeChat==="bot"?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              ✨ Ailo AI
+            </button>
+            <button onClick={()=>setActiveChat("friend")} style={{flex:1,padding:"10px",borderRadius:12,border:`1px solid ${activeChat==="friend"?primary:border}`,background:activeChat==="friend"?`${primary}22`:"transparent",color:activeChat==="friend"?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              💬 محادثة أصدقاء
+              {messages.length>0&&<span style={{background:primary,color:"white",borderRadius:50,padding:"1px 6px",fontSize:10}}>{messages.length}</span>}
+            </button>
           </div>
-          <div style={{display:"flex",gap:8}}>
-            <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()){setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);setBotInput("");setTimeout(()=>setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:BOTS[Math.floor(Math.random()*BOTS.length)],time:now()}]),1000);}}} placeholder="اسأل المساعد..." style={{...inp,flex:1}}/>
-            <button onClick={()=>{if(!botInput.trim())return;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);setBotInput("");setTimeout(()=>setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:BOTS[Math.floor(Math.random()*BOTS.length)],time:now()}]),1000);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
-          </div>
+
+          {/* BOT CHAT */}
+          {activeChat==="bot"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 280px)"}}>
+            <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
+              {botMsgs.map(m=>(<div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"82%"}}>
+                {m.from==="bot"&&<div style={{fontSize:13,marginBottom:3,color:muted,display:"flex",alignItems:"center",gap:4}}>✨ <span>Ailo AI</span></div>}
+                <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.7,border:`1px solid ${border}`}}>{m.text}</div>
+              </div>))}
+              <div ref={botEnd}/>
+            </div>
+            <div style={{display:"flex",gap:8,paddingTop:8}}>
+              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()){setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);setBotInput("");setTimeout(()=>setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:BOTS[Math.floor(Math.random()*BOTS.length)],time:now()}]),1000);}}} placeholder="اسأل المساعد..." style={{...inp,flex:1}}/>
+              <button onClick={()=>{if(!botInput.trim())return;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);setBotInput("");setTimeout(()=>setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:BOTS[Math.floor(Math.random()*BOTS.length)],time:now()}]),1000);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
+            </div>
+          </div>}
+
+          {/* FRIEND CHAT */}
+          {activeChat==="friend"&&<div>
+            {messages.length===0
+              ?<div style={{...glass({textAlign:"center",padding:32})}}>
+                <div style={{fontSize:40,marginBottom:12}}>💬</div>
+                <div style={{fontWeight:700,fontSize:15,marginBottom:8}}>لا توجد محادثات بعد</div>
+                <div style={{color:muted,fontSize:13,marginBottom:16}}>ابدأ محادثة مع شريك لغوي أو ابحث عن صديق</div>
+                <button onClick={()=>{setSearchId("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:13})}>🔍 ابحث عن صديق</button>
+              </div>
+              :<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 290px)"}}>
+                <div style={{...glass({marginBottom:10,display:"flex",alignItems:"center",gap:10,padding:"10px 14px"})}}>
+                  <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`}}>
+                    {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
+                  </div>
+                  <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{partner.name}</div><div style={{fontSize:11,color:muted}}>{partner.country}</div></div>
+                </div>
+                <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
+                  {messages.map(m=>(
+                    <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
+                      <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:m.isImage?"6px":"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
+                        {m.isImage&&m.imageData?<img src={m.imageData} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>:m.text}
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={msgEnd}/>
+                </div>
+              </div>}
+          </div>}
         </div>}
 
         {/* HISTORY */}
@@ -1021,6 +1114,20 @@ function Ailo(){
             {Ic.shield("#22c55e",16)}<div><div style={{fontWeight:700,fontSize:13}}>التشفير الكامل</div><div style={{fontSize:11,color:"#22c55e",marginTop:2}}>✅ مفعّل دائماً</div></div>
           </div>
 
+          {/* BLOCKED USERS */}
+          <div style={{marginBottom:18}}>
+            <div style={{fontWeight:700,fontSize:13,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>🚫 قائمة المحظورين {blocked.length>0&&<span style={{background:"rgba(239,68,68,0.2)",color:"#ef4444",borderRadius:50,padding:"1px 8px",fontSize:11}}>{blocked.length}</span>}</div>
+            {blocked.length===0
+              ? <div style={{color:muted,fontSize:12,textAlign:"center",padding:"12px 0"}}>لا يوجد مستخدمون محظورون</div>
+              : blocked.map((u,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<blocked.length-1?`1px solid ${border}`:"none"}}>
+                  <span style={{fontSize:13}}>{u}</span>
+                  <button onClick={()=>setBlocked(b=>b.filter((_,j)=>j!==i))} style={{background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"4px 12px",fontSize:11,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui",fontWeight:700}}>فك الحظر ✓</button>
+                </div>
+              ))
+            }
+          </div>
+
           <button onClick={()=>setShowSettings(false)} style={btnP({width:"100%",marginBottom:10})}>حفظ ✓</button>
 
           {/* LOGOUT */}
@@ -1068,24 +1175,24 @@ function Ailo(){
               <button onClick={searchUserById} style={btnP({padding:"12px 18px",fontSize:13,flexShrink:0})}>{searchLoading?"...":"بحث"}</button>
             </div>
             {searchError&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>⚠️ {searchError}</div>}
-            {searchResult&&(
-              <div style={{...glass({display:"flex",alignItems:"center",gap:12,marginBottom:14})}}>
+            {searchResult&&Array.isArray(searchResult)&&searchResult.map((u,i)=>(
+              <div key={i} style={{...glass({display:"flex",alignItems:"center",gap:12,marginBottom:8})}}>
                 <div style={{width:44,height:44,borderRadius:22,overflow:"hidden",flexShrink:0,border:`2px solid ${primary}`}}>
-                  {searchResult.avatar?.startsWith("http")?<img src={searchResult.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:28,lineHeight:"44px",display:"block",textAlign:"center"}}>{searchResult.avatar||"🌍"}</span>}
+                  {u.avatar?.startsWith("http")?<img src={u.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="" onError={e=>e.target.style.display="none"}/>:<span style={{fontSize:28,lineHeight:"44px",display:"block",textAlign:"center"}}>{u.avatar||"🌍"}</span>}
                 </div>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:15}}>{searchResult.name}</div>
-                  <div style={{color:muted,fontSize:12,marginTop:2}}>{searchResult.xp?.toLocaleString()||0} XP</div>
+                  <div style={{fontWeight:700,fontSize:15}}>{u.name}</div>
+                  <div style={{color:muted,fontSize:12,marginTop:2}}>{(u.xp||0).toLocaleString()} XP</div>
                 </div>
                 <button onClick={()=>{
                   setSearchResult(null); setShowUserSearch(false);
-                  setPartner({av:searchResult.avatar||"🌍",name:searchResult.name,country:"—"});
-                  const rid="direct_"+[userId,searchResult.user_id].sort().join("__");
+                  setPartner({av:u.avatar||"🌍",name:u.name||"مستخدم",country:"—"});
+                  const rid="direct_"+[userId,u.user_id].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
                   setRoomId(rid); setCallType("text");
                   joinRoom(rid); setScreen("chat");
-                }} style={btnP({padding:"10px 16px",fontSize:13})}>دردشة 💬</button>
+                }} style={btnP({padding:"9px 14px",fontSize:12})}>دردشة 💬</button>
               </div>
-            )}
+            ))}
             <button onClick={()=>setShowUserSearch(false)} style={{width:"100%",padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إغلاق</button>
           </div>
         </div>
