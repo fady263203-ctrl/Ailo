@@ -25,7 +25,6 @@ input,select,button,textarea{font-family:'Tajawal',system-ui}
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
 
-
 const LIGHT = { bg:"linear-gradient(135deg,#f8fafc 0%,#eef2ff 50%,#faf5ff 100%)", card:"rgba(255,255,255,0.82)", border:"rgba(99,102,241,0.15)", text:"#1e1b4b", muted:"#6b7280", input:"rgba(0,0,0,0.05)" };
 const DARK  = { bg:"linear-gradient(135deg,#0f0c29 0%,#1a1040 50%,#0f0c29 100%)", card:"rgba(30,25,80,0.65)", border:"rgba(129,140,248,0.18)", text:"#e0e7ff", muted:"#8b8fa8", input:"rgba(255,255,255,0.08)" };
 const ACCENTS = {
@@ -44,13 +43,11 @@ const SEEDS=["Aisha","Sara","Fatima","Layla","Nour","Hana","Rania","Dina","Maya"
 const avUrl = s=>`https://api.dicebear.com/7.x/lorelei/svg?seed=${s}&backgroundColor=ffd5dc,ffdfbf,ffecd2,f8b4d9,b6e3f4`;
 const SRS=[{word:"Hello",type:"mcq",options:["مرحباً","وداعاً","شكراً","آسف"],answer:0},{word:"Beautiful",type:"arrange",words:["جميل","هذا","الطقس"],answer:"هذا الطقس جميل"},{word:"Thank you",type:"mcq",options:["من فضلك","شكراً","آسف","نعم"],answer:1},{word:"Friend",type:"mcq",options:["عدو","صديق","أخ","جار"],answer:1},{word:"Water",type:"match",pairs:[["Water","ماء"],["Fire","نار"],["Sky","سماء"],["Earth","أرض"]],answer:null},{word:"Love",type:"mcq",options:["كره","خوف","حب","فرح"],answer:2},{word:"Goodbye",type:"arrange",words:["وداعاً","يا","صديقي"],answer:"وداعاً يا صديقي"},{word:"Food",type:"speech",sentence:"I would like some food please",answer:null}];
 const BOTS=["رائع! هل يمكنك استخدامها في جملة؟ 😊","ممتاز! أنت تتعلم بسرعة! 🌟","نطق مثالي! استمر! 🎯","سؤال رائع! 💡","أنت تتقدم بشكل مذهل! 🏆"];
-// Daily quests template - reset each day
 const QUESTS_TPL=[
   {id:1,icon:"💬",text:"أرسل 5 رسائل",       xp:20,total:5,  key:"msgs"},
   {id:2,icon:"📚",text:"أكمل 3 تمارين SRS",   xp:30,total:3,  key:"srs"},
   {id:3,icon:"📞",text:"أجرِ مكالمة واحدة",   xp:40,total:1,  key:"calls"},
 ];
-// Badge definitions with unlock conditions
 const BADGE_DEFS=[
   {icon:"💬",name:"أول محادثة",    key:"first_msg",   cond:(s)=>s.totalMsgs>=1},
   {icon:"🔥",name:"سلسلة 5 أيام", key:"streak5",      cond:(s)=>s.streak>=5},
@@ -103,7 +100,6 @@ function WeekChart({data,primary}){
 }
 
 function Ailo(){
-  // ── load saved state from localStorage ──
   const load=(k,def)=>{ try{ const v=localStorage.getItem("ailo_"+k); return v!==null?JSON.parse(v):def; }catch(e){return def;} };
   const save=(k,v)=>{ try{ localStorage.setItem("ailo_"+k,JSON.stringify(v)); }catch(e){} };
 
@@ -143,13 +139,11 @@ function Ailo(){
   const[micOn,setMicOn]=useState(true);
   const[camOn,setCamOn]=useState(true);
   const[frontCam,setFrontCam]=useState(true);
-  const[remoteMicOff,setRemoteMicOff]=useState(false);  // remote muted mic
-  const[remoteCamOff,setRemoteCamOff]=useState(false);  // remote turned off cam
+  const[remoteMicOff,setRemoteMicOff]=useState(false); 
+  const[remoteCamOff,setRemoteCamOff]=useState(false); 
   const[callHistory,setCallHistory]=useState(()=>load("callhist",[]));
-  // Real stats counters
   const[stats,setStatsRaw]=useState(()=>load("stats",{totalMsgs:0,srsTotal:0,speechDone:0,streak:0,challengeWins:0,lbRank:0,callsTotal:0}));
   const setStats=(fn)=>{ setStatsRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("stats",nv); return nv; }); };
-  // Daily quests - reset each day
   const[quests,setQuests]=useState(()=>{
     const saved=load("quests_v2",null);
     const today=new Date().toDateString();
@@ -157,7 +151,6 @@ function Ailo(){
     return QUESTS_TPL.map(q=>({...q,progress:0,done:false,claimed:false}));
   });
   const saveQuests=(qs)=>{ save("quests_v2",{date:new Date().toDateString(),quests:qs}); };
-  // Leaderboard from Supabase
   const[lbData,setLbData]=useState([]);
   const[lbLoading,setLbLoading]=useState(false);
   const[botMsgs,setBotMsgs]=useState([{id:1,from:"bot",text:"مرحباً! أنا مساعدك للغات ✨ كيف يمكنني مساعدتك؟",time:"10:00"}]);
@@ -179,27 +172,22 @@ function Ailo(){
   const[xpPopup,setXpPopup]=useState(null);
   const[notifMuted,setNotifMuted]=useState([]);
   const[storeTab,setStoreTab]=useState(false);
-  const[activeChat,setActiveChat]=useState("bot"); // "bot" or "friend"
-  // Feature 1: language picker before search
+  const[activeChat,setActiveChat]=useState("bot");
   const[showLangPicker,setShowLangPicker]=useState(false);
   const[pendingCallType,setPendingCallType]=useState("");
   const[targetLang,setTargetLang]=useState(()=>load("targetLang","English"));
-  // Feature 2: user search by ID
   const[showUserSearch,setShowUserSearch]=useState(false);
   const[searchId,setSearchId]=useState("");
   const[searchResult,setSearchResult]=useState(null);
   const[searchError,setSearchError]=useState("");
   const[searchLoading,setSearchLoading]=useState(false);
-  // Feature 3: profile view modal (separate from edit)
   const[showProfileView,setShowProfileView]=useState(false);
-  // Feature 4: first time tutorial
   const[showTutorial,setShowTutorial]=useState(()=>!load("tutorial_done",false));
   const[tutorialStep,setTutorialStep]=useState(0);
-  // Feature 5: coins info modal
   const[showCoinsInfo,setShowCoinsInfo]=useState(false);
-  // Supabase realtime
   const[userId,setUserId]=useState("");
   const[roomId,setRoomId]=useState("");
+  
   const lobbyRef=useRef(null);
   const roomRef=useRef(null);
   const msgEnd=useRef(null);
@@ -210,7 +198,6 @@ function Ailo(){
   const SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
   const getSupa=()=>window.supabase?.createClient(SUPA_URL,SUPA_KEY);
 
-  // theme computed
   const mode=darkMode?DARK:LIGHT;
   const ac=ACCENTS[accentKey];
   const{bg,card,border,text,muted,input}=mode;
@@ -223,7 +210,6 @@ function Ailo(){
   const btnP=(extra={})=>({background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:50,padding:"13px 28px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"'Tajawal',system-ui",boxShadow:`0 4px 18px ${glow}`,transition:"all 0.2s",...extra});
   const tag=(c)=>({background:`${c}22`,color:c,border:`1px solid ${c}44`,borderRadius:50,padding:"3px 11px",fontSize:11,fontWeight:700,display:"inline-block"});
 
-  // XP double state
   const[xpDouble,setXpDouble]=useState(()=>{ try{ return Date.now()<(parseInt(localStorage.getItem("ailo_xp_double_until")||"0")); }catch(e){return false;} });
 
   const addXp=useCallback((amt,label)=>{
@@ -233,7 +219,6 @@ function Ailo(){
     setTimeout(()=>setXpPopup(null),2000);
   },[]);
 
-  // Update quest progress
   const updateQuest=(key,inc=1)=>{
     setQuests(qs=>{
       const nqs=qs.map(q=>{
@@ -245,7 +230,6 @@ function Ailo(){
     });
   };
 
-  // Check and unlock badges automatically
   const checkBadges=useCallback((s)=>{
     const earned=load("badges_earned",[]);
     const newBadges=[];
@@ -254,7 +238,6 @@ function Ailo(){
     return [...earned,...newBadges];
   },[]);
 
-  // Fetch real leaderboard from Supabase
   const fetchLB=useCallback(async()=>{
     setLbLoading(true);
     try{
@@ -266,7 +249,6 @@ function Ailo(){
     setLbLoading(false);
   },[]);
 
-  // Push my XP to Supabase leaderboard
   const pushLB=useCallback(async(xp)=>{
     const token=load("token",""); if(!token) return;
     try{
@@ -278,9 +260,6 @@ function Ailo(){
     }catch(e){}
   },[userId,profile.name,profile.avatar]);
 
-  // XP double state
-
-  // ── Supabase Realtime Matching ──────────────────────────────────────────────
   const startSearch = (type) => {
     setPendingCallType(type);
     setShowLangPicker(true);
@@ -316,7 +295,6 @@ function Ailo(){
     lobbyRef.current = ch;
   };
 
-  // ── Join room for chat ──────────────────────────────────────────────────────
   const joinRoom = (rid) => {
     const supa = getSupa(); if(!supa||!rid) return;
     if(roomRef.current){ supa.removeChannel(roomRef.current); roomRef.current=null; }
@@ -359,14 +337,20 @@ function Ailo(){
     if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
     setScreen("home");
   };
+  
   useEffect(()=>{
     if(screen!=="call") return;
     const rid = (roomId || "ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64);
     joinAgora(rid, callType);
-    return ()=>{ leaveAgora(); }; // cleanup when leaving call screen
+    return ()=>{ leaveAgora(); }; 
   },[screen, roomId]);
 
-  useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
+  useEffect(() => { 
+    if(tab === "leaderboard") {
+      pushLB(totalXp).then(() => fetchLB());
+    } 
+  }, [tab, totalXp, pushLB, fetchLB]);
+  
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
@@ -374,7 +358,6 @@ function Ailo(){
   useEffect(()=>{const c=SRS[srsIdx];if(c.type==="arrange")setArrWords([...c.words].sort(()=>Math.random()-0.5));if(c.type==="match")setMatchPairs({});setArrSel([]);setMatchSel(null);setSrsAnswer(null);setSpeechRes("");},[srsIdx]);
   useEffect(()=>{if(!challengeActive)return;const i=setInterval(()=>{setChallengeTime(t=>{if(t<=1){setChallengeActive(false);clearInterval(i);return 0;}return t-1;});if(Math.random()>0.6)setChallengeScore(s=>({...s,opp:s.opp+1}));},1000);return()=>clearInterval(i);},[challengeActive]);
 
-  // ── AGORA RTC refs (must be before any early return) ─────────────────────
   const AGORA_APP_ID    = "8bcdb59f221e4510adcdd15e5fc74a99";
   const AGORA_TOKEN_URL = "https://tsdpznjarcvmpcrmmbdu.supabase.co/functions/v1/ailo-token-generator";
 
@@ -398,7 +381,6 @@ function Ailo(){
   const leaveAgora = useCallback(async()=>{
     try{
       const client = agoraRef.current;
-      // Step 1: unpublish all tracks first
       if(client){
         const tracks = [];
         if(localAudioRef.current) tracks.push(localAudioRef.current);
@@ -407,19 +389,16 @@ function Ailo(){
           try{ await client.unpublish(tracks); }catch(e){}
         }
       }
-      // Step 2: stop + close audio
       if(localAudioRef.current){
         try{ localAudioRef.current.stop(); }catch(e){}
         try{ await localAudioRef.current.close(); }catch(e){}
         localAudioRef.current = null;
       }
-      // Step 3: stop + close video
       if(localVideoRef.current){
         try{ localVideoRef.current.stop(); }catch(e){}
         try{ await localVideoRef.current.close(); }catch(e){}
         localVideoRef.current = null;
       }
-      // Step 4: leave channel
       if(client){
         try{ await client.leave(); }catch(e){}
         agoraRef.current = null;
@@ -432,14 +411,8 @@ function Ailo(){
     try{
       await leaveAgora();
 
-      // Request permissions explicitly first
-      if(type==="voice"||type==="video"){
-        try{ await navigator.mediaDevices.getUserMedia({audio:true, video:type==="video"}); }
-        catch(e){ console.warn("Permission denied:",e); }
-      }
-
       const safeChannel = channelName.replace(/[^a-zA-Z0-9_]/g,'').slice(0,64) || 'ailo';
-      const token = null; // Testing mode - no token needed
+      const token = null; 
       window.AgoraRTC.setLogLevel(4);
       const client = window.AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
       agoraRef.current = client;
@@ -453,17 +426,15 @@ function Ailo(){
       });
 
       const uid = await client.join(AGORA_APP_ID, safeChannel, token, null);
-      console.log("Agora joined, uid:", uid);
 
       if(type==="voice"||type==="video"){
         try{
           const audio = await window.AgoraRTC.createMicrophoneAudioTrack({
             encoderConfig: "music_standard",
-            bypassWebAudio: true  // prevents audio leaking on mobile browsers
+            bypassWebAudio: true 
           });
           localAudioRef.current = audio;
           await client.publish([audio]);
-          console.log("Audio published");
         }catch(e){ console.error("Audio error:",e); }
       }
 
@@ -476,21 +447,17 @@ function Ailo(){
           localVideoRef.current = video;
           await client.publish([video]);
           if(localVideoElRef.current) video.play(localVideoElRef.current);
-          console.log("Video published");
         }catch(e){ console.error("Video error:",e); }
       }
 
     }catch(e){ console.error("Agora join error:",e); }
   },[leaveAgora, getAgoraToken]);
 
-  // Fix 3: use setEnabled (not unpublish) - only affects local track, not remote
   const toggleMic = useCallback(async()=>{
     if(!localAudioRef.current) return;
     try{
       const newMuted = micOn;
-      // setMuted is the correct Agora API to stop sending audio to remote
       await localAudioRef.current.setMuted(newMuted);
-      // Also setEnabled to stop the mic hardware on device
       await localAudioRef.current.setEnabled(!newMuted);
       setMicOn(!newMuted);
       if(roomRef.current) roomRef.current.send({
@@ -515,29 +482,30 @@ function Ailo(){
   },[camOn, micOn]);
 
   const searchUserById = async() => {
-    if(!searchId.trim()){ setSearchError("أدخل ID المستخدم"); return; }
+    if(!searchId.trim()){ setSearchError("أدخل ID أو اسم المستخدم"); return; }
     setSearchLoading(true); setSearchError(""); setSearchResult(null);
     const q = searchId.trim();
 
-    // If input looks like a UUID → start direct chat immediately
-    const isUUID = /^[0-9a-f-]{30,}$/i.test(q);
-    if(isUUID){
-      setSearchLoading(false);
-      setSearchResult([{user_id:q, name:"مستخدم", avatar:"🌍", xp:0, direct:true}]);
-      return;
-    }
+    try {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q);
+      
+      let url = `${SUPA_URL}/rest/v1/leaderboard?name=ilike.*${encodeURIComponent(q)}*&select=*&limit=5`;
+      if (isUUID) {
+        url = `${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${encodeURIComponent(q)}&select=*&limit=1`;
+      }
 
-    // Otherwise search leaderboard by name
-    try{
-      const res = await fetch(
-        `${SUPA_URL}/rest/v1/leaderboard?name=ilike.*${encodeURIComponent(q)}*&select=*&limit=5`,
-        { headers:{"apikey":SUPA_KEY} }
-      );
+      const res = await fetch(url, { headers:{"apikey":SUPA_KEY} });
       if(!res.ok) throw new Error("failed");
       const data = await res.json();
-      if(data && data.length>0){ setSearchResult(data); }
-      else{ setSearchError("لم يُعثر على مستخدم بهذا الاسم"); }
-    }catch(e){ setSearchError("خطأ في الاتصال"); }
+      
+      if(data && data.length > 0) {
+        setSearchResult(data);
+      } else {
+        setSearchError("لم يُعثر على مستخدم بهذا الاسم أو الـ ID");
+      }
+    } catch(e) { 
+      setSearchError("خطأ في الاتصال بقاعدة البيانات"); 
+    }
     setSearchLoading(false);
   };
 
@@ -594,7 +562,6 @@ function Ailo(){
       setAuthLoading(true);
       try {
         if (isReg) {
-          // REGISTER
           const res = await fetch(`${SUPA_URL}/auth/v1/signup`, {
             method:"POST",
             headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
@@ -611,11 +578,9 @@ function Ailo(){
           }
           setAuthLoading(false);
           setAuthError("");
-          // show confirm email message
           setAuthError("✅ تم إرسال رابط التأكيد إلى بريدك — تحقق منه ثم سجّل الدخول");
           setAppScreen("login");
         } else {
-          // LOGIN
           const res = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=password`, {
             method:"POST",
             headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
@@ -627,7 +592,6 @@ function Ailo(){
             setAuthError(msg);
             setAuthLoading(false); return;
           }
-          // save token & user info
           try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
           const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
           const userLang = data.user?.user_metadata?.lang || "Arabic";
@@ -713,7 +677,6 @@ function Ailo(){
     <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
       {callType==="video" && <div ref={remoteVideoElRef} style={{position:"absolute",inset:0,background:"#111",zIndex:0}}/>}
-      {/* Remote cam off overlay */}
       {callType==="video" && remoteCamOff && (
         <div style={{position:"absolute",inset:0,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"#111"}}>
           <div style={{textAlign:"center"}}>
@@ -724,17 +687,14 @@ function Ailo(){
           </div>
         </div>
       )}
-      {/* Header with status indicators */}
       <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:4}}>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
-          {/* Remote status indicators */}
           {remoteMicOff && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}>{Ic.micOff("#ef4444",12)}<span style={{fontSize:10,color:"#ef4444"}}>كتم الصوت</span></div>}
           {remoteCamOff && callType==="video" && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:10}}>📷</span><span style={{fontSize:10,color:"#ef4444"}}>أوقف الكاميرا</span></div>}
         </div>
         <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>{fmt(callTime)}</div>
       </div>
-      {/* Voice call partner display */}
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>
         {callType!=="video" && <div style={{textAlign:"center"}}>
           <div style={{width:100,height:100,borderRadius:50,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 30px ${primary}44`}}>
@@ -750,11 +710,9 @@ function Ailo(){
           </div>
         </div>}
       </div>
-      {/* Local video preview */}
       {callType==="video" && <div ref={localVideoElRef} style={{position:"absolute",bottom:120,left:16,width:90,height:120,borderRadius:16,border:`2px solid ${camOn?primary:"#ef4444"}`,overflow:"hidden",boxShadow:`0 0 20px ${glow}`,zIndex:4,background:"#111"}}>
         {!camOn && <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#aaa",fontSize:11}}>كاميرا مغلقة</div>}
       </div>}
-      {/* Controls */}
       <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:4}}>
         {[
           {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"كتم":"تشغيل", active:micOn, action:toggleMic},
@@ -798,7 +756,6 @@ function Ailo(){
       const t=now();
       const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
       setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
-      // update real stats and quests
       setStats(s=>{ const ns={...s,totalMsgs:s.totalMsgs+1}; checkBadges(ns); return ns; });
       updateQuest("msgs");
       setCoins(c=>c+1);
@@ -838,7 +795,6 @@ function Ailo(){
             if(isImg){
               const reader=new FileReader();
               reader.onload=(ev)=>{
-                // Compress image before sending (max 400px, quality 0.6)
                 const img=new Image();
                 img.onload=()=>{
                   const canvas=document.createElement("canvas");
@@ -1135,13 +1091,12 @@ function Ailo(){
             <div style={{fontWeight:800,fontSize:14,color:muted}}>🏆 الصدارة الحقيقية</div>
             <button onClick={fetchLB} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:50,padding:"4px 12px",fontSize:11,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui"}}>{lbLoading?"جاري...":"تحديث 🔄"}</button>
           </div>
-          {lbData.length===0&&<div style={{...glass({textAlign:"center",padding:24,color:muted,marginBottom:14})}}>لا يوجد بيانات بعد<br/>اضغط "نشر نتيجتي" لتظهر في الصدارة 🚀</div>}
+          {lbData.length===0&&<div style={{...glass({textAlign:"center",padding:24,color:muted,marginBottom:14})}}>لا يوجد بيانات بعد</div>}
           {lbData.map((u,i)=>{const isMe=u.user_id===userId;const tier=i===0?"gold":i<=2?"silver":"bronze";return(<div key={u.user_id||i} style={{...glass({marginBottom:8,display:"flex",alignItems:"center",gap:12,border:isMe?`1px solid ${primary}`:undefined,background:isMe?`${primary}18`:card})}}>
             <div style={{width:30,height:30,borderRadius:15,background:`${tierC[tier]}22`,border:`1px solid ${tierC[tier]}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:tierC[tier],flexShrink:0}}>{i<3?["🥇","🥈","🥉"][i]:i+1}</div>
             <div style={{width:32,height:32,borderRadius:16,overflow:"hidden",flexShrink:0,border:`1px solid ${border}`}}>{u.avatar?.startsWith("http")?<img src={u.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:20,lineHeight:"32px",display:"block",textAlign:"center"}}>{u.avatar||"🌍"}</span>}</div>
             <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{u.name}{isMe?" (أنت)":""}</div><div style={{color:tierC[tier],fontSize:11,fontWeight:700}}>{(u.xp||0).toLocaleString()} XP</div></div>
           </div>);})}
-          <button onClick={()=>pushLB(totalXp).then(()=>fetchLB())} style={btnP({width:"100%",marginBottom:12,fontSize:13})}>📤 نشر نتيجتي في الصدارة</button>
           <div style={{...glass({marginBottom:14})}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>❄️ تجميد السلسلة</div><div style={{color:muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div></div><button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);save("streakFrozen",true);}}} disabled={coins<50||streakFrozen} style={btnP({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>{streakFrozen?"✅ مفعّل":"50 🪙"}</button></div></div>
         </div>}
       </div>
@@ -1180,7 +1135,6 @@ function Ailo(){
         <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
           <div style={{fontWeight:900,fontSize:17,marginBottom:18,textAlign:"center",background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>⚙️ الإعدادات</div>
 
-          {/* DARK/LIGHT TOGGLE */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:`1px solid ${border}`,marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               {darkMode?Ic.moon(primary,20):Ic.sun(primary,20)}
@@ -1192,18 +1146,15 @@ function Ailo(){
             </button>
           </div>
 
-          {/* ACCENT COLORS */}
           <div style={{fontWeight:700,fontSize:13,marginBottom:10}}>🎨 لون التطبيق</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8,marginBottom:20}}>
             {Object.entries(ACCENTS).map(([key,ac2])=>(<button key={key} onClick={()=>setAccentKey(key)} style={{aspectRatio:"1",borderRadius:12,background:`linear-gradient(135deg,${ac2.primary},${ac2.secondary})`,border:accentKey===key?"2.5px solid white":"2.5px solid transparent",cursor:"pointer",fontSize:12,color:"white",fontWeight:800,boxShadow:accentKey===key?`0 0 12px ${ac2.primary}99`:undefined,transition:"all 0.2s"}}>{accentKey===key?"✓":""}</button>))}
           </div>
 
-          {/* ENCRYPTION */}
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:`1px solid ${border}`,borderBottom:`1px solid ${border}`,marginBottom:18}}>
             {Ic.shield("#22c55e",16)}<div><div style={{fontWeight:700,fontSize:13}}>التشفير الكامل</div><div style={{fontSize:11,color:"#22c55e",marginTop:2}}>✅ مفعّل دائماً</div></div>
           </div>
 
-          {/* BLOCKED USERS */}
           <div style={{marginBottom:18}}>
             <div style={{fontWeight:700,fontSize:13,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>🚫 قائمة المحظورين {blocked.length>0&&<span style={{background:"rgba(239,68,68,0.2)",color:"#ef4444",borderRadius:50,padding:"1px 8px",fontSize:11}}>{blocked.length}</span>}</div>
             {blocked.length===0
@@ -1219,7 +1170,6 @@ function Ailo(){
 
           <button onClick={()=>setShowSettings(false)} style={btnP({width:"100%",marginBottom:10})}>حفظ ✓</button>
 
-          {/* LOGOUT */}
           <button onClick={()=>{setShowSettings(false);setAppScreen("login");setAuthForm({name:"",email:"",password:"",lang:"Arabic"});try{localStorage.removeItem("ailo_token");}catch(e){}}}
             style={{width:"100%",padding:"13px",borderRadius:50,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#ef4444",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             {Ic.logout("#ef4444",17)}<span>تسجيل الخروج</span>
@@ -1322,7 +1272,7 @@ function Ailo(){
           {icon:"🔍",title:"كيف تبدأ محادثة؟",desc:"اضغط على أحد أزرار (فيديو / صوت / نص) في الصفحة الرئيسية، ثم اختر اللغة التي تريد تعلمها."},
           {icon:"📚",title:"التدريبات اليومية",desc:"اذهب لقسم 'تدريبات' لممارسة المفردات والجمل يومياً. كل إجابة صحيحة تكسبك XP!"},
           {icon:"🪙",title:"كيف تربح العملات؟",desc:"تكسب عملات من: إكمال مهام يومية، إجراء مكالمات، تمارين SRS. استخدمها في المتجر!"},
-          {icon:"🏆",title:"الصدارة",desc:"انشر نتيجتك في الصدارة وتنافس مع مستخدمين حول العالم. اضغط 'نشر نتيجتي' في قسم الصدارة."},
+          {icon:"🏆",title:"الصدارة",desc:"ستُضاف نتيجتك للصدارة بشكل تلقائي عند تصفح قسم الصدارة. تنافس مع المستخدمين حول العالم!"},
         ];
         const s=steps[tutorialStep];
         return(
@@ -1380,67 +1330,5 @@ function Ailo(){
 }
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Ailo));
 </script>
-
-<!-- AILO BUTTON FIX PATCH -->
-<script>
-(async function(){
-
-  function log(){ console.log("[Ailo Patch]", ...arguments); }
-
-  // Mic toggle
-  window.toggleMic = async function(){
-    try{
-      if(!window.localAudioTrack){ log("no audio track"); return; }
-      if(window.micOn){
-        await window.localAudioTrack.setEnabled(false);
-        window.micOn = false;
-      }else{
-        await window.localAudioTrack.setEnabled(true);
-        window.micOn = true;
-      }
-    }catch(e){ console.error("toggleMic error",e); }
-  };
-
-  // Camera toggle
-  window.toggleCamera = async function(){
-    try{
-      if(!window.localVideoTrack){ log("no video track"); return; }
-      if(window.camOn){
-        await window.localVideoTrack.setEnabled(false);
-        window.camOn = false;
-      }else{
-        await window.localVideoTrack.setEnabled(true);
-        window.camOn = true;
-      }
-    }catch(e){ console.error("toggleCamera error",e); }
-  };
-
-  // Flip camera
-  window.flipCamera = async function(){
-    try{
-      if(!window.localVideoTrack){ return; }
-      const cams = await AgoraRTC.getCameras();
-      if(cams.length < 2) return;
-
-      const current = window.localVideoTrack.getTrackLabel();
-      const next = cams.find(c => !current.includes(c.label));
-
-      if(next){
-        await window.localVideoTrack.setDevice(next.deviceId);
-      }
-    }catch(e){ console.error("flipCamera error",e); }
-  };
-
-  // Try binding buttons automatically
-  document.addEventListener("click", function(e){
-    const id = (e.target.id || "").toLowerCase();
-    if(id.includes("mic")) toggleMic();
-    if(id.includes("cam") && !id.includes("flip")) toggleCamera();
-    if(id.includes("flip")) flipCamera();
-  });
-
-})();
-</script>
-
 </body>
 </html>
