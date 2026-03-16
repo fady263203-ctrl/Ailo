@@ -1380,5 +1380,67 @@ function Ailo(){
 }
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Ailo));
 </script>
+
+<!-- AILO BUTTON FIX PATCH -->
+<script>
+(async function(){
+
+  function log(){ console.log("[Ailo Patch]", ...arguments); }
+
+  // Mic toggle
+  window.toggleMic = async function(){
+    try{
+      if(!window.localAudioTrack){ log("no audio track"); return; }
+      if(window.micOn){
+        await window.localAudioTrack.setEnabled(false);
+        window.micOn = false;
+      }else{
+        await window.localAudioTrack.setEnabled(true);
+        window.micOn = true;
+      }
+    }catch(e){ console.error("toggleMic error",e); }
+  };
+
+  // Camera toggle
+  window.toggleCamera = async function(){
+    try{
+      if(!window.localVideoTrack){ log("no video track"); return; }
+      if(window.camOn){
+        await window.localVideoTrack.setEnabled(false);
+        window.camOn = false;
+      }else{
+        await window.localVideoTrack.setEnabled(true);
+        window.camOn = true;
+      }
+    }catch(e){ console.error("toggleCamera error",e); }
+  };
+
+  // Flip camera
+  window.flipCamera = async function(){
+    try{
+      if(!window.localVideoTrack){ return; }
+      const cams = await AgoraRTC.getCameras();
+      if(cams.length < 2) return;
+
+      const current = window.localVideoTrack.getTrackLabel();
+      const next = cams.find(c => !current.includes(c.label));
+
+      if(next){
+        await window.localVideoTrack.setDevice(next.deviceId);
+      }
+    }catch(e){ console.error("flipCamera error",e); }
+  };
+
+  // Try binding buttons automatically
+  document.addEventListener("click", function(e){
+    const id = (e.target.id || "").toLowerCase();
+    if(id.includes("mic")) toggleMic();
+    if(id.includes("cam") && !id.includes("flip")) toggleCamera();
+    if(id.includes("flip")) flipCamera();
+  });
+
+})();
+</script>
+
 </body>
 </html>
