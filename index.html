@@ -168,7 +168,9 @@ function Ailo(){
   const sendToGemini=async(userMsg)=>{
     setBotTyping(true);
     try{
-      // Build clean alternating history
+      const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي.`;
+
+      // Build alternating history
       const allMsgs=botMsgs.filter(m=>m.id!==1).slice(-8);
       const history=[];
       for(const m of allMsgs){
@@ -178,27 +180,32 @@ function Ailo(){
       }
       while(history.length>0&&history[0].role!=="user") history.shift();
 
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,{
+      // Add system prompt to first user message if history empty
+      const firstMsg=history.length===0
+        ?`[تعليمات: ${systemPrompt}]\n\nالمستخدم: ${userMsg}`
+        :userMsg;
+
+      const contents=[
+        ...(history.length===0?[]:[{role:"user",parts:[{text:`[تعليمات: ${systemPrompt}]\n\n${history[0].parts[0].text}`}]},...history.slice(1)]),
+        {role:"user",parts:[{text:firstMsg}]}
+      ];
+
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          system_instruction:{parts:[{text:`أنت "Ailo" — رفيق ذكي وودي داخل تطبيق Ailo.
-اسمك "Ailo" فقط. عندما يناديك أحد بـ "Ailo" أو "آيلو" فأنت من يُقصد.
-شخصيتك: دافئ، مرح، مهتم بالمستخدم، تتذكر ما يقوله في المحادثة وتبني عليه.
-تتحدث عن أي موضوع يريده المستخدم — أفلام، موسيقى، ألعاب، رياضة، تقنية، مشاعر، حياة يومية، أحلام، أو أي شيء آخر.
-يمكنك أيضاً مساعدته في تعلم اللغات إذا طلب ذلك.
-تتحدث بالعربية افتراضياً ما لم يتحدث المستخدم بلغة أخرى فتتكيف معه فوراً.
-ردودك طبيعية كأنك صديق حقيقي — لا رسمية ولا مبالغة. استخدم الإيموجي باعتدال.`}]},
-          contents:[...history,{role:"user",parts:[{text:userMsg}]}],
+          contents:history.length===0
+            ?[{role:"user",parts:[{text:`[تعليمات النظام: ${systemPrompt}]\n\nالمستخدم يقول: ${userMsg}`}]}]
+            :[...history,{role:"user",parts:[{text:userMsg}]}],
           generationConfig:{maxOutputTokens:300,temperature:0.8}
         })
       });
       const data=await res.json();
-      if(data.error) throw new Error(data.error.message||"Gemini error");
+      if(data.error) throw new Error(data.error.message);
       const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"حاول مرة أخرى 😊";
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
     }catch(e){
-      console.error("Gemini:",e.message);
+      console.error("Gemini error:",e.message);
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:"عذراً، حدث خطأ 😕 حاول مرة أخرى",time:now()}]);
     }
     setBotTyping(false);
