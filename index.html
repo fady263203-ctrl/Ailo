@@ -169,32 +169,15 @@ function Ailo(){
     setBotTyping(true);
     try{
       const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي. اسمك Ailo فقط.`;
-
-      // Build alternating history
-      const allMsgs=botMsgs.filter(m=>m.id!==1).slice(-8);
-      const history=[];
-      for(const m of allMsgs){
-        const role=m.from==="me"?"user":"model";
-        if(history.length>0&&history[history.length-1].role===role) continue;
-        history.push({role,parts:[{text:m.text}]});
-      }
-      while(history.length>0&&history[0].role!=="user") history.shift();
-
-      const contents=[
-        {role:"user",parts:[{text:`[تعليمات: ${systemPrompt}]\nابدأ المحادثة الآن.`}]},
-        {role:"model",parts:[{text:"حاضر! أنا Ailo، رفيقك هنا 😊"}]},
-        ...history,
-        {role:"user",parts:[{text:userMsg}]}
-      ];
-
+      const fullMessage=`${systemPrompt}\n\nالمستخدم: ${userMsg}`;
       const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
         method:"POST",
         headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({contents})
+        body:JSON.stringify({message:fullMessage})
       });
       const data=await res.json();
       if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
-      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"حاول مرة أخرى 😊";
+      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||data.reply||"حاول مرة أخرى 😊";
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
     }catch(e){
       console.error("Ailo chat error:",e.message);
