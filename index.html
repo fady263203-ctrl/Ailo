@@ -163,12 +163,23 @@ function Ailo(){
   const[botMsgs,setBotMsgs]=useState([{id:1,from:"bot",text:"هلا! أنا Ailo 👋 رفيقك هنا. تقدر تحكيلي عن أي شيء — أفلام، ألعاب، موسيقى، أو حتى لو بس تبي تحكي. أنا هنا 😊",time:"10:00"}]);
   const[botInput,setBotInput]=useState("");
   const[botTyping,setBotTyping]=useState(false);
-  const GEMINI_KEY="AIzaSyBGMz2ifaT-b170UnSfMlvzW5az090CaHQ";
+  const GEMINI_KEY="AIzaSyAXGjMDYQMP1DNwTT1jDuteaNxWxoD0DKc"; // kept for reference
 
   const sendToGemini=async(userMsg)=>{
     setBotTyping(true);
     try{
-      const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي. اسمك Ailo فقط.`;
+      // ── ذاكرة بسيطة: اسم المستخدم + آخر 5 رسائل ──
+      const userName = profile.name || "مستخدم";
+      const userLang = profile.lang || "Arabic";
+      const history = botMsgs.filter(m=>m.id!==1).slice(-5).map(m=>
+        m.from==="me" ? `المستخدم: ${m.text}` : `Ailo: ${m.text}`
+      ).join("\n");
+
+      const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي. اسمك Ailo فقط.
+اسم المستخدم: ${userName}
+لغته الأم: ${userLang}
+${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
+
       const fullMessage=`${systemPrompt}\n\nالمستخدم: ${userMsg}`;
       const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
         method:"POST",
@@ -177,7 +188,7 @@ function Ailo(){
       });
       const data=await res.json();
       if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
-      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||data.reply||"حاول مرة أخرى 😊";
+      const reply=data.reply||data.candidates?.[0]?.content?.parts?.[0]?.text||"حاول مرة أخرى 😊";
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
     }catch(e){
       console.error("Ailo chat error:",e.message);
@@ -239,7 +250,7 @@ function Ailo(){
         body:JSON.stringify({message:prompt})
       });
       const data=await res.json();
-      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||data.reply||"";
+      const raw=data.reply||data.candidates?.[0]?.content?.parts?.[0]?.text||"";
       // Extract JSON array from response robustly
       const match=raw.match(/\[[\s\S]*\]/);
       if(!match) throw new Error("No JSON array found");
