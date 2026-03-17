@@ -160,8 +160,39 @@ function Ailo(){
   // Leaderboard from Supabase
   const[lbData,setLbData]=useState([]);
   const[lbLoading,setLbLoading]=useState(false);
-  const[botMsgs,setBotMsgs]=useState([{id:1,from:"bot",text:"مرحباً! أنا مساعدك للغات ✨ كيف يمكنني مساعدتك؟",time:"10:00"}]);
+  const[botMsgs,setBotMsgs]=useState([{id:1,from:"bot",text:"مرحباً! أنا Ailo 🌍 مساعدك الذكي لتعلم اللغات. يمكنني مساعدتك في المفردات، الترجمة، قواعد اللغة، وأي سؤال لغوي. كيف يمكنني مساعدتك؟ 😊",time:"10:00"}]);
   const[botInput,setBotInput]=useState("");
+  const[botTyping,setBotTyping]=useState(false);
+  const GEMINI_KEY="AIzaSyBGMz2ifaT-b170UnSfMlvzW5az090CaHQ";
+
+  const sendToGemini=async(userMsg)=>{
+    setBotTyping(true);
+    try{
+      const history=botMsgs.slice(-10).map(m=>({
+        role:m.from==="me"?"user":"model",
+        parts:[{text:m.text}]
+      }));
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          system_instruction:{parts:[{text:`أنت مساعد ذكي متخصص في تعلم اللغات.
+اسمك "Ailo" — هذا اسمك الوحيد. عندما يناديك أحد بـ "Ailo" أو "آيلو" فأنت من يُقصد، ورد دائماً بهذا الاسم عند تعريف نفسك.
+تتحدث بالعربية افتراضياً ما لم يتحدث المستخدم بلغة أخرى فتتكيف معه.
+ساعد المستخدم في: تعلم المفردات، قواعد اللغة، الترجمة، تصحيح الجمل، النطق، والمحادثة.
+اجعل ردودك قصيرة وواضحة ومشجعة. استخدم الإيموجي باعتدال.`}]},
+          contents:[...history,{role:"user",parts:[{text:userMsg}]}],
+          generationConfig:{maxOutputTokens:300,temperature:0.7}
+        })
+      });
+      const data=await res.json();
+      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"عذراً، لم أفهم سؤالك. حاول مرة أخرى 😊";
+      setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
+    }catch(e){
+      setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:"عذراً، حدث خطأ في الاتصال 😕 حاول مرة أخرى",time:now()}]);
+    }
+    setBotTyping(false);
+  };
   const[srsIdx,setSrsIdx]=useState(0);
   const[srsScore,setSrsScore]=useState(0);
   const[srsAnswer,setSrsAnswer]=useState(null);
@@ -415,7 +446,7 @@ function Ailo(){
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
-  useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs]);
+  useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
   useEffect(()=>{const c=SRS[srsIdx];if(c.type==="arrange")setArrWords([...c.words].sort(()=>Math.random()-0.5));if(c.type==="match")setMatchPairs({});setArrSel([]);setMatchSel(null);setSrsAnswer(null);setSpeechRes("");},[srsIdx]);
   useEffect(()=>{if(!challengeActive)return;const i=setInterval(()=>{setChallengeTime(t=>{if(t<=1){setChallengeActive(false);clearInterval(i);return 0;}return t-1;});if(Math.random()>0.6)setChallengeScore(s=>({...s,opp:s.opp+1}));},1000);return()=>clearInterval(i);},[challengeActive]);
 
@@ -1132,8 +1163,9 @@ function Ailo(){
               <div ref={botEnd}/>
             </div>
             <div style={{display:"flex",gap:8,paddingTop:8}}>
-              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()){setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);setBotInput("");setTimeout(()=>setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:BOTS[Math.floor(Math.random()*BOTS.length)],time:now()}]),1000);}}} placeholder="اسأل المساعد..." style={{...inp,flex:1}}/>
-              <button onClick={()=>{if(!botInput.trim())return;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:botInput,time:now()}]);setBotInput("");setTimeout(()=>setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:BOTS[Math.floor(Math.random()*BOTS.length)],time:now()}]),1000);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
+              {botTyping&&<div style={{alignSelf:"flex-start",background:card,backdropFilter:"blur(10px)",padding:"12px 16px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
+              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()&&!botTyping){const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}}} placeholder="اسأل المساعد الذكي..." style={{...inp,flex:1}}/>
+              <button onClick={()=>{if(!botInput.trim()||botTyping)return;const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
 
