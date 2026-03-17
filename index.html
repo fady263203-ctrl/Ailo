@@ -185,7 +185,71 @@ function Ailo(){
     }
     setBotTyping(false);
   };
-  const[srsIdx,setSrsIdx]=useState(0);
+  // ── Smart Exercise System ──
+  const LANGS_EX=[
+    {code:"English",    flag:"🇬🇧", name:"الإنجليزية"},
+    {code:"Spanish",    flag:"🇪🇸", name:"الإسبانية"},
+    {code:"French",     flag:"🇫🇷", name:"الفرنسية"},
+    {code:"German",     flag:"🇩🇪", name:"الألمانية"},
+    {code:"Chinese",    flag:"🇨🇳", name:"الصينية"},
+    {code:"Japanese",   flag:"🇯🇵", name:"اليابانية"},
+    {code:"Korean",     flag:"🇰🇷", name:"الكورية"},
+    {code:"Turkish",    flag:"🇹🇷", name:"التركية"},
+    {code:"Portuguese", flag:"🇵🇹", name:"البرتغالية"},
+    {code:"Italian",    flag:"🇮🇹", name:"الإيطالية"},
+    {code:"Russian",    flag:"🇷🇺", name:"الروسية"},
+    {code:"Arabic",     flag:"🇸🇦", name:"العربية"},
+  ];
+  const TOPICS=[
+    {key:"travel",     icon:"✈️",  name:"السفر"},
+    {key:"food",       icon:"🍕",  name:"الطعام"},
+    {key:"music",      icon:"🎵",  name:"الموسيقى"},
+    {key:"school",     icon:"🏫",  name:"المدرسة"},
+    {key:"work",       icon:"💼",  name:"العمل"},
+    {key:"family",     icon:"👨‍👩‍👧",  name:"العائلة"},
+    {key:"sports",     icon:"⚽",  name:"الرياضة"},
+    {key:"shopping",   icon:"🛍️",  name:"التسوق"},
+    {key:"health",     icon:"🏥",  name:"الصحة"},
+    {key:"technology", icon:"💻",  name:"التكنولوجيا"},
+    {key:"nature",     icon:"🌿",  name:"الطبيعة"},
+    {key:"daily",      icon:"🌅",  name:"الحياة اليومية"},
+  ];
+  const[exStep,setExStep]=useState("lang"); // lang | topic | quiz
+  const[exLang,setExLang]=useState(null);
+  const[exTopic,setExTopic]=useState(null);
+  const[exQuestions,setExQuestions]=useState([]);
+  const[exIdx,setExIdx]=useState(0);
+  const[exAnswer,setExAnswer]=useState(null);
+  const[exScore,setExScore]=useState(0);
+  const[exLoading,setExLoading]=useState(false);
+  const[langProgress,setLangProgress]=useState(()=>load("langProgress",{}));
+  const saveLangProgress=(lp)=>{ save("langProgress",lp); };
+
+  const generateExercises=async(lang,topic)=>{
+    setExLoading(true); setExQuestions([]); setExIdx(0); setExAnswer(null); setExScore(0);
+    try{
+      const prompt=`أنشئ 5 أسئلة تعليمية لتعلم اللغة ${lang} عن موضوع "${topic}" للناطقين بالعربية.
+كل سؤال يجب أن يكون بهذا الشكل JSON بالضبط:
+{"q":"السؤال بالعربية","word":"الكلمة أو الجملة بلغة ${lang}","options":["خيار1","خيار2","خيار3","خيار4"],"answer":0}
+حيث answer هو رقم الخيار الصحيح (0-3).
+أرجع فقط مصفوفة JSON بدون أي نص إضافي.`;
+      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body:JSON.stringify({message:prompt})
+      });
+      const data=await res.json();
+      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||data.reply||"[]";
+      const clean=raw.replace(/```json|```/g,"").trim();
+      const questions=JSON.parse(clean);
+      setExQuestions(questions);
+      setExStep("quiz");
+    }catch(e){
+      console.error("generateExercises:",e);
+      setExStep("topic");
+    }
+    setExLoading(false);
+  };
   const[srsScore,setSrsScore]=useState(0);
   const[srsAnswer,setSrsAnswer]=useState(null);
   const[srsStreak,setSrsStreak]=useState(0);
@@ -1231,45 +1295,106 @@ function Ailo(){
           </div>}
 
           {!storeTab&&<>
-            {!load("tutorial_done",false)&&<div style={{...glass({marginBottom:14,background:`linear-gradient(135deg,${primary}22,${accent}11)`,textAlign:"center",padding:18})}}>
-              <div style={{fontSize:28,marginBottom:8}}>📚</div>
-              <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>مرحباً في التدريبات!</div>
-              <div style={{color:muted,fontSize:12,lineHeight:1.7}}>كل يوم ستجد بطاقات تعليمية جديدة — أجب بدقة لكسب XP وتحسين مستواك. كلما أجبت صحيحاً زاد نقاطك!</div>
-            </div>}
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <div style={{fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:6}}>{Ic.star(primary,16)}<span>تمارين SRS</span></div>
-              <div style={{display:"flex",gap:6}}><div style={tag("#22c55e")}>🏆 {srsScore}</div>{srsStreak>1&&<div style={tag("#f59e0b")}>🔥 {srsStreak}</div>}</div>
-            </div>
-          <div style={{...glass({marginBottom:12})}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:muted,marginBottom:7}}><span>البطاقة {srsIdx+1}/{SRS.length}</span><span>{Math.round((srsIdx/SRS.length)*100)}%</span></div>
-            <XPBar pct={Math.round((srsIdx/SRS.length)*100)} primary={primary} accent={accent}/>
-          </div>
-          {(()=>{const c=SRS[srsIdx];return(
-            <div style={{...glass({textAlign:"center",padding:"22px 16px",background:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
-              {c.type==="mcq"&&<><div style={{color:muted,fontSize:12,marginBottom:6}}>ترجم إلى العربية</div><div style={{fontWeight:900,fontSize:36,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:18}}>{c.word}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,textAlign:"right"}}>{c.options.map((o,i)=>{let bg2=card,bc=border,co=text;if(srsAnswer!==null){if(i===c.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}else if(i===srsAnswer){bg2="#ef444422";bc="#ef4444";co="#ef4444";}}return<button key={i} onClick={()=>{if(srsAnswer!==null)return;setSrsAnswer(i);if(i===c.answer){setSrsScore(s=>s+1);setSrsStreak(s=>s+1);addXp(15,"إجابة صحيحة");setStats(s=>{const ns={...s,srsTotal:s.srsTotal+1};checkBadges(ns);return ns;});updateQuest("srs");}else setSrsStreak(0);setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1200);}} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:15,cursor:"pointer",color:co,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{o}</button>;})}</div></>}
-              {c.type==="arrange"&&<><div style={{color:muted,fontSize:12,marginBottom:8}}>رتب الكلمات لتكوين جملة</div><div style={{minHeight:46,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${border}`}}>{arrSel.map((w,i)=><button key={i} onClick={()=>{setArrSel(s=>s.filter((_,j)=>j!==i));setArrWords(w2=>[...w2,w]);}} style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:8,padding:"7px 13px",fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>{w}</button>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12}}>{arrWords.map((w,i)=><button key={i} onClick={()=>{setArrSel(s=>[...s,w]);setArrWords(w2=>w2.filter((_,j)=>j!==i));}} style={{background:card,border:`1px solid ${border}`,borderRadius:8,padding:"8px 14px",fontSize:14,cursor:"pointer",color:text,fontFamily:"'Tajawal',system-ui"}}>{w}</button>)}</div>{srsAnswer==="wrong"&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>الإجابة: {c.answer}</div>}<button onClick={()=>{const ok=arrSel.join(" ")===c.answer;setSrsAnswer(ok?c.answer:"wrong");if(ok){setSrsScore(s=>s+1);addXp(20,"ترتيب صحيح");setStats(s=>{const ns={...s,srsTotal:s.srsTotal+1};checkBadges(ns);return ns;});updateQuest("srs");}setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1200);}} style={btnP({width:"100%"})}>تحقق ✓</button></>}
-              {c.type==="match"&&<><div style={{color:muted,fontSize:12,marginBottom:12}}>طابق الكلمات مع معانيها</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><div style={{display:"flex",flexDirection:"column",gap:7}}>{c.pairs.map(([e])=><button key={e} onClick={()=>setMatchSel(e)} style={{background:matchSel===e?`linear-gradient(135deg,${primary},${secondary})`:matchPairs[e]?"rgba(34,197,94,0.2)":card,border:`2px solid ${matchSel===e?primary:matchPairs[e]?"#22c55e":border}`,borderRadius:11,padding:11,fontSize:14,cursor:"pointer",color:matchPairs[e]?"#22c55e":matchSel===e?"white":text,fontWeight:700,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{e}</button>)}</div><div style={{display:"flex",flexDirection:"column",gap:7}}>{[...c.pairs].sort(()=>Math.random()-0.5).map(([,a])=><button key={a} onClick={()=>{if(!matchSel)return;const np={...matchPairs,[matchSel]:a};setMatchPairs(np);setMatchSel(null);if(Object.keys(np).length===4){addXp(25,"مطابقة");setTimeout(()=>setSrsIdx(x=>(x+1)%SRS.length),1000);}}} style={{background:Object.values(matchPairs).includes(a)?"rgba(34,197,94,0.2)":card,border:`2px solid ${Object.values(matchPairs).includes(a)?"#22c55e":border}`,borderRadius:11,padding:11,fontSize:14,cursor:"pointer",color:Object.values(matchPairs).includes(a)?"#22c55e":text,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{a}</button>)}</div></div></>}
-              {c.type==="speech"&&<><div style={{color:muted,fontSize:12,marginBottom:10}}>اقرأ هذه الجملة بصوت عالٍ</div><div style={{fontWeight:700,fontSize:16,color:primary,marginBottom:18,padding:"12px",background:`${primary}11`,borderRadius:12,border:`1px solid ${border}`,lineHeight:1.6}}>"{c.sentence}"</div>{speechRes?<><div style={{background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e",borderRadius:12,padding:12,color:"#22c55e",fontWeight:700,marginBottom:12}}>{speechRes}</div><button onClick={()=>{setSpeechRes("");setSrsIdx(x=>(x+1)%SRS.length);}} style={btnP({width:"100%"})}>التالي ←</button></>:<button onClick={()=>{
-                const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-                if(!SR){setSpeechRes("✅ تمرين مكتمل! (المتصفح لا يدعم التعرف على الكلام)");addXp(20,"تمرين صوتي");setStats(s=>{const ns={...s,speechDone:s.speechDone+1};checkBadges(ns);return ns;});updateQuest("srs");return;}
-                setSpeechOn(true);
-                const rec=new SR();
-                rec.lang="en-US"; rec.interimResults=false; rec.maxAlternatives=1;
-                rec.onresult=(e)=>{
-                  const said=e.results[0][0].transcript.toLowerCase();
-                  const target=c.sentence.toLowerCase();
-                  const words=target.split(" "); const saidWords=said.split(" ");
-                  const matches=words.filter(w=>saidWords.includes(w)).length;
-                  const pct=Math.round((matches/words.length)*100);
-                  if(pct>=60){setSpeechRes(`✅ ممتاز! دقة النطق: ${pct}%`);addXp(20,"تمرين صوتي");setStats(s=>{const ns={...s,speechDone:s.speechDone+1};checkBadges(ns);return ns;});updateQuest("srs");}
-                  else{setSpeechRes(`⚠️ حاول مجدداً — دقة: ${pct}% — قلت: "${e.results[0][0].transcript}"`);}
-                  setSpeechOn(false);
-                };
-                rec.onerror=()=>{setSpeechOn(false);setSpeechRes("❌ تعذّر التعرف على الصوت، تأكد من الإذن");};
-                rec.start();
-              }} style={btnP({width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10})}>{speechOn?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span><span>جاري التحليل...</span></>:<>{Ic.mic("white",20)}<span>اضغط وتحدث</span></>}</button>}</>}
-            </div>
-          );})()}
+            {/* ── STEP 1: اختيار اللغة ── */}
+            {exStep==="lang"&&<>
+              <div style={{fontWeight:800,fontSize:15,marginBottom:14,display:"flex",alignItems:"center",gap:6}}>{Ic.star(primary,16)}<span>اختر اللغة التي تريد تعلمها</span></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {LANGS_EX.map(l=>{
+                  const prog=langProgress[l.code];
+                  return(
+                    <button key={l.code} onClick={()=>{setExLang(l);setExStep("topic");}} style={{...glass({display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer",border:`1px solid ${exLang?.code===l.code?primary:border}`,background:exLang?.code===l.code?`${primary}22`:card,textAlign:"right"})}}>
+                      <span style={{fontSize:26,flexShrink:0}}>{l.flag}</span>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:700,fontSize:13}}>{l.name}</div>
+                        {prog&&<div style={{color:primary,fontSize:10,marginTop:2}}>⭐ {prog.score} نقطة</div>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </>}
+
+            {/* ── STEP 2: اختيار الموضوع ── */}
+            {exStep==="topic"&&exLang&&<>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                <button onClick={()=>setExStep("lang")} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:13,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui"}}>{Ic.back(muted,16)} رجوع</button>
+                <div style={{fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:6}}><span>{exLang.flag}</span><span>{exLang.name}</span></div>
+              </div>
+              <div style={{fontWeight:700,fontSize:13,color:muted,marginBottom:12}}>اختر الموضوع:</div>
+              {exLoading?(
+                <div style={{...glass({textAlign:"center",padding:40})}}>
+                  <div style={{fontSize:40,animation:"spin 1s linear infinite",marginBottom:12}}>⟳</div>
+                  <div style={{color:muted,fontSize:13}}>جاري توليد الأسئلة بالذكاء الاصطناعي...</div>
+                </div>
+              ):(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  {TOPICS.map(t=>(
+                    <button key={t.key} onClick={()=>{setExTopic(t);generateExercises(exLang.code,t.name);}} style={{...glass({display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"16px 10px",cursor:"pointer"})}}>
+                      <span style={{fontSize:28}}>{t.icon}</span>
+                      <span style={{fontWeight:700,fontSize:12}}>{t.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>}
+
+            {/* ── STEP 3: الاختبار ── */}
+            {exStep==="quiz"&&exQuestions.length>0&&(()=>{
+              const q=exQuestions[exIdx];
+              const isLast=exIdx===exQuestions.length-1;
+              if(!q) return null;
+              return(<>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                  <button onClick={()=>{setExStep("topic");setExAnswer(null);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:13,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui"}}>{Ic.back(muted,16)} رجوع</button>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:muted,marginBottom:4}}>
+                      <span>{exLang?.flag} {exLang?.name} — {exTopic?.icon} {exTopic?.name}</span>
+                      <span>{exIdx+1}/{exQuestions.length}</span>
+                    </div>
+                    <XPBar pct={Math.round((exIdx/exQuestions.length)*100)} primary={primary} accent={accent}/>
+                  </div>
+                  <div style={tag("#22c55e")}>🏆 {exScore}</div>
+                </div>
+                <div style={{...glass({textAlign:"center",padding:"24px 16px",marginBottom:12,background:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
+                  <div style={{color:muted,fontSize:12,marginBottom:8}}>{q.q}</div>
+                  <div style={{fontWeight:900,fontSize:32,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:20}}>{q.word}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,textAlign:"right"}}>
+                    {q.options.map((o,i)=>{
+                      let bg2=card,bc=border,co=text;
+                      if(exAnswer!==null){
+                        if(i===q.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}
+                        else if(i===exAnswer){bg2="#ef444422";bc="#ef4444";co="#ef4444";}
+                      }
+                      return(
+                        <button key={i} onClick={()=>{
+                          if(exAnswer!==null) return;
+                          setExAnswer(i);
+                          const correct=i===q.answer;
+                          if(correct){
+                            setExScore(s=>s+1);
+                            addXp(15,"إجابة صحيحة");
+                            setStats(s=>{const ns={...s,srsTotal:s.srsTotal+1};checkBadges(ns);return ns;});
+                            updateQuest("srs");
+                          }
+                          setTimeout(()=>{
+                            if(isLast){
+                              // Save progress
+                              const newScore=(exScore+(correct?1:0));
+                              const lp={...langProgress,[exLang.code]:{score:(langProgress[exLang.code]?.score||0)+newScore,lastTopic:exTopic?.name,date:new Date().toLocaleDateString("ar")}};
+                              setLangProgress(lp); saveLangProgress(lp);
+                              addNotif("🎓","انتهيت من التمرين!",`أجبت ${newScore} من ${exQuestions.length} بشكل صحيح في ${exLang?.name}`,"quest");
+                              setExStep("lang"); setExAnswer(null);
+                            } else {
+                              setExIdx(x=>x+1); setExAnswer(null);
+                            }
+                          },1200);
+                        }} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:14,cursor:"pointer",color:co,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s"}}>{o}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>);
+            })()}
           </>}
         </div>}
 
