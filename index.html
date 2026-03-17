@@ -238,7 +238,7 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
     {key:"daily",      name:"الحياة اليومية", color:"#a78bfa",
      svg:<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>},
   ];
-  const[exStep,setExStep]=useState("lang"); // lang | topic | quiz
+  const[exStep,setExStep]=useState("lang"); // lang | topic | quiz | cooldown
   const[exLang,setExLang]=useState(null);
   const[exTopic,setExTopic]=useState(null);
   const[exQuestions,setExQuestions]=useState([]);
@@ -259,35 +259,79 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
   const[exClozeInput,setExClozeInput]=useState("");
   // states for flashcard
   const[exCardFlipped,setExCardFlipped]=useState(false);
+  // ── SRS System ──
+  const[srsCards,setSrsCards]=useState(()=>load("srs_cards",{})); // {lang_topic_word: {level,nextReview,streak,errorCount,hard}}
+  const[sessionErrors,setSessionErrors]=useState([]); // كلمات أخطأ فيها في الجلسة
+  const[cooldownQ,setCooldownQ]=useState([]); // أسئلة Cool-down
+  const[cooldownIdx,setCooldownIdx]=useState(0);
+  const[cooldownAns,setCooldownAns]=useState(null);
+
+  // SRS intervals بالأيام لكل مستوى
+  const SRS_INTERVALS=[0,1,3,7,30];
+
+  // حساب المستوى القادم بعد الإجابة
+  const srsNextLevel=(card,correct)=>{
+    const lvl=card?.level||0;
+    const streak=card?.streak||0;
+    if(correct){
+      // قاعدة "النجاح المتتالي": نحتاج نجاحين متتاليين للانتقال
+      const newStreak=streak+1;
+      if(newStreak>=2&&lvl<4){ return{level:lvl+1,streak:0}; }
+      return{level:lvl,streak:newStreak};
+    } else {
+      // "العقاب المرن": من مستوى 4 يرجع لـ 2، غيرها يرجع لـ 1
+      const newLvl=lvl>=4?2:Math.max(0,lvl-1);
+      return{level:newLvl,streak:0};
+    }
+  };
+
+  // تحديث بطاقة SRS بعد الإجابة
+  const updateSrsCard=(lang,topic,word,correct)=>{
+    const key=`${lang}_${topic}_${word}`;
+    setSrsCards(prev=>{
+      const card=prev[key]||{level:0,nextReview:Date.now(),streak:0,errorCount:0,hard:false};
+      const {level,streak}=srsNextLevel(card,correct);
+      const days=SRS_INTERVALS[level]||1;
+      const nextReview=Date.now()+(days*24*60*60*1000);
+      const errorCount=correct?card.errorCount:(card.errorCount||0)+1;
+      const hard=errorCount>=3;
+      const updated={...prev,[key]:{level,nextReview,streak,errorCount,hard}};
+      save("srs_cards",updated);
+      return updated;
+    });
+    if(!correct){
+      setSessionErrors(e=>[...e,word]);
+    }
+  };
+
+  // جلب بطاقات تحتاج مراجعة اليوم لهذه اللغة والموضوع
+  const getDueCards=(lang,topic)=>{
+    const now=Date.now();
+    return Object.entries(srsCards)
+      .filter(([k,v])=>k.startsWith(`${lang}_${topic}_`)&&v.nextReview<=now)
+      .map(([k,v])=>({word:k.replace(`${lang}_${topic}_`,""),...v}))
+      .sort((a,b)=>(b.hard?1:0)-(a.hard?1:0)); // الصعبة أولاً
+  };
 
   const generateExercises=async(lang,topic)=>{
     setExLoading(true); setExQuestions([]); setExIdx(0); setExAnswer(null); setExScore(0);
     setExArrWords([]); setExArrSel([]); setExPairSel(null); setExPairDone({});
     setExClozeInput(""); setExCardFlipped(false);
+    setSessionErrors([]); setCooldownQ([]); setCooldownIdx(0); setCooldownAns(null);
     try{
-      const prompt=`أنت مولّد أسئلة تعليمية متنوعة. أنشئ 8 أسئلة لتعلم اللغة ${lang} عن موضوع "${topic}" للناطقين بالعربية.
-قواعد صارمة:
-- أرجع فقط مصفوفة JSON نظيفة بدون أي نص قبلها أو بعدها
-- بدون markdown أو backticks
-- ابدأ مباشرة بـ [ وانتهِ بـ ]
-- استخدم أنواعاً متنوعة من الأسئلة:
+      // احصل على الكلمات المستحقة للمراجعة اليوم
+      const dueCards=getDueCards(lang,topic);
+      const reviewWords=dueCards.slice(0,8).map(c=>c.word).join("، ");
+      const hardWords=dueCards.filter(c=>c.hard).slice(0,3).map(c=>c.word).join("، ");
 
-نوع mcq (اختيار من متعدد):
-{"type":"mcq","q":"ترجم هذه الكلمة","word":"Hello","options":["مرحبا","وداعا","شكرا","آسف"],"answer":0}
-
-نوع arrange (ترتيب كلمات):
-{"type":"arrange","q":"رتب الكلمات لتكوين جملة صحيحة","words":["I","am","happy","today"],"answer":"I am happy today"}
-
-نوع cloze (ملء الفراغ):
-{"type":"cloze","q":"اختر الكلمة الصحيحة","sentence":"I ___ to school every day","options":["go","goes","going","went"],"answer":0}
-
-نوع flashcard (بطاقة تعليمية):
-{"type":"flashcard","word":"Bonjour","meaning":"مرحباً","example":"Bonjour, comment allez-vous?","pronunciation":"بونجور"}
-
-نوع pairs (توصيل الأزواج - 4 أزواج فقط):
-{"type":"pairs","q":"صل كل كلمة بمعناها","pairs":[["Hello","مرحبا"],["Bye","وداعاً"],["Thanks","شكراً"],["Please","من فضلك"]]}
-
-وزّع الأنواع بشكل متوازن. كل سؤال يجب أن يكون له type محدد.`;
+      const prompt=`أنشئ 10 أسئلة لتعلم اللغة ${lang} عن موضوع "${topic}". أرجع JSON فقط بدون أي نص آخر. ابدأ بـ [ مباشرة.
+أنواع الأسئلة (نوّع بينها):
+[{"type":"mcq","word":"Hello","q":"ترجم","options":["مرحبا","وداعا","شكرا","آسف"],"answer":0},
+{"type":"flashcard","word":"Bye","meaning":"وداعاً","example":"Goodbye!","pronunciation":"باي"},
+{"type":"cloze","word":"go","q":"اختر","sentence":"I ___ to school","options":["go","goes","going","went"],"answer":0},
+{"type":"arrange","word":"happy","q":"رتب","words":["I","am","happy"],"answer":"I am happy"},
+{"type":"pairs","word":"group","q":"صل","pairs":[["Hello","مرحبا"],["Bye","وداعاً"],["Yes","نعم"],["No","لا"]]}]
+${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
       const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
         method:"POST",
@@ -305,8 +349,14 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
       setExStep("quiz");
     }catch(e){
       console.error("generateExercises:",e);
-      // Show error message
-      setExQuestions([{q:"تعذّر توليد الأسئلة، حاول مرة أخرى",word:"❌",options:["حسناً","موافق","تمام","نعم"],answer:0}]);
+      // Fallback: أسئلة افتراضية
+      setExQuestions([
+        {type:"mcq",word:"Hello",q:"ترجم هذه الكلمة",options:["مرحبا","وداعا","شكرا","آسف"],answer:0},
+        {type:"mcq",word:"Thank you",q:"ترجم هذه الكلمة",options:["من فضلك","شكراً","آسف","نعم"],answer:1},
+        {type:"flashcard",word:"Goodbye",meaning:"وداعاً",example:"Goodbye, see you later!",pronunciation:"جود باي"},
+        {type:"arrange",word:"I am happy",q:"رتب الكلمات",words:["I","am","happy","today"],answer:"I am happy today"},
+        {type:"pairs",word:"group",q:"صل كل كلمة بمعناها",pairs:[["Hello","مرحبا"],["Bye","وداعاً"],["Yes","نعم"],["No","لا"]]},
+      ]);
       setExStep("quiz");
     }
     setExLoading(false);
@@ -1384,7 +1434,10 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
                       </div>
                       <div style={{flex:1}}>
                         <div style={{fontWeight:700,fontSize:13}}>{l.name}</div>
-                        {prog&&<div style={{color:primary,fontSize:10,marginTop:2}} style={{display:"flex",alignItems:"center",gap:3}}><svg width="9" height="9" viewBox="0 0 24 24" fill={primary} stroke={primary} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>{prog.score} نقطة</div>}
+                        <div style={{display:"flex",gap:6,marginTop:3,flexWrap:"wrap"}}>
+                          {prog&&<div style={{color:primary,fontSize:10,display:"flex",alignItems:"center",gap:2}}><svg width="9" height="9" viewBox="0 0 24 24" fill={primary} stroke={primary} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>{prog.score}نقطة</div>}
+                          {(()=>{const due=Object.entries(srsCards).filter(([k,v])=>k.startsWith(`${l.code}_`)&&v.nextReview<=Date.now()).length;return due>0?<div style={{background:"#ef444422",color:"#ef4444",borderRadius:50,padding:"1px 6px",fontSize:9,fontWeight:700}}>{due} للمراجعة</div>:null;})()}
+                        </div>
                       </div>
                     </button>
                   );
@@ -1423,6 +1476,10 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
               if(!q) return null;
 
               const goNext=(correct)=>{
+                // تحديث SRS للكلمة الحالية
+                if(q.word&&exLang&&exTopic){
+                  updateSrsCard(exLang.code,exTopic.key,q.word,correct);
+                }
                 if(correct){
                   setExScore(s=>s+1);
                   addXp(15,"إجابة صحيحة");
@@ -1437,6 +1494,17 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
                     const lp={...langProgress,[exLang.code]:{score:(langProgress[exLang.code]?.score||0)+newScore,lastTopic:exTopic?.name,date:new Date().toLocaleDateString("ar")}};
                     setLangProgress(lp); saveLangProgress(lp);
                     addNotif("🎓","انتهيت من التمرين!",`أجبت ${newScore} من ${exQuestions.length} بشكل صحيح في ${exLang?.name}`,"quest");
+                    // إذا كان هناك أخطاء → Cool-down
+                    const errors=[...sessionErrors,...(correct?[]:[q.word||""])].filter(Boolean);
+                    if(errors.length>0){
+                      // أنشئ أسئلة Cool-down من الأخطاء
+                      const cdQ=exQuestions.filter(eq=>errors.includes(eq.word)).slice(0,5);
+                      if(cdQ.length>0){
+                        setCooldownQ(cdQ); setCooldownIdx(0); setCooldownAns(null);
+                        setExStep("cooldown");
+                        return;
+                      }
+                    }
                     setExStep("lang");
                   } else { setExIdx(x=>x+1); }
                 },1200);
@@ -1553,6 +1621,41 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
                     </div>
                   </>}
 
+                </div>
+              </>);
+            })()}
+          {/* ── STEP 4: Cool-down ── */}
+            {exStep==="cooldown"&&cooldownQ.length>0&&(()=>{
+              const q=cooldownQ[cooldownIdx];
+              const isLast=cooldownIdx>=cooldownQ.length-1;
+              if(!q) return null;
+              const opts=q.options||["صحيح","خطأ","حاول","مجدداً"];
+              return(<>
+                <div style={{...glass({textAlign:"center",padding:"16px",marginBottom:12,background:`linear-gradient(135deg,#ef444418,#f9731618)`})}}>
+                  <div style={{fontSize:28,marginBottom:6}}>🔁</div>
+                  <div style={{fontWeight:800,fontSize:15,color:"#ef4444",marginBottom:4}}>مراجعة الأخطاء</div>
+                  <div style={{color:muted,fontSize:12}}>{cooldownIdx+1} من {cooldownQ.length} كلمة أخطأت فيها</div>
+                </div>
+                <div style={{...glass({padding:"20px 16px",marginBottom:12,background:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
+                  <div style={{color:muted,fontSize:12,marginBottom:8,textAlign:"center"}}>{q.q||"ترجم هذه الكلمة"}</div>
+                  <div style={{fontWeight:900,fontSize:30,background:"linear-gradient(135deg,#ef4444,#f97316)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:20,textAlign:"center"}}>{q.word}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    {opts.map((o,i)=>{
+                      let bg2=card,bc=border,co=text;
+                      if(cooldownAns!==null){if(i===q.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}else if(i===cooldownAns){bg2="#ef444422";bc="#ef4444";co="#ef4444";}}
+                      return(<button key={i} onClick={()=>{
+                        if(cooldownAns!==null) return;
+                        setCooldownAns(i);
+                        const ok=i===q.answer;
+                        if(ok) updateSrsCard(exLang?.code,exTopic?.key,q.word,true);
+                        setTimeout(()=>{
+                          setCooldownAns(null);
+                          if(isLast){ setExStep("lang"); addNotif("✅","انتهت المراجعة!","أحسنت! راجعت كل الكلمات الصعبة 🎯","quest"); }
+                          else setCooldownIdx(x=>x+1);
+                        },1200);
+                      }} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:14,cursor:"pointer",color:co,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s",textAlign:"right"}}>{o}</button>);
+                    })}
+                  </div>
                 </div>
               </>);
             })()}
