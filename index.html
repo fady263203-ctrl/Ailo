@@ -229,24 +229,29 @@ function Ailo(){
     setExLoading(true); setExQuestions([]); setExIdx(0); setExAnswer(null); setExScore(0);
     try{
       const prompt=`أنشئ 5 أسئلة تعليمية لتعلم اللغة ${lang} عن موضوع "${topic}" للناطقين بالعربية.
-كل سؤال يجب أن يكون بهذا الشكل JSON بالضبط:
-{"q":"السؤال بالعربية","word":"الكلمة أو الجملة بلغة ${lang}","options":["خيار1","خيار2","خيار3","خيار4"],"answer":0}
-حيث answer هو رقم الخيار الصحيح (0-3).
-أرجع فقط مصفوفة JSON بدون أي نص إضافي.`;
+أرجع فقط مصفوفة JSON بهذا الشكل بدون أي نص قبلها أو بعدها:
+[{"q":"ترجم هذه الكلمة","word":"Hello","options":["مرحبا","وداعا","شكرا","آسف"],"answer":0},...]
+كل سؤال يجب أن يحتوي على: q (السؤال بالعربية), word (الكلمة بلغة ${lang}), options (4 خيارات بالعربية), answer (رقم الخيار الصحيح 0-3).`;
+
       const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
         method:"POST",
         headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
         body:JSON.stringify({message:prompt})
       });
       const data=await res.json();
-      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||data.reply||"[]";
-      const clean=raw.replace(/```json|```/g,"").trim();
-      const questions=JSON.parse(clean);
+      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||data.reply||"";
+      // Extract JSON array from response robustly
+      const match=raw.match(/\[[\s\S]*\]/);
+      if(!match) throw new Error("No JSON array found");
+      const questions=JSON.parse(match[0]);
+      if(!Array.isArray(questions)||questions.length===0) throw new Error("Empty questions");
       setExQuestions(questions);
       setExStep("quiz");
     }catch(e){
       console.error("generateExercises:",e);
-      setExStep("topic");
+      // Show error message
+      setExQuestions([{q:"تعذّر توليد الأسئلة، حاول مرة أخرى",word:"❌",options:["حسناً","موافق","تمام","نعم"],answer:0}]);
+      setExStep("quiz");
     }
     setExLoading(false);
   };
