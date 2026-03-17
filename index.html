@@ -503,7 +503,7 @@ function Ailo(){
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
-  useEffect(()=>{const c=SRS[srsIdx];if(c.type==="arrange")setArrWords([...c.words].sort(()=>Math.random()-0.5));if(c.type==="match")setMatchPairs({});setArrSel([]);setMatchSel(null);setSrsAnswer(null);setSpeechRes("");},[srsIdx]);
+  useEffect(()=>{},[]);
   useEffect(()=>{if(!challengeActive)return;const i=setInterval(()=>{setChallengeTime(t=>{if(t<=1){setChallengeActive(false);clearInterval(i);return 0;}return t-1;});if(Math.random()>0.6)setChallengeScore(s=>({...s,opp:s.opp+1}));},1000);return()=>clearInterval(i);},[challengeActive]);
 
   // ── AGORA RTC refs (must be before any early return) ─────────────────────
