@@ -112,7 +112,7 @@ function Ailo(){
   const[darkMode,setDarkModeRaw]=useState(()=>load("dark",true));
   const setDarkMode=(v)=>{ const nv=typeof v==="function"?v(darkMode):v; setDarkModeRaw(nv); save("dark",nv); };
   const[appScreen,setAppScreen]=useState(()=>{ try{ return localStorage.getItem("ailo_token")?"main":"splash"; }catch(e){return "splash";} });
-  const[authForm,setAuthForm]=useState({name:"",email:"",password:"",lang:"Arabic"});
+  const[authForm,setAuthForm]=useState({name:"",username:"",email:"",password:"",lang:"Arabic"});
   const[authError,setAuthError]=useState("");
   const[authLoading,setAuthLoading]=useState(false);
   const[tab,setTab]=useState("home");
@@ -183,9 +183,9 @@ function Ailo(){
   const[showLangPicker,setShowLangPicker]=useState(false);
   const[pendingCallType,setPendingCallType]=useState("");
   const[targetLang,setTargetLang]=useState(()=>load("targetLang","English"));
-  // Feature 2: user search by ID
+  // ── User search by @username ──
   const[showUserSearch,setShowUserSearch]=useState(false);
-  const[searchId,setSearchId]=useState("");
+  const[searchQuery,setSearchQuery]=useState("");
   const[searchResult,setSearchResult]=useState(null);
   const[searchError,setSearchError]=useState("");
   const[searchLoading,setSearchLoading]=useState(false);
@@ -209,6 +209,17 @@ function Ailo(){
   const markAllRead=()=>setNotifications(prev=>prev.map(n=>({...n,read:true})));
   const deleteNotif=(id)=>setNotifications(prev=>prev.filter(n=>n.id!==id));
   const unreadCount=notifications.filter(n=>!n.read).length;
+
+  // ── Short ID system ──
+  const OWNER_EMAIL = "fady263203@gmail.com";
+  const OWNER_SHORT_ID = "AIL-F";
+  const genShortId = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let id = "AIL-";
+    for(let i=0;i<5;i++) id += chars[Math.floor(Math.random()*chars.length)];
+    return id;
+  };
+  const[shortId,setShortId]=useState(()=>load("shortId",""));
 
   // Supabase realtime
   const[userId,setUserId]=useState("");
@@ -299,7 +310,7 @@ function Ailo(){
       await fetch(`${SUPA_URL}/rest/v1/leaderboard`,{
         method:"POST",
         headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${token}`,"Content-Type":"application/json","Prefer":"resolution=merge-duplicates"},
-        body:JSON.stringify({user_id:userId,name:profile.name,avatar:profile.avatar,xp,updated_at:new Date().toISOString()})
+        body:JSON.stringify({user_id:userId,name:profile.name,avatar:profile.avatar,xp,short_id:shortId||genShortId(),updated_at:new Date().toISOString()})
       });
     }catch(e){}
   },[userId,profile.name,profile.avatar]);
@@ -568,30 +579,21 @@ function Ailo(){
     }catch(e){ console.error("toggleCam:",e); }
   },[camOn, micOn]);
 
-  const searchUserById = async() => {
-    if(!searchId.trim()){ setSearchError("أدخل ID المستخدم"); return; }
+  const searchByUsername = async() => {
+    const q = searchQuery.trim().toUpperCase().replace(/^@/,"");
+    if(!q){ setSearchError("أدخل الـ ID للبحث — مثال: AIL-F"); return; }
     setSearchLoading(true); setSearchError(""); setSearchResult(null);
-    const q = searchId.trim();
-
-    // If input looks like a UUID → start direct chat immediately
-    const isUUID = /^[0-9a-f-]{30,}$/i.test(q);
-    if(isUUID){
-      setSearchLoading(false);
-      setSearchResult([{user_id:q, name:"مستخدم", avatar:"🌍", xp:0, direct:true}]);
-      return;
-    }
-
-    // Otherwise search leaderboard by name
     try{
+      // Search by shortId field in leaderboard
       const res = await fetch(
-        `${SUPA_URL}/rest/v1/leaderboard?name=ilike.*${encodeURIComponent(q)}*&select=*&limit=5`,
-        { headers:{"apikey":SUPA_KEY} }
+        `${SUPA_URL}/rest/v1/leaderboard?short_id=ilike.*${encodeURIComponent(q)}*&select=*&limit=8`,
+        { headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${load("token","")}`} }
       );
       if(!res.ok) throw new Error("failed");
       const data = await res.json();
       if(data && data.length>0){ setSearchResult(data); }
-      else{ setSearchError("لم يُعثر على مستخدم بهذا الاسم"); }
-    }catch(e){ setSearchError("خطأ في الاتصال"); }
+      else{ setSearchError("لم يُعثر على مستخدم بهذا الـ ID"); }
+    }catch(e){ setSearchError("خطأ في الاتصال بالخادم"); }
     setSearchLoading(false);
   };
 
@@ -685,6 +687,21 @@ function Ailo(){
           try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
           const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
           const userLang = data.user?.user_metadata?.lang || "Arabic";
+          // Generate short ID - owner gets special AIL-F, others get random AIL-XXXXX
+          const existingShortId = load("shortId","");
+          if(!existingShortId){
+            const newShortId = authForm.email.toLowerCase()===OWNER_EMAIL ? OWNER_SHORT_ID : genShortId();
+            save("shortId", newShortId);
+            setShortId(newShortId);
+          } else {
+            // If owner logs in and has wrong ID, fix it
+            if(authForm.email.toLowerCase()===OWNER_EMAIL && existingShortId!==OWNER_SHORT_ID){
+              save("shortId", OWNER_SHORT_ID);
+              setShortId(OWNER_SHORT_ID);
+            } else {
+              setShortId(existingShortId);
+            }
+          }
           setUserId(data.user?.id || "");
           setProfile(p => ({ ...p, name: userName, lang: userLang }));
           addNotif("👋","مرحباً بعودتك!",`أهلاً ${userName}، جاهز لتعلم لغة جديدة اليوم؟`,"info");
@@ -1375,23 +1392,32 @@ function Ailo(){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowUserSearch(false)}>
           <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
             <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary}}>🔍 ابحث عن صديق</div>
-            <div style={{color:muted,fontSize:12,marginBottom:16}}>أدخل <strong style={{color:primary}}>ID المستخدم</strong> للدردشة المباشرة، أو <strong style={{color:primary}}>الاسم</strong> للبحث</div>
-            <div style={{background:`${primary}11`,border:`1px solid ${primary}33`,borderRadius:14,padding:"10px 14px",marginBottom:14,fontSize:12,color:muted}}>
-              💡 ID خاصك: <span style={{color:primary,fontWeight:700,fontSize:11,wordBreak:"break-all",userSelect:"all"}}>{userId||"—"}</span>
+            <div style={{color:muted,fontSize:12,marginBottom:14}}>ابحث بـ <strong style={{color:primary}}>ID المستخدم القصير</strong> — مثال: AIL-F أو AIL-K9X2P</div>
+            {/* My ID card */}
+            <div style={{background:`${primary}11`,border:`1px solid ${primary}33`,borderRadius:14,padding:"10px 16px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:11,color:muted,marginBottom:3}}>🪪 الـ ID الخاص بك — شاركه مع أصدقائك</div>
+                <div style={{color:primary,fontWeight:900,fontSize:17,letterSpacing:2,userSelect:"all"}}>{shortId||"جارٍ التوليد..."}</div>
+              </div>
+              {shortId===OWNER_SHORT_ID&&<div style={{background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"white",borderRadius:50,padding:"4px 12px",fontSize:11,fontWeight:800,boxShadow:"0 2px 10px rgba(245,158,11,0.5)"}}>👑 OWNER</div>}
             </div>
             <div style={{display:"flex",gap:8,marginBottom:14}}>
-              <input value={searchId} onChange={e=>setSearchId(e.target.value)} placeholder="ID أو اسم المستخدم..." style={{...inp,flex:1}} onKeyDown={e=>e.key==="Enter"&&searchUserById()}/>
-              <button onClick={searchUserById} style={btnP({padding:"12px 18px",fontSize:13,flexShrink:0})}>{searchLoading?"...":"بحث"}</button>
+              <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value.toUpperCase())} placeholder="AIL-..." style={{...inp,flex:1,letterSpacing:1,fontWeight:700}} onKeyDown={e=>e.key==="Enter"&&searchByUsername()}/>
+              <button onClick={searchByUsername} style={btnP({padding:"12px 18px",fontSize:13,flexShrink:0})}>{searchLoading?"⟳":"بحث"}</button>
             </div>
             {searchError&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>⚠️ {searchError}</div>}
             {searchResult&&Array.isArray(searchResult)&&searchResult.map((u,i)=>(
               <div key={i} style={{...glass({display:"flex",alignItems:"center",gap:12,marginBottom:8})}}>
-                <div style={{width:44,height:44,borderRadius:22,overflow:"hidden",flexShrink:0,border:`2px solid ${primary}`}}>
+                <div style={{width:44,height:44,borderRadius:22,overflow:"hidden",flexShrink:0,border:`2px solid ${u.short_id===OWNER_SHORT_ID?"#f59e0b":primary}`}}>
                   {u.avatar?.startsWith("http")?<img src={u.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="" onError={e=>e.target.style.display="none"}/>:<span style={{fontSize:28,lineHeight:"44px",display:"block",textAlign:"center"}}>{u.avatar||"🌍"}</span>}
                 </div>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:15}}>{u.name}</div>
-                  <div style={{color:muted,fontSize:12,marginTop:2}}>{(u.xp||0).toLocaleString()} XP</div>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontWeight:700,fontSize:14}}>{u.name}</span>
+                    {u.short_id===OWNER_SHORT_ID&&<span style={{fontSize:12}}>👑</span>}
+                  </div>
+                  <div style={{color:primary,fontWeight:800,fontSize:12,letterSpacing:1,marginTop:1}}>{u.short_id||"—"}</div>
+                  <div style={{color:muted,fontSize:11,marginTop:1}}>{(u.xp||0).toLocaleString()} XP</div>
                 </div>
                 <button onClick={()=>{
                   setSearchResult(null); setShowUserSearch(false);
@@ -1425,7 +1451,7 @@ function Ailo(){
             </div>
             {profile.bio&&<div style={{background:`${primary}11`,border:`1px solid ${border}`,borderRadius:14,padding:"12px 16px",color:muted,fontSize:13,textAlign:"center",marginBottom:16}}>"{profile.bio}"</div>}
             <div style={{background:`${primary}11`,border:`1px solid ${border}`,borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:11,color:muted,textAlign:"center"}}>
-              🆔 ID: <span style={{color:primary,fontWeight:700,userSelect:"all",fontSize:10}}>{userId||"—"}</span>
+              🪪 ID: <span style={{color:primary,fontWeight:900,userSelect:"all",fontSize:14,letterSpacing:2}}>{shortId||"—"}</span>{shortId===OWNER_SHORT_ID&&<span style={{marginRight:6,fontSize:11}}>👑</span>}
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>{setShowProfileView(false);setShowProfile(true);}} style={btnP({flex:1,fontSize:13})}>✏️ تعديل</button>
