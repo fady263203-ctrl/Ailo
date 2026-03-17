@@ -168,7 +168,7 @@ function Ailo(){
   const sendToGemini=async(userMsg)=>{
     setBotTyping(true);
     try{
-      const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي.`;
+      const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي. اسمك Ailo فقط.`;
 
       // Build alternating history
       const allMsgs=botMsgs.filter(m=>m.id!==1).slice(-8);
@@ -180,32 +180,24 @@ function Ailo(){
       }
       while(history.length>0&&history[0].role!=="user") history.shift();
 
-      // Add system prompt to first user message if history empty
-      const firstMsg=history.length===0
-        ?`[تعليمات: ${systemPrompt}]\n\nالمستخدم: ${userMsg}`
-        :userMsg;
-
       const contents=[
-        ...(history.length===0?[]:[{role:"user",parts:[{text:`[تعليمات: ${systemPrompt}]\n\n${history[0].parts[0].text}`}]},...history.slice(1)]),
-        {role:"user",parts:[{text:firstMsg}]}
+        {role:"user",parts:[{text:`[تعليمات: ${systemPrompt}]\nابدأ المحادثة الآن.`}]},
+        {role:"model",parts:[{text:"حاضر! أنا Ailo، رفيقك هنا 😊"}]},
+        ...history,
+        {role:"user",parts:[{text:userMsg}]}
       ];
 
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,{
+      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          contents:history.length===0
-            ?[{role:"user",parts:[{text:`[تعليمات النظام: ${systemPrompt}]\n\nالمستخدم يقول: ${userMsg}`}]}]
-            :[...history,{role:"user",parts:[{text:userMsg}]}],
-          generationConfig:{maxOutputTokens:300,temperature:0.8}
-        })
+        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body:JSON.stringify({contents})
       });
       const data=await res.json();
-      if(data.error) throw new Error(data.error.message);
+      if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
       const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"حاول مرة أخرى 😊";
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
     }catch(e){
-      console.error("Gemini error:",e.message);
+      console.error("Ailo chat error:",e.message);
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:"عذراً، حدث خطأ 😕 حاول مرة أخرى",time:now()}]);
     }
     setBotTyping(false);
