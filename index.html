@@ -262,7 +262,8 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
   // ── SRS System ──
   const[srsCards,setSrsCards]=useState(()=>load("srs_cards",{})); // {lang_topic_word: {level,nextReview,streak,errorCount,hard}}
   const[sessionErrors,setSessionErrors]=useState([]); // كلمات أخطأ فيها في الجلسة
-  const[cooldownQ,setCooldownQ]=useState([]); // أسئلة Cool-down
+  const[cooldownQ,setCooldownQ]=useState([]);
+  const[exResult,setExResult]=useState(null); // {score,total,lang,topic} // أسئلة Cool-down
   const[cooldownIdx,setCooldownIdx]=useState(0);
   const[cooldownAns,setCooldownAns]=useState(null);
 
@@ -324,7 +325,8 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
       const reviewWords=dueCards.slice(0,8).map(c=>c.word).join("، ");
       const hardWords=dueCards.filter(c=>c.hard).slice(0,3).map(c=>c.word).join("، ");
 
-      const prompt=`أنشئ 10 أسئلة لتعلم اللغة ${lang} عن موضوع "${topic}". أرجع JSON فقط بدون أي نص آخر. ابدأ بـ [ مباشرة.
+      const sessionSeed=Math.floor(Math.random()*10000);
+      const prompt=`[جلسة #${sessionSeed}] أنشئ 10 أسئلة مختلفة تماماً لتعلم اللغة ${lang} عن موضوع "${topic}". أرجع JSON فقط بدون أي نص آخر. ابدأ بـ [ مباشرة.
 أنواع الأسئلة (نوّع بينها):
 [{"type":"mcq","word":"Hello","q":"ترجم","options":["مرحبا","وداعا","شكرا","آسف"],"answer":0},
 {"type":"flashcard","word":"Bye","meaning":"وداعاً","example":"Goodbye!","pronunciation":"باي"},
@@ -1455,7 +1457,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               {exLoading?(
                 <div style={{...glass({textAlign:"center",padding:40})}}>
                   <div style={{fontSize:40,animation:"spin 1s linear infinite",marginBottom:12}}>⟳</div>
-                  <div style={{color:muted,fontSize:13}}>جاري توليد الأسئلة بالذكاء الاصطناعي...</div>
+                  <div style={{color:muted,fontSize:13}}>دعني أُفكر قليلاً... 🤔</div>
                 </div>
               ):(
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -1494,18 +1496,23 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     const lp={...langProgress,[exLang.code]:{score:(langProgress[exLang.code]?.score||0)+newScore,lastTopic:exTopic?.name,date:new Date().toLocaleDateString("ar")}};
                     setLangProgress(lp); saveLangProgress(lp);
                     addNotif("🎓","انتهيت من التمرين!",`أجبت ${newScore} من ${exQuestions.length} بشكل صحيح في ${exLang?.name}`,"quest");
-                    // إذا كان هناك أخطاء → Cool-down
+                    const finalScore=exScore+(correct?1:0);
+                    // نشر تلقائي في الصدارة
+                    pushLB(totalXp);
+                    // إذا كان هناك أخطاء → Cool-down أولاً
                     const errors=[...sessionErrors,...(correct?[]:[q.word||""])].filter(Boolean);
                     if(errors.length>0){
-                      // أنشئ أسئلة Cool-down من الأخطاء
                       const cdQ=exQuestions.filter(eq=>errors.includes(eq.word)).slice(0,5);
                       if(cdQ.length>0){
                         setCooldownQ(cdQ); setCooldownIdx(0); setCooldownAns(null);
+                        setExResult({score:finalScore,total:exQuestions.length,lang:exLang,topic:exTopic});
                         setExStep("cooldown");
                         return;
                       }
                     }
-                    setExStep("lang");
+                    // شاشة النجاح
+                    setExResult({score:finalScore,total:exQuestions.length,lang:exLang,topic:exTopic});
+                    setExStep("result");
                   } else { setExIdx(x=>x+1); }
                 },1200);
               };
@@ -1519,7 +1526,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       <span style={{display:"flex",alignItems:"center",gap:4}}>{exLang?.name} — {exTopic?.name}</span>
                       <span>{exIdx+1}/{exQuestions.length}</span>
                     </div>
-                    <XPBar pct={Math.round((exIdx/exQuestions.length)*100)} primary={primary} accent={accent}/>
+                    <XPBar pct={Math.round((exScore/exQuestions.length)*100)} primary={primary} accent={accent}/>
                   </div>
                   <div style={{...tag("#22c55e"),display:"flex",alignItems:"center",gap:4}}><svg width="11" height="11" viewBox="0 0 24 24" fill="#22c55e33" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/></svg>{exScore}</div>
                 </div>
@@ -1542,13 +1549,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   {/* ── ARRANGE ── */}
                   {q.type==="arrange"&&<>
                     <div style={{color:muted,fontSize:12,marginBottom:12,textAlign:"center"}}>{q.q}</div>
-                    <div style={{minHeight:48,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${border}`}}>
+                    <div style={{minHeight:48,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${border}`,direction:"ltr"}}>
                       {(exArrSel.length===0?[]:exArrSel).map((w,i)=>(
                         <button key={i} onClick={()=>{setExArrSel(s=>s.filter((_,j)=>j!==i));setExArrWords(w2=>[...w2,w]);}} style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:8,padding:"6px 12px",fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>{w}</button>
                       ))}
                       {exArrSel.length===0&&<span style={{color:muted,fontSize:12,lineHeight:"36px"}}>اضغط الكلمات بالترتيب...</span>}
                     </div>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12}}>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12,direction:"ltr"}}>
                       {(exArrWords.length>0?exArrWords:(q.words||[]).slice().sort(()=>Math.random()-0.5)).map((w,i)=>(
                         <button key={i} onClick={()=>{setExArrSel(s=>[...s,w]);setExArrWords(w2=>w2.filter((_,j)=>j!==i));}} style={{background:card,border:`1px solid ${border}`,borderRadius:8,padding:"8px 14px",fontSize:13,cursor:"pointer",color:text,fontFamily:"'Tajawal',system-ui"}}>{w}</button>
                       ))}
@@ -1585,7 +1592,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       ):(
                         <>
                           <div style={{fontWeight:800,fontSize:22,color:primary}}>{q.meaning}</div>
-                          {q.pronunciation&&<div style={{color:muted,fontSize:13}}>🔊 {q.pronunciation}</div>}
+                          {q.pronunciation&&<div onClick={(e)=>{e.stopPropagation();if(window.speechSynthesis){const u=new SpeechSynthesisUtterance(q.word);u.lang=exLang?.code==="Arabic"?"ar-SA":exLang?.code==="French"?"fr-FR":exLang?.code==="Spanish"?"es-ES":exLang?.code==="German"?"de-DE":exLang?.code==="Chinese"?"zh-CN":exLang?.code==="Japanese"?"ja-JP":exLang?.code==="Korean"?"ko-KR":exLang?.code==="Turkish"?"tr-TR":exLang?.code==="Portuguese"?"pt-PT":exLang?.code==="Italian"?"it-IT":exLang?.code==="Russian"?"ru-RU":"en-US";window.speechSynthesis.speak(u);}}} style={{color:primary,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+                          {q.pronunciation}
+                        </div>}
                           {q.example&&<div style={{color:muted,fontSize:12,fontStyle:"italic",marginTop:4}}>"{q.example}"</div>}
                         </>
                       )}
@@ -1650,11 +1660,59 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                         if(ok) updateSrsCard(exLang?.code,exTopic?.key,q.word,true);
                         setTimeout(()=>{
                           setCooldownAns(null);
-                          if(isLast){ setExStep("lang"); addNotif("✅","انتهت المراجعة!","أحسنت! راجعت كل الكلمات الصعبة 🎯","quest"); }
+                          if(isLast){ setExStep("result"); addNotif("✅","انتهت المراجعة!","أحسنت! راجعت كل الكلمات الصعبة 🎯","quest"); }
                           else setCooldownIdx(x=>x+1);
                         },1200);
                       }} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:14,cursor:"pointer",color:co,fontFamily:"'Tajawal',system-ui",transition:"all 0.2s",textAlign:"right"}}>{o}</button>);
                     })}
+                  </div>
+                </div>
+              </>);
+            })()}
+          {/* ── STEP 5: Result ── */}
+            {exStep==="result"&&exResult&&(()=>{
+              const pct=Math.round((exResult.score/exResult.total)*100);
+              const isGold=pct>=70;
+              const isSilver=pct>=40&&pct<70;
+              const cupColor=isGold?"#f59e0b":isSilver?"#94a3b8":"#cd7f32";
+              const cupGlow=isGold?"rgba(245,158,11,0.6)":isSilver?"rgba(148,163,184,0.6)":"rgba(205,127,50,0.6)";
+              const rank=isGold?"#1":isSilver?"#2":"#3";
+              const CSS2=`@keyframes spinY{0%{transform:rotateY(0deg)}100%{transform:rotateY(360deg)}} @keyframes pulse2{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}`;
+              return(<>
+                <style>{CSS2}</style>
+                <div style={{textAlign:"center",padding:"20px 0"}}>
+                  {/* الكأس */}
+                  <div style={{position:"relative",display:"inline-block",marginBottom:20}}>
+                    <div style={{animation:"spinY 3s linear infinite",display:"inline-block",filter:`drop-shadow(0 0 20px ${cupGlow})`}}>
+                      <svg width="90" height="90" viewBox="0 0 24 24" fill={cupColor} stroke={cupColor} strokeWidth="0.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/>
+                      </svg>
+                    </div>
+                    {/* ختم الرقم */}
+                    <div style={{position:"absolute",top:-6,right:-6,width:28,height:28,borderRadius:14,background:cupColor,color:"white",fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 10px ${cupGlow}`,border:"2px solid white"}}>{rank}</div>
+                  </div>
+                  <div style={{fontWeight:900,fontSize:22,color:cupColor,marginBottom:8,animation:"pulse2 2s ease-in-out infinite"}}>
+                    {isGold?"أداء رائع! 🌟":isSilver?"جيد جداً! 👍":"استمر في التدريب! 💪"}
+                  </div>
+                  <div style={{color:muted,fontSize:14,marginBottom:20}}>
+                    {exResult.lang?.name} — {exResult.topic?.name}
+                  </div>
+                  {/* النتيجة */}
+                  <div style={{...glass({display:"inline-block",padding:"16px 32px",marginBottom:24})}}>
+                    <div style={{fontWeight:900,fontSize:40,color:cupColor}}>{exResult.score}/{exResult.total}</div>
+                    <div style={{color:muted,fontSize:12,marginTop:4}}>إجابة صحيحة ({pct}%)</div>
+                  </div>
+                  {/* أزرار */}
+                  <div style={{display:"flex",gap:12,justifyContent:"center",flexDirection:"column",padding:"0 20px"}}>
+                    <button onClick={()=>{
+                      setExResult(null);
+                      generateExercises(exResult.lang?.code,exResult.topic?.name);
+                    }} style={btnP({fontSize:15,padding:"14px 28px"})}>
+                      الجلسة التالية ←
+                    </button>
+                    <button onClick={()=>{setExResult(null);setExStep("lang");}} style={{padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>
+                      اختيار لغة أخرى
+                    </button>
                   </div>
                 </div>
               </>);
@@ -1690,7 +1748,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             <div style={{width:32,height:32,borderRadius:16,overflow:"hidden",flexShrink:0,border:`1px solid ${border}`}}>{u.avatar?.startsWith("http")?<img src={u.avatar} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:20,lineHeight:"32px",display:"block",textAlign:"center"}}>{u.avatar||"🌍"}</span>}</div>
             <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{u.name}{isMe?" (أنت)":""}</div><div style={{color:tierC[tier],fontSize:11,fontWeight:700}}>{(u.xp||0).toLocaleString()} XP</div></div>
           </div>);})}
-          <button onClick={()=>pushLB(totalXp).then(()=>fetchLB())} style={btnP({width:"100%",marginBottom:12,fontSize:13})} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>نشر نتيجتي في الصدارة</button>
+          
           <div style={{...glass({marginBottom:14})}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}} style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#06b6d433",border:"1px solid #06b6d444"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#06b6d422" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></span>تجميد السلسلة</div><div style={{color:muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div></div><button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);save("streakFrozen",true);}}} disabled={coins<50||streakFrozen} style={btnP({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>{streakFrozen?"✅ مفعّل":"50 🪙"}</button></div></div>
         </div>}
       </div>
