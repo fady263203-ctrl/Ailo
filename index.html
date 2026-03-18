@@ -137,8 +137,8 @@ function Ailo(){
   const[streakFrozen,setStreakFrozen]=useState(()=>load("streakFrozen",false));
   const[searchTime,setSearchTime]=useState(0);
   const[matched,setMatched]=useState(false);
-  const[partner,setPartner]=useState({av:"🐬",name:"Alex",country:"?"});
-  const[messages,setMessages]=useState([]);
+  const[partner,setPartner]=useState(()=>load("last_partner",{av:"🐬",name:"Alex",country:"?"}));
+  const[messages,setMessages]=useState(()=>load("chat_messages",[]));
   const[chatInput,setChatInput]=useState("");
   const[isTyping,setIsTyping]=useState(false);
   const[blocked,setBlocked]=useState([]);
@@ -617,8 +617,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
-  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
+  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});save("chat_messages",messages.slice(-100));},[messages]);
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
+  useEffect(()=>{if(partner.name!=="Alex")save("last_partner",partner);},[partner]);
   useEffect(()=>{ const q=exQuestions[exIdx]; if(q&&q.type==='arrange'&&q.words){setExArrWords([...q.words].sort(()=>Math.random()-0.5));} if(q&&q.type==='pairs'){setExPairDone({});setExPairShuffled(q.pairs?[...q.pairs].sort(()=>Math.random()-0.5):[]);} },[exIdx,exQuestions]);
   useEffect(()=>{if(!challengeActive)return;const i=setInterval(()=>{setChallengeTime(t=>{if(t<=1){setChallengeActive(false);clearInterval(i);return 0;}return t-1;});if(Math.random()>0.6)setChallengeScore(s=>({...s,opp:s.opp+1}));},1000);return()=>clearInterval(i);},[challengeActive]);
 
@@ -1327,12 +1328,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             </div>
             {showMsgSearch&&<div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
               <div style={{flex:1,display:"flex",alignItems:"center",background:"rgba(128,128,128,0.1)",borderRadius:12,border:`1px solid ${border}`,overflow:"hidden"}}>
-                <input autoFocus value={msgSearch} onChange={e=>setMsgSearch(e.target.value)} onBlur={()=>{if(!msgSearch)setShowMsgSearch(false);}} placeholder="ابحث في المحادثات..." style={{...inp,flex:1,background:"transparent",border:"none",outline:"none",fontSize:13}}/>
-                <button onClick={()=>setMsgSearch("")} style={{background:"none",border:"none",padding:"0 10px",cursor:"pointer",color:primary,display:"flex",alignItems:"center"}}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input autoFocus value={msgSearch} onChange={e=>setMsgSearch(e.target.value)} onBlur={()=>setTimeout(()=>{setShowMsgSearch(false);setMsgSearch("");},200)} placeholder="ابحث في المحادثات..." style={{...inp,flex:1,background:"transparent",border:"none",outline:"none",fontSize:13}}/>
+                <button onClick={()=>setMsgSearch("")} style={{background:"none",border:"none",padding:"0 12px",cursor:"pointer",color:primary,fontWeight:700,fontSize:13,fontFamily:"'Tajawal',system-ui",flexShrink:0}}>
+                  بحث
                 </button>
               </div>
-              <button onClick={()=>{setShowMsgSearch(false);setMsgSearch("");}} style={{background:"none",border:"none",color:muted,cursor:"pointer",fontSize:13,fontFamily:"'Tajawal',system-ui",flexShrink:0}}>إلغاء</button>
             </div>}
             {/* Ailo AI مثبت */}
             <div onClick={()=>setActiveChat("bot")} style={{...glass({display:"flex",alignItems:"center",gap:12,padding:"12px 14px",marginBottom:8,cursor:"pointer",border:`1px solid ${primary}33`,background:`${primary}08`})}}>
@@ -1421,7 +1421,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{sendMsg("",true,ev.target.result);};r.readAsDataURL(f);}}/>
               <button onClick={()=>{if(fileRef.current){fileRef.current.accept="application/pdf,.doc,.docx,.txt";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.attach(muted,20)}</button>
               <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.image(muted,20)}</button>
-              <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&input.trim())sendMsg(input);}} placeholder="اكتب رسالة..." style={{...inp,flex:1}}/>
+              <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&input.trim())sendMsg(input);}} placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"12px 18px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
               <button onClick={()=>{if(input.trim())sendMsg(input);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
