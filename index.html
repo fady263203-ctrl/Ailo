@@ -381,7 +381,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[challengeScore,setChallengeScore]=useState({me:0,opp:0});
   const[xpPopup,setXpPopup]=useState(null);
   const[storeTab,setStoreTab]=useState(false);
-  const[activeChat,setActiveChat]=useState("bot"); // "bot" or "friend"
+  const[activeChat,setActiveChat]=useState(null); // null=list, "bot", "friend"
+  const[msgSearch,setMsgSearch]=useState("");
+  const[showMsgSearch,setShowMsgSearch]=useState(false);
   // Feature 1: language picker before search
   const[showLangPicker,setShowLangPicker]=useState(false);
   const[pendingCallType,setPendingCallType]=useState("");
@@ -1317,62 +1319,100 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>
         </div>}
 
-        {/* MESSAGES TAB - combines friend chat + bot */}
+        {/* MESSAGES TAB */}
         {tab==="messages"&&<div style={{animation:"slideIn 0.4s ease"}}>
-          {/* Chat selector */}
-          <div style={{display:"flex",gap:8,marginBottom:14}}>
-            <button onClick={()=>setActiveChat("bot")} style={{flex:1,padding:"10px",borderRadius:12,border:`1px solid ${activeChat==="bot"?primary:border}`,background:activeChat==="bot"?`${primary}22`:"transparent",color:activeChat==="bot"?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              ✨ Ailo AI
-            </button>
-            <button onClick={()=>setActiveChat("friend")} style={{flex:1,padding:"10px",borderRadius:12,border:`1px solid ${activeChat==="friend"?primary:border}`,background:activeChat==="friend"?`${primary}22`:"transparent",color:activeChat==="friend"?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              💬 محادثة أصدقاء
-              {messages.length>0&&<span style={{background:primary,color:"white",borderRadius:50,padding:"1px 6px",fontSize:10}}>{messages.length}</span>}
-            </button>
-          </div>
 
-          {/* BOT CHAT */}
-          {activeChat==="bot"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 280px)"}}>
+          {/* قائمة المحادثات */}
+          {activeChat===null&&<>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <div style={{fontWeight:800,fontSize:16}}>الرسائل</div>
+              <button onClick={()=>setShowMsgSearch(s=>!s)} style={{width:36,height:36,borderRadius:18,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </button>
+            </div>
+            {showMsgSearch&&<input autoFocus value={msgSearch} onChange={e=>setMsgSearch(e.target.value)} placeholder="ابحث..." style={{...inp,marginBottom:12,fontSize:13}}/>}
+            {/* Ailo AI مثبت */}
+            <div onClick={()=>setActiveChat("bot")} style={{...glass({display:"flex",alignItems:"center",gap:12,padding:"12px 14px",marginBottom:8,cursor:"pointer",border:`1px solid ${primary}33`,background:`${primary}08`})}}>
+              <div style={{width:48,height:48,borderRadius:24,background:`linear-gradient(135deg,${primary},${secondary})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 12px ${glow}`}}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontWeight:800,fontSize:14,color:primary}}>✨ Ailo AI</div>
+                  <div style={{fontSize:10,color:muted}}>{botMsgs[botMsgs.length-1]?.time||""}</div>
+                </div>
+                <div style={{color:muted,fontSize:12,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {(botMsgs[botMsgs.length-1]?.text||"مرحباً! أنا هنا 😊").slice(0,45)}
+                </div>
+              </div>
+            </div>
+            {/* محادثة الصديق */}
+            <div style={{color:muted,fontSize:11,fontWeight:700,marginBottom:8,marginTop:4}}>محادثات الأصدقاء</div>
+            {messages.length>0
+              ?<div onClick={()=>setActiveChat("friend")} style={{...glass({display:"flex",alignItems:"center",gap:12,padding:"12px 14px",cursor:"pointer"})}}>
+                <div style={{width:48,height:48,borderRadius:24,overflow:"hidden",flexShrink:0,border:`2px solid ${border}`}}>
+                  {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:28,lineHeight:"48px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
+                </div>
+                <div style={{flex:1,overflow:"hidden"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
+                    <div style={{fontSize:10,color:muted}}>{messages[messages.length-1]?.time||""}</div>
+                  </div>
+                  <div style={{color:muted,fontSize:12,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {(messages[messages.length-1]?.text||"...").slice(0,40)}
+                  </div>
+                </div>
+                {messages.filter(m=>m.from!=="me").length>0&&<div style={{background:primary,color:"white",borderRadius:50,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>{messages.filter(m=>m.from!=="me").length}</div>}
+              </div>
+              :<div style={{...glass({textAlign:"center",padding:24,color:muted})}}>
+                <div style={{fontSize:32,marginBottom:8}}>💬</div>
+                <div style={{fontSize:13,marginBottom:12}}>لا توجد محادثات بعد</div>
+                <button onClick={()=>{setSearchQuery("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:12,padding:"10px 20px"})}>ابحث عن صديق</button>
+              </div>}
+          </>}
+
+          {/* شاشة Ailo AI */}
+          {activeChat==="bot"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
+              <button onClick={()=>setActiveChat(null)} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)} رجوع</button>
+              <div style={{width:32,height:32,borderRadius:16,background:`linear-gradient(135deg,${primary},${secondary})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              </div>
+              <div style={{fontWeight:700,fontSize:14,color:primary}}>Ailo AI ✨</div>
+            </div>
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
               {botMsgs.map(m=>(<div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"82%"}}>
-                {m.from==="bot"&&<div style={{fontSize:13,marginBottom:3,color:muted,display:"flex",alignItems:"center",gap:4}}>✨ <span>Ailo AI</span></div>}
+                {m.from==="bot"&&<div style={{fontSize:11,marginBottom:3,color:muted}}>Ailo AI</div>}
                 <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.7,border:`1px solid ${border}`}}>{m.text}</div>
               </div>))}
               <div ref={botEnd}/>
             </div>
-            <div style={{display:"flex",gap:8,paddingTop:8}}>
-              {botTyping&&<div style={{alignSelf:"flex-start",background:card,backdropFilter:"blur(10px)",padding:"12px 16px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
-              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()&&!botTyping){const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}}} placeholder="اسأل المساعد الذكي..." style={{...inp,flex:1}}/>
+            <div style={{display:"flex",gap:8,paddingTop:8,borderTop:`1px solid ${border}`}}>
+              {botTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
+              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()&&!botTyping){const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}}} placeholder="اكتب رسالة..." style={{...inp,flex:1}}/>
               <button onClick={()=>{if(!botInput.trim()||botTyping)return;const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
 
-          {/* FRIEND CHAT */}
-          {activeChat==="friend"&&<div>
-            {messages.length===0
-              ?<div style={{...glass({textAlign:"center",padding:32})}}>
-                <div style={{fontSize:40,marginBottom:12}}>💬</div>
-                <div style={{fontWeight:700,fontSize:15,marginBottom:8}}>لا توجد محادثات بعد</div>
-                <div style={{color:muted,fontSize:13,marginBottom:16}}>ابدأ محادثة مع شريك لغوي أو ابحث عن صديق</div>
-                <button onClick={()=>{setSearchQuery("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:13})} style={{display:"flex",alignItems:"center",gap:6}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>ابحث عن صديق</button>
+          {/* شاشة محادثة الصديق */}
+          {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
+              <button onClick={()=>setActiveChat(null)} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)} رجوع</button>
+              <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
+                {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
               </div>
-              :<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 290px)"}}>
-                <div style={{...glass({marginBottom:10,display:"flex",alignItems:"center",gap:10,padding:"10px 14px"})}}>
-                  <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`}}>
-                    {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
+              <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{partner.name}</div><div style={{fontSize:11,color:muted}}>{partner.country}</div></div>
+            </div>
+            <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
+              {messages.map(m=>(
+                <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
+                  <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:m.isImage?"6px":"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
+                    {m.isImage&&m.imageData?<img src={m.imageData} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>:m.text}
                   </div>
-                  <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{partner.name}</div><div style={{fontSize:11,color:muted}}>{partner.country}</div></div>
                 </div>
-                <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
-                  {messages.map(m=>(
-                    <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
-                      <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:m.isImage?"6px":"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
-                        {m.isImage&&m.imageData?<img src={m.imageData} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>:m.text}
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={msgEnd}/>
-                </div>
-              </div>}
+              ))}
+              <div ref={msgEnd}/>
+            </div>
           </div>}
         </div>}
 
@@ -1499,7 +1539,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     addNotif("🎓","انتهيت من التمرين!",`أجبت ${newScore} من ${exQuestions.length} بشكل صحيح في ${exLang?.name}`,"quest");
                     const finalScore=exScore+(correct?1:0);
                     // نشر تلقائي في الصدارة
-                    pushLB(totalXp+(finalScore*15)).then(()=>fetchLB());
+                    pushLB(totalXp);
                     // إذا كان هناك أخطاء → Cool-down أولاً
                     const errors=[...sessionErrors,...(correct?[]:[q.word||""])].filter(Boolean);
                     if(errors.length>0){
@@ -1587,7 +1627,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   {/* ── FLASHCARD ── */}
                   {q.type==="flashcard"&&<>
                     <div style={{color:muted,fontSize:12,marginBottom:12,textAlign:"center"}}>اضغط البطاقة لرؤية المعنى</div>
-                    <div onClick={()=>setExCardFlipped(f=>{const n=!f;if(n&&window.speechSynthesis){const u=new SpeechSynthesisUtterance(q.word);u.lang="en-US";window.speechSynthesis.cancel();window.speechSynthesis.speak(u);}return n;})} style={{cursor:"pointer",background:exCardFlipped?`${primary}22`:card,border:`2px solid ${exCardFlipped?primary:border}`,borderRadius:16,padding:"28px 16px",textAlign:"center",marginBottom:16,transition:"all 0.3s",minHeight:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
+                    <div onClick={()=>setExCardFlipped(f=>!f)} style={{cursor:"pointer",background:exCardFlipped?`${primary}22`:card,border:`2px solid ${exCardFlipped?primary:border}`,borderRadius:16,padding:"28px 16px",textAlign:"center",marginBottom:16,transition:"all 0.3s",minHeight:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
                       {!exCardFlipped?(
                         <div style={{fontWeight:900,fontSize:32,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{q.word}</div>
                       ):(
