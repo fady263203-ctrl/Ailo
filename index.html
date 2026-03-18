@@ -513,7 +513,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         body:JSON.stringify({user_id:userId,name:profile.name,avatar:profile.avatar,xp,short_id:shortId||genShortId(),updated_at:new Date().toISOString()})
       });
     }catch(e){}
-  },[userId,profile.name,profile.avatar]);
+  },[userId,profile.name,profile.avatar,shortId]);
 
   // XP double state
 
@@ -1497,8 +1497,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setLangProgress(lp); saveLangProgress(lp);
                     addNotif("🎓","انتهيت من التمرين!",`أجبت ${newScore} من ${exQuestions.length} بشكل صحيح في ${exLang?.name}`,"quest");
                     const finalScore=exScore+(correct?1:0);
-                    // نشر تلقائي في الصدارة
-                    pushLB(totalXp);
+                    // احسب XP المكتسب في الجلسة
+                    const sessionXp=finalScore*15;
+                    const newTotalXp=totalXp+sessionXp;
+                    // نشر تلقائي في الصدارة بعد تأخير بسيط لضمان تحديث الـ state
+                    setTimeout(()=>pushLB(newTotalXp).then(()=>fetchLB()),500);
                     // إذا كان هناك أخطاء → Cool-down أولاً
                     const errors=[...sessionErrors,...(correct?[]:[q.word||""])].filter(Boolean);
                     if(errors.length>0){
