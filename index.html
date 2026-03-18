@@ -16,6 +16,17 @@
   OneSignalDeferred.push(async function(OneSignal) {
     await OneSignal.init({
       appId: "0f14f7db-8b55-42ec-b0db-f8cf41229ac2",
+      notifyButton: { enable: false },
+      promptOptions: {
+        slidedown: {
+          prompts: [{
+            type: "push",
+            autoPrompt: true,
+            text: { actionMessage: "اسمح لـ Ailo بإرسال إشعارات المكالمات والرسائل", acceptButton: "اسمح", cancelButton: "لاحقاً" },
+            delay: { pageViews: 1, timeDelay: 3 }
+          }]
+        }
+      }
     });
   });
 </script>
@@ -414,13 +425,47 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[showCoinsInfo,setShowCoinsInfo]=useState(false);
   // ── Notifications system ──
   const[notifications,setNotifications]=useState(()=>load("notifications",[]));
-  // Save to localStorage whenever notifications change (reliable vs inside setState)
   useEffect(()=>{ save("notifications", notifications); },[notifications]);
+
+  // ✅ طلب صلاحية الإشعارات عند بدء التطبيق
+  useEffect(()=>{
+    if("Notification" in window && Notification.permission === "default"){
+      Notification.requestPermission();
+    }
+  },[]);
+
+  // ✅ صوت إشعار بسيط عبر Web Audio API
+  const playNotifSound = (type)=>{
+    try{
+      const ctx = new (window.AudioContext||window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      if(type==="call"){ osc.frequency.setValueAtTime(880,ctx.currentTime); osc.frequency.setValueAtTime(660,ctx.currentTime+0.15); gain.gain.setValueAtTime(0.3,ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4); osc.start(ctx.currentTime); osc.stop(ctx.currentTime+0.4); }
+      else { osc.frequency.setValueAtTime(660,ctx.currentTime); gain.gain.setValueAtTime(0.15,ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.2); osc.start(ctx.currentTime); osc.stop(ctx.currentTime+0.2); }
+    }catch(e){}
+  };
+
   const addNotif=(icon,title,body,type="info")=>{
     setNotifications(prev=>{
       const n={id:Date.now()+Math.random(),icon,title,body,type,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),read:false};
       return [n,...prev.slice(0,29)];
     });
+    // ✅ Browser Push Notification عندما التطبيق في الخلفية
+    if("Notification" in window && Notification.permission === "granted" && document.visibilityState === "hidden"){
+      try{
+        new Notification(`${icon} ${title}`,{body, icon:"/favicon.ico", badge:"/favicon.ico", tag:type, renotify:true});
+      }catch(e){}
+    }
+    // ✅ OneSignal push للأحداث المهمة
+    if((type==="call"||type==="msg"||type==="match") && window.OneSignal){
+      try{
+        window.OneSignal.sendSelfNotification?.(title, body, window.location.href, "/favicon.ico",{},{});
+      }catch(e){}
+    }
+    // ✅ صوت للأحداث المهمة فقط
+    if(type==="call"||type==="match") playNotifSound("call");
+    else if(type==="msg") playNotifSound("msg");
   };
   const markAllRead=()=>setNotifications(prev=>prev.map(n=>({...n,read:true})));
   const deleteNotif=(id)=>setNotifications(prev=>prev.filter(n=>n.id!==id));
@@ -637,9 +682,31 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     return ()=>{ leaveAgora(); };
   },[screen]);
 
-  useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
+  // ── نشر تلقائي عند فتح التطبيق لضمان الظهور في البحث ──
+  useEffect(()=>{
+    if(!userId) return;
+    const token=load("token",""); if(!token) return;
+    const sid=shortId||load("shortId",""); if(!sid) return;
+    const xp=load("xp",0);
+    const av=profile.avatar||"";
+    fetch(`${SUPA_URL}/rest/v1/leaderboard`,{
+      method:"POST",
+      headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${token}`,"Content-Type":"application/json","Prefer":"resolution=merge-duplicates"},
+      body:JSON.stringify({user_id:userId,name:profile.name,avatar:av,xp,short_id:sid,updated_at:new Date().toISOString()})
+    }).catch(()=>{});
+  },[userId]);
 
-  // ── Personal inbox — يستمع لطلبات المحادثة والمكالمات الواردة ──
+  // ✅ إرسال Push Notification حقيقي عبر Supabase → OneSignal
+  const sendPushNotif = async (targetUserId, title, body, type, data={}) => {
+    if(!targetUserId) return;
+    try{
+      await fetch(`${SUPA_URL}/functions/v1/ailo-notify`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "apikey": SUPA_KEY },
+        body: JSON.stringify({ target_user_id: targetUserId, title, body, type, data })
+      });
+    }catch(e){}
+  };
   useEffect(()=>{
     if(!userId) return;
     const supa=getSupa(); if(!supa) return;
@@ -957,9 +1024,30 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               setShortId(existingShortId);
             }
           }
-          setUserId(data.user?.id || "");
+          const newUid = data.user?.id || "";
+          setUserId(newUid);
           setProfile(p => ({ ...p, name: userName, lang: userLang }));
           addNotif("👋","مرحباً بعودتك!",`أهلاً ${userName}، جاهز لتعلم لغة جديدة اليوم؟`,"info");
+
+          // ✅ ربط userId بـ OneSignal حتى يصله الإشعار بالاسم
+          if(window.OneSignal && newUid){
+            try{
+              await window.OneSignal.login(newUid);
+            }catch(e){}
+          }
+
+          // ✅ نشر تلقائي في جدول leaderboard عند تسجيل الدخول حتى يظهر في البحث
+          const finalShortId = load("shortId","") || (existingShortId||"");
+          const currentXp = load("xp", 0);
+          const currentAvatar = load("profile",{})?.avatar || "";
+          try{
+            await fetch(`${SUPA_URL}/rest/v1/leaderboard`,{
+              method:"POST",
+              headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${data.access_token}`,"Content-Type":"application/json","Prefer":"resolution=merge-duplicates"},
+              body:JSON.stringify({user_id:newUid, name:userName, avatar:currentAvatar, xp:currentXp, short_id:finalShortId, updated_at:new Date().toISOString()})
+            });
+          }catch(e){}
+
           setAuthLoading(false);
           setAppScreen("main");
         }
@@ -1206,6 +1294,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   from:{name:profile.name,av:profile.avatar,userId}
                 }});
                 supa.removeChannel(inbox);
+                // ✅ Push Notification حقيقي
+                sendPushNotif(targetId,
+                  `📹 مكالمة فيديو من ${profile.name}`,
+                  "اضغط للرد على المكالمة",
+                  "video", {rid:roomId, callType:"video"}
+                );
               }
             }
             setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,'').slice(0,64),"video"),300);
@@ -1224,6 +1318,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   from:{name:profile.name,av:profile.avatar,userId}
                 }});
                 supa.removeChannel(inbox);
+                // ✅ Push Notification حقيقي
+                sendPushNotif(targetId,
+                  `🎙️ مكالمة صوتية من ${profile.name}`,
+                  "اضغط للرد على المكالمة",
+                  "call", {rid:roomId, callType:"voice"}
+                );
               }
             }
             setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,'').slice(0,64),"voice"),300);
@@ -1732,7 +1832,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   <div style={{...tag("#22c55e"),display:"flex",alignItems:"center",gap:4}}><svg width="11" height="11" viewBox="0 0 24 24" fill="#22c55e33" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/></svg>{exScore}</div>
                 </div>
 
-                <div style={{...glass({padding:"20px 16px",marginBottom:12,background:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
+                <div style={{...glass({padding:"20px 16px",marginBottom:12,background:q.type==="speech"?card:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
 
                   {/* ── MCQ ── */}
                   {(!q.type||q.type==="mcq")&&<>
@@ -2254,6 +2354,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     }});
                     supa.removeChannel(inbox);
                   }
+                  // ✅ Push Notification حقيقي
+                  sendPushNotif(targetUserId,
+                    `${profile.name} يريد محادثتك`,
+                    "اضغط للرد 💬",
+                    "msg", {rid, callType:"text"}
+                  );
                   joinRoom(rid); setScreen("chat");
                 }} style={btnP({padding:"9px 14px",fontSize:12,display:"flex",alignItems:"center",gap:6})}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
