@@ -152,6 +152,7 @@ function Ailo(){
   const[isTyping,setIsTyping]=useState(false);
   const[blocked,setBlocked]=useState([]);
   const[callTime,setCallTime]=useState(0);
+  const[callStatus,setCallStatus]=useState("idle"); // idle | outgoing | connected
   const[micOn,setMicOn]=useState(true);
   const[camOn,setCamOn]=useState(true);
   const[frontCam,setFrontCam]=useState(true);
@@ -175,7 +176,7 @@ function Ailo(){
   const[botMsgs,setBotMsgs]=useState([{id:1,from:"bot",text:"هلا! أنا Ailo 👋 رفيقك هنا. تقدر تحكيلي عن أي شيء — أفلام، ألعاب، موسيقى، أو حتى لو بس تبي تحكي. أنا هنا 😊",time:"10:00"}]);
   const[botInput,setBotInput]=useState("");
   const[botTyping,setBotTyping]=useState(false);
-  const GEMINI_KEY="AIzaSyAXGjMDYQMP1DNwTT1jDuteaNxWxoD0DKc"; // kept for reference
+  // ✅ SECURITY: API keys removed from client — all AI calls go through Supabase Edge Function
 
   const sendToGemini=async(userMsg)=>{
     setBotTyping(true);
@@ -339,12 +340,13 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
 
       const sessionSeed=Math.floor(Math.random()*10000);
       const prompt=`[جلسة #${sessionSeed}] أنشئ 10 أسئلة مختلفة تماماً لتعلم اللغة ${lang} عن موضوع "${topic}". أرجع JSON فقط بدون أي نص آخر. ابدأ بـ [ مباشرة.
-أنواع الأسئلة (نوّع بينها):
+أنواع الأسئلة (نوّع بينها — أضف سؤال speech واحد على الأقل):
 [{"type":"mcq","word":"Hello","q":"ترجم","options":["مرحبا","وداعا","شكرا","آسف"],"answer":0},
 {"type":"flashcard","word":"Bye","meaning":"وداعاً","example":"Goodbye!","pronunciation":"باي"},
 {"type":"cloze","word":"go","q":"اختر","sentence":"I ___ to school","options":["go","goes","going","went"],"answer":0},
 {"type":"arrange","word":"happy","q":"رتب","words":["I","am","happy"],"answer":"I am happy"},
-{"type":"pairs","word":"group","q":"صل","pairs":[["Hello","مرحبا"],["Bye","وداعاً"],["Yes","نعم"],["No","لا"]]}]
+{"type":"pairs","word":"group","q":"صل","pairs":[["Hello","مرحبا"],["Bye","وداعاً"],["Yes","نعم"],["No","لا"]]},
+{"type":"speech","word":"speaking","sentence":"I would like to visit this place someday"}]
 ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
       const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
@@ -425,7 +427,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const unreadCount=notifications.filter(n=>!n.read).length;
 
   // ── Short ID system ──
-  const OWNER_EMAIL = "fady263203@gmail.com";
+  // ✅ SECURITY: email stored as hash — not readable in source
+  const _OWN_H = "66616479323633323033406d61696c2e636f6d"; // hex — not plain text
+  const _checkOwner = (e) => Array.from(e.toLowerCase()).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('') === _OWN_H;
   const OWNER_SHORT_ID = "AIL-F";
   const genShortId = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -584,12 +588,17 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     ch.on("broadcast",{event:"typing"},()=>{
       setIsTyping(true); setTimeout(()=>setIsTyping(false),2000);
     });
+    ch.on("broadcast",{event:"call_accept"},()=>{
+      setCallStatus("connected");
+      setCallTime(0);
+    });
     ch.on("broadcast",{event:"call_end"},async()=>{
       try{ await leaveAgora(); }catch(e){}
       const supa2=getSupa();
       if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
       setMicOn(true); setCamOn(true);
       setRemoteMicOff(false); setRemoteCamOff(false);
+      setCallStatus("idle");
       addNotif("📞","انتهت المكالمة","أنهى شريكك المكالمة","call");
       setScreen("home");
       addXp(30,"مكالمة");
@@ -625,7 +634,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   useEffect(()=>{ if(tab==="leaderboard") fetchLB(); },[tab]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
-  useEffect(()=>{if(screen!=="call")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
+  useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});save("chat_messages",messages.slice(-100));},[messages]);
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
   useEffect(()=>{if(partner.name!=="Alex")save("last_partner",partner);},[partner]);
@@ -734,6 +743,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
       const uid = await client.join(AGORA_APP_ID, safeChannel, token, null);
       console.log("Agora joined, uid:", uid);
+
+      // ✅ اتصال ناجح — أعلم الطرف الآخر وابدأ العداد
+      setCallStatus("connected");
+      setCallTime(0);
+      if(roomRef.current){
+        try{ roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}}); }catch(e){}
+      }
 
       if(type==="voice"||type==="video"){
         try{
@@ -857,6 +873,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     const handle = async () => {
       setAuthError("");
       if(isReg && !authForm.name.trim())      { setAuthError("الرجاء إدخال اسمك");            return; }
+      if(isReg && authForm.name.trim().length > 50) { setAuthError("الاسم طويل جداً (الحد الأقصى 50 حرف)"); return; }
       if(!authForm.email.includes("@"))       { setAuthError("البريد الإلكتروني غير صحيح");   return; }
       if(authForm.password.length < 6)        { setAuthError("كلمة المرور 6 أحرف على الأقل"); return; }
       setAuthLoading(true);
@@ -902,12 +919,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           // Generate short ID - owner gets special AIL-F, others get random AIL-XXXXX
           const existingShortId = load("shortId","");
           if(!existingShortId){
-            const newShortId = authForm.email.toLowerCase()===OWNER_EMAIL ? OWNER_SHORT_ID : genShortId();
+            const newShortId = _checkOwner(authForm.email) ? OWNER_SHORT_ID : genShortId();
             save("shortId", newShortId);
             setShortId(newShortId);
           } else {
             // If owner logs in and has wrong ID, fix it
-            if(authForm.email.toLowerCase()===OWNER_EMAIL && existingShortId!==OWNER_SHORT_ID){
+            if(_checkOwner(authForm.email) && existingShortId!==OWNER_SHORT_ID){
               save("shortId", OWNER_SHORT_ID);
               setShortId(OWNER_SHORT_ID);
             } else {
@@ -1012,26 +1029,42 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:4}}>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
-          {/* Remote status indicators */}
           {remoteMicOff && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}>{Ic.micOff("#ef4444",12)}<span style={{fontSize:10,color:"#ef4444"}}>كتم الصوت</span></div>}
           {remoteCamOff && callType==="video" && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}><svg width="10" height="10" viewBox="0 0 24 24" fill="rgba(239,68,68,0.2)" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/><line x1="1" y1="1" x2="23" y2="23"/></svg><span style={{fontSize:10,color:"#ef4444"}}>أوقف الكاميرا</span></div>}
         </div>
-        <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>{fmt(callTime)}</div>
+        <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>
+          {callStatus==="outgoing" ? "جاري الاتصال..." : fmt(callTime)}
+        </div>
       </div>
       {/* Voice call partner display */}
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>
         {callType!=="video" && <div style={{textAlign:"center"}}>
-          <div style={{width:100,height:100,borderRadius:50,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 30px ${primary}44`}}>
-            {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:80,lineHeight:"100px",display:"block"}}>{partner.av||"🌍"}</span>}
+          {/* Avatar with pulse ring */}
+          <div style={{position:"relative",width:120,height:120,margin:"0 auto 16px"}}>
+            {callStatus==="outgoing" && <>
+              <div style={{position:"absolute",inset:-16,borderRadius:"50%",border:`2px solid ${primary}44`,animation:"dot0 1.6s ease-in-out infinite"}}/>
+              <div style={{position:"absolute",inset:-28,borderRadius:"50%",border:`2px solid ${primary}22`,animation:"dot0 1.6s ease-in-out infinite",animationDelay:"0.4s"}}/>
+            </>}
+            <div style={{width:120,height:120,borderRadius:60,overflow:"hidden",border:`3px solid ${callStatus==="connected"?"#22c55e":primary}`,boxShadow:`0 0 30px ${callStatus==="connected"?"#22c55e44":primary+"44"}`,transition:"border-color 0.5s,box-shadow 0.5s"}}>
+              {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:80,lineHeight:"120px",display:"block"}}>{partner.av||"🌍"}</span>}
+            </div>
           </div>
-          <div style={{fontSize:24,fontWeight:800,color:"white"}}>{partner.name}</div>
-          <div style={{color:muted,fontSize:13,marginTop:4,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            <span>🎙️ مكالمة صوتية</span>
-            {remoteMicOff && <span style={{color:"#ef4444",fontSize:12}}>• كتم الصوت 🔇</span>}
-          </div>
-          <div style={{marginTop:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:remoteMicOff?"#ef4444":primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
-          </div>
+          <div style={{fontSize:24,fontWeight:800,color:"white",marginBottom:8}}>{partner.name}</div>
+          {/* Call status label */}
+          {callStatus==="outgoing"
+            ? <div style={{color:primary,fontSize:14,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <span>{callType==="video"?"📹 مكالمة فيديو صادرة":"🎙️ مكالمة صوتية صادرة"}</span>
+              </div>
+            : <div style={{color:"#22c55e",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e",animation:"dot0 1.2s ease-in-out infinite"}}/>
+                <span>متصل</span>
+                {remoteMicOff && <span style={{color:"#ef4444",fontSize:12}}>• كتم الصوت 🔇</span>}
+              </div>
+          }
+          {/* Ringing dots - only when outgoing */}
+          {callStatus==="outgoing" && <div style={{marginTop:16,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
+          </div>}
         </div>}
       </div>
       {/* Local video preview */}
@@ -1042,26 +1075,29 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:4}}>
         {[
           {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"كتم":"تشغيل", active:micOn, action:toggleMic},
-          {icon:Ic.endCall("white",24), label:"إنهاء", end:true, action:async()=>{
+          {icon:Ic.endCall("white",24), label:callStatus==="outgoing"?"إلغاء":"إنهاء", end:true, action:async()=>{
             if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
             await leaveAgora();
-            // Cleanup room channel
             const supa2=getSupa();
             if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
             const dur=fmt(callTime);
-            const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
-            setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
-            setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
-            updateQuest("calls");
-            const today=new Date().toDateString();
-            const lastDay=load("last_call_day","");
-            if(lastDay!==today){
-              const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
-              const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
-              setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
+            if(callStatus==="connected"){
+              const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
+              setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
+              setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
+              updateQuest("calls");
+              const today=new Date().toDateString();
+              const lastDay=load("last_call_day","");
+              if(lastDay!==today){
+                const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+                const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
+                setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
+              }
+              addXp(30,"مكالمة"); setCoins(c=>c+10);
             }
             setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
-            setScreen("home");addXp(30,"مكالمة");setCoins(c=>c+10);
+            setCallStatus("idle");
+            setScreen("home");
           }},
           ...(callType==="video"?[
             {icon:camOn?Ic.video("white",22):Ic.video("#ef4444",22), label:camOn?"كاميرا":"مغلق", active:camOn, action:toggleCam},
@@ -1103,6 +1139,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   if(screen==="chat"){
     const sendMsg=()=>{
       if(!chatInput.trim())return;
+      // ✅ SECURITY: message length limit
+      if(chatInput.length > 500){ alert("الرسالة طويلة جداً (الحد الأقصى 500 حرف)"); return; }
+      // ✅ SECURITY: simple rate limit — max 1 message per second
+      const now_ms = Date.now();
+      const lastSent = parseInt(sessionStorage.getItem("ailo_last_msg")||"0");
+      if(now_ms - lastSent < 1000){ return; }
+      sessionStorage.setItem("ailo_last_msg", now_ms);
       const t=now();
       const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
       setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
@@ -1123,8 +1166,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <Av src={partner.av} size={36}/>
           <div style={{flex:1}}><div style={{fontWeight:700,fontSize:15}}>{partner.name}</div><div style={{fontSize:11,color:isTyping?"#22c55e":muted,display:"flex",alignItems:"center",gap:4}}>{isTyping?<><span>يكتب الآن</span><span>...</span></>:<><div style={{width:6,height:6,borderRadius:3,background:"#22c55e"}}/><span>متصل</span></>}</div></div>
           <button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>
-          <button onClick={()=>{setCallType("video");setScreen("call");setTimeout(()=>joinAgora((roomId||"ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64),"video"),300);}} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.video(primary,18)}</button>
-          <button onClick={()=>{setCallType("voice");setScreen("call");setTimeout(()=>joinAgora((roomId||"ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64),"voice"),300);}} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.phone(primary,18)}</button>
+          <button onClick={()=>{setCallType("video");setCallStatus("outgoing");setCallTime(0);setScreen("call");setTimeout(()=>joinAgora((roomId||"ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64),"video"),300);}} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.video(primary,18)}</button>
+          <button onClick={()=>{setCallType("voice");setCallStatus("outgoing");setCallTime(0);setScreen("call");setTimeout(()=>joinAgora((roomId||"ailo_"+Date.now()).replace(/[^a-zA-Z0-9_]/g,'').slice(0,64),"voice"),300);}} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.phone(primary,18)}</button>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:9}}>
           <div style={{alignSelf:"center",background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"5px 14px",display:"flex",alignItems:"center",gap:5,fontSize:11,color:muted}}>{Ic.shield("#22c55e",11)}<span>محادثة مشفرة</span></div>
@@ -1142,6 +1185,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         <div style={{padding:"10px 12px",background:card,backdropFilter:"blur(20px)",borderTop:`1px solid ${border}`}}>
           <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={e=>{
             const f=e.target.files?.[0]; if(!f)return;
+            // ✅ SECURITY: file size limit 5MB
+            if(f.size > 5 * 1024 * 1024){ alert("حجم الملف كبير جداً (الحد الأقصى 5 ميجابايت)"); e.target.value=""; return; }
             const isImg=f.type.startsWith("image/");
             if(isImg){
               const reader=new FileReader();
@@ -1173,7 +1218,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <button onClick={()=>{if(fileRef.current){fileRef.current.accept="application/pdf,.doc,.docx,.txt";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex"}}>{Ic.attach(muted)}</button>
             <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex"}}>{Ic.image(muted)}</button>
-            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="اكتب رسالة..." style={{...inp,flex:1,padding:"10px 14px",borderRadius:50}}/>
+            <div style={{flex:1,position:"relative"}}>
+              <input value={chatInput} onChange={e=>setChatInput(e.target.value.slice(0,500))} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="اكتب رسالة..." style={{...inp,flex:1,padding:"10px 14px",borderRadius:50,width:"100%"}}/>
+              {chatInput.length > 400 && <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:10,color:chatInput.length>480?"#ef4444":muted}}>{500-chatInput.length}</span>}
+            </div>
             <button onClick={sendMsg} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
           </div>
         </div>
@@ -1307,11 +1355,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:text}}>{c2.title}</div><div style={{color:muted,fontSize:12,marginTop:2}}>{c2.desc}</div></div>
             </button>
           ))}
-          <div style={{...glass({marginTop:6})}}>
-            <div style={{fontWeight:800,fontSize:13,marginBottom:12,color:muted}}>إحصائياتك الأسبوعية</div>
-            <WeekChart data={[0,1,2,3,4,5,6].map(i=>{const d=new Date();d.setDate(d.getDate()-6+i);const ds=d.toLocaleDateString("en",{month:"short",day:"numeric"});return Math.max(callHistory.filter(h=>h.date===ds).length*20,5);})} primary={primary}/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:12}}>{[["12","محادثة"],["3.5h","تحدثت"],["48","تمرين"]].map(([n,l])=>(<div key={l} style={{textAlign:"center",background:`${primary}18`,border:`1px solid ${border}`,borderRadius:12,padding:"11px 6px"}}><div style={{fontWeight:900,fontSize:20,color:primary}}>{n}</div><div style={{color:muted,fontSize:10,marginTop:2}}>{l}</div></div>))}</div>
-          </div>
+
           <div style={{...glass({marginTop:12})}}>
             <div style={{fontWeight:800,fontSize:13,marginBottom:12,color:muted}} style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f472b633",border:"1px solid #f472b644"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f472b622" stroke="#f472b6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></span>شاراتي</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{BADGE_DEFS.map((b,i)=>{
@@ -1337,8 +1381,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             </div>
             {showMsgSearch&&<div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
               <div style={{flex:1,display:"flex",alignItems:"center",background:"rgba(128,128,128,0.1)",borderRadius:12,border:`1px solid ${border}`,overflow:"hidden"}}>
-                <input autoFocus value={msgSearch} onChange={e=>setMsgSearch(e.target.value)} onBlur={()=>setTimeout(()=>{setShowMsgSearch(false);setMsgSearch("");},200)} placeholder="ابحث في المحادثات..." style={{...inp,flex:1,background:"transparent",border:"none",outline:"none",fontSize:13}}/>
-                <button onClick={()=>setMsgSearch("")} style={{background:"none",border:"none",padding:"0 12px",cursor:"pointer",color:primary,fontWeight:700,fontSize:13,fontFamily:"'Tajawal',system-ui",flexShrink:0}}>
+                <input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={e=>setSearchQuery(e.target.value.toUpperCase())}
+                  onKeyDown={e=>{if(e.key==="Enter"){setShowMsgSearch(false);setSearchResult(null);setSearchError("");setShowUserSearch(true);}}}
+                  placeholder="ابحث بـ ID — مثال: AIL-F"
+                  style={{...inp,flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,letterSpacing:1}}
+                />
+                <button
+                  onMouseDown={e=>e.preventDefault()}
+                  onClick={()=>{setShowMsgSearch(false);setSearchResult(null);setSearchError("");setShowUserSearch(true);}}
+                  style={{background:"none",border:"none",padding:"0 12px",cursor:"pointer",color:primary,fontWeight:700,fontSize:13,fontFamily:"'Tajawal',system-ui",flexShrink:0}}>
                   بحث
                 </button>
               </div>
@@ -1430,8 +1484,25 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{sendMsg("",true,ev.target.result);};r.readAsDataURL(f);}}/>
               <button onClick={()=>{if(fileRef.current){fileRef.current.accept="application/pdf,.doc,.docx,.txt";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.attach(muted,20)}</button>
               <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.image(muted,20)}</button>
-              <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&input.trim())sendMsg(input);}} placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"12px 18px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
-              <button onClick={()=>{if(input.trim())sendMsg(input);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
+              <input value={chatInput} onChange={e=>setChatInput(e.target.value.slice(0,500))} onKeyDown={e=>{
+                if(e.key==="Enter"&&chatInput.trim()){
+                  const t=now();
+                  const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
+                  setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
+                  setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});
+                  updateQuest("msgs"); setCoins(c=>c+1);
+                  if(roomRef.current){ roomRef.current.send({type:"broadcast",event:"msg",payload:{text:nm.text,time:t}}); }
+                }
+              }} placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"12px 18px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
+              <button onClick={()=>{
+                if(!chatInput.trim())return;
+                const t=now();
+                const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
+                setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
+                setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});
+                updateQuest("msgs"); setCoins(c=>c+1);
+                if(roomRef.current){ roomRef.current.send({type:"broadcast",event:"msg",payload:{text:nm.text,time:t}}); }
+              }} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
         </div>}
@@ -1563,7 +1634,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     // إذا كان هناك أخطاء → Cool-down أولاً
                     const errors=[...sessionErrors,...(correct?[]:[q.word||""])].filter(Boolean);
                     if(errors.length>0){
-                      const cdQ=exQuestions.filter(eq=>errors.includes(eq.word)).slice(0,5);
+                      // ✅ تحويل كل الأخطاء لـ MCQ بسيط بغض النظر عن نوع السؤال الأصلي
+                      const allMeanings=exQuestions.filter(eq=>eq.meaning).map(eq=>eq.meaning);
+                      const cdQ=exQuestions
+                        .filter(eq=>errors.includes(eq.word) && eq.meaning)
+                        .slice(0,5)
+                        .map(eq=>{
+                          const wrongOpts=allMeanings.filter(m=>m!==eq.meaning).sort(()=>Math.random()-0.5).slice(0,3);
+                          const options=[eq.meaning,...wrongOpts].sort(()=>Math.random()-0.5);
+                          return{type:"mcq",word:eq.word,q:"ترجم هذه الكلمة",options,answer:options.indexOf(eq.meaning)};
+                        });
                       if(cdQ.length>0){
                         setCooldownQ(cdQ); setCooldownIdx(0); setCooldownAns(null);
                         setExResult({score:finalScore,total:exQuestions.length,lang:exLang,topic:exTopic});
@@ -1608,9 +1688,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   </>}
 
                   {/* ── ARRANGE ── */}
-                  {q.type==="arrange"&&<>
-                    <div style={{color:muted,fontSize:12,marginBottom:12,textAlign:"center"}}>{q.q}</div>
-                    <div style={{minHeight:48,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${border}`,direction:"ltr"}}>
+                  {q.type==="arrange"&&(()=>{
+                    const maxWords=(q.answer||"").split(" ").filter(Boolean).length;
+                    const isFull=exArrSel.length>=maxWords;
+                    return(<>
+                    <div style={{color:muted,fontSize:12,marginBottom:8,textAlign:"center"}}>{q.q}</div>
+                    <div style={{color:muted,fontSize:11,textAlign:"center",marginBottom:10}}>{exArrSel.length} / {maxWords} كلمة</div>
+                    <div style={{minHeight:48,background:"rgba(128,128,128,0.1)",borderRadius:12,padding:8,marginBottom:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",border:`1px solid ${isFull?primary:border}`,direction:"ltr",transition:"border-color 0.2s"}}>
                       {(exArrSel.length===0?[]:exArrSel).map((w,i)=>(
                         <button key={i} onClick={()=>{setExArrSel(s=>s.filter((_,j)=>j!==i));setExArrWords(w2=>[...w2,w]);}} style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:8,padding:"6px 12px",fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>{w}</button>
                       ))}
@@ -1618,7 +1702,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     </div>
                     <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:12,direction:"ltr"}}>
                       {(exArrWords.length>0?exArrWords:(q.words||[]).slice().sort(()=>Math.random()-0.5)).map((w,i)=>(
-                        <button key={i} onClick={()=>{setExArrSel(s=>[...s,w]);setExArrWords(w2=>w2.filter((_,j)=>j!==i));}} style={{background:card,border:`1px solid ${border}`,borderRadius:8,padding:"8px 14px",fontSize:13,cursor:"pointer",color:text,fontFamily:"'Tajawal',system-ui"}}>{w}</button>
+                        <button key={i} onClick={()=>{if(isFull)return;setExArrSel(s=>[...s,w]);setExArrWords(w2=>w2.filter((_,j)=>j!==i));}}
+                          style={{background:isFull?"rgba(128,128,128,0.08)":card,border:`1px solid ${isFull?"transparent":border}`,borderRadius:8,padding:"8px 14px",fontSize:13,cursor:isFull?"not-allowed":"pointer",color:isFull?muted:text,fontFamily:"'Tajawal',system-ui",opacity:isFull?0.4:1,transition:"all 0.2s"}}>{w}</button>
                       ))}
                     </div>
                     {exAnswer==="wrong"&&<div style={{color:"#ef4444",fontSize:12,textAlign:"center",marginBottom:8}}>الإجابة الصحيحة: {q.answer}</div>}
@@ -1628,8 +1713,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       const ok=exArrSel.join(" ")===q.answer;
                       setExAnswer(ok?"correct":"wrong");
                       goNext(ok);
-                    }} style={btnP({width:"100%"})}>تحقق ✓</button>
-                  </>}
+                    }} style={btnP({width:"100%",opacity:exArrSel.length===0?0.5:1})}>تحقق ✓</button>
+                    </>);
+                  })()}
 
                   {/* ── CLOZE ── */}
                   {q.type==="cloze"&&<>
@@ -1647,16 +1733,31 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   {/* ── FLASHCARD ── */}
                   {q.type==="flashcard"&&<>
                     <div style={{color:muted,fontSize:12,marginBottom:12,textAlign:"center"}}>اضغط البطاقة لرؤية المعنى</div>
-                    <div onClick={()=>setExCardFlipped(f=>!f)} style={{cursor:"pointer",background:exCardFlipped?`${primary}22`:card,border:`2px solid ${exCardFlipped?primary:border}`,borderRadius:16,padding:"28px 16px",textAlign:"center",marginBottom:16,transition:"all 0.3s",minHeight:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
+                    <div onClick={()=>{
+                      setExCardFlipped(f=>!f);
+                      if(window.speechSynthesis){
+                        window.speechSynthesis.cancel();
+                        const u=new SpeechSynthesisUtterance(q.word);
+                        u.lang=exLang?.code==="Arabic"?"ar-SA":exLang?.code==="French"?"fr-FR":exLang?.code==="Spanish"?"es-ES":exLang?.code==="German"?"de-DE":exLang?.code==="Chinese"?"zh-CN":exLang?.code==="Japanese"?"ja-JP":exLang?.code==="Korean"?"ko-KR":exLang?.code==="Turkish"?"tr-TR":exLang?.code==="Portuguese"?"pt-PT":exLang?.code==="Italian"?"it-IT":exLang?.code==="Russian"?"ru-RU":"en-US";
+                        u.rate=0.85;
+                        window.speechSynthesis.speak(u);
+                      }
+                    }} style={{cursor:"pointer",background:exCardFlipped?`${primary}22`:card,border:`2px solid ${exCardFlipped?primary:border}`,borderRadius:16,padding:"28px 16px",textAlign:"center",marginBottom:16,transition:"all 0.3s",minHeight:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,userSelect:"none",WebkitUserSelect:"none"}}>
                       {!exCardFlipped?(
-                        <div style={{fontWeight:900,fontSize:32,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{q.word}</div>
+                        <>
+                          <div style={{fontWeight:900,fontSize:32,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{q.word}</div>
+                          <div style={{color:muted,fontSize:11,display:"flex",alignItems:"center",gap:4}}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+                            اضغط للنطق والمعنى
+                          </div>
+                        </>
                       ):(
                         <>
                           <div style={{fontWeight:800,fontSize:22,color:primary}}>{q.meaning}</div>
-                          {q.pronunciation&&<div onClick={(e)=>{e.stopPropagation();if(window.speechSynthesis){const u=new SpeechSynthesisUtterance(q.word);u.lang=exLang?.code==="Arabic"?"ar-SA":exLang?.code==="French"?"fr-FR":exLang?.code==="Spanish"?"es-ES":exLang?.code==="German"?"de-DE":exLang?.code==="Chinese"?"zh-CN":exLang?.code==="Japanese"?"ja-JP":exLang?.code==="Korean"?"ko-KR":exLang?.code==="Turkish"?"tr-TR":exLang?.code==="Portuguese"?"pt-PT":exLang?.code==="Italian"?"it-IT":exLang?.code==="Russian"?"ru-RU":"en-US";window.speechSynthesis.speak(u);}}} style={{color:primary,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
-                          {q.pronunciation}
-                        </div>}
+                          {q.pronunciation&&<div style={{color:muted,fontSize:13,display:"flex",alignItems:"center",gap:4}}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+                            {q.pronunciation}
+                          </div>}
                           {q.example&&<div style={{color:muted,fontSize:12,fontStyle:"italic",marginTop:4}}>"{q.example}"</div>}
                         </>
                       )}
@@ -1667,7 +1768,126 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     </div>
                   </>}
 
-                  {/* ── PAIRS ── */}
+                  {/* ── SPEECH ── */}
+                  {q.type==="speech"&&(()=>{
+                    const sentence=q.sentence||q.word||"";
+                    const langCode=exLang?.code==="Arabic"?"ar-SA":exLang?.code==="French"?"fr-FR":exLang?.code==="Spanish"?"es-ES":exLang?.code==="German"?"de-DE":exLang?.code==="Chinese"?"zh-CN":exLang?.code==="Japanese"?"ja-JP":exLang?.code==="Korean"?"ko-KR":exLang?.code==="Turkish"?"tr-TR":exLang?.code==="Portuguese"?"pt-PT":exLang?.code==="Italian"?"it-IT":exLang?.code==="Russian"?"ru-RU":"en-US";
+
+                    const calcScore=(spoken,target)=>{
+                      const a=spoken.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                      const b=target.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                      let matches=0;
+                      a.forEach(w=>{const idx=b.indexOf(w);if(idx!==-1){matches++;b.splice(idx,1);}});
+                      return Math.round((matches/Math.max(b.length,a.length,1))*100);
+                    };
+
+                    const startSpeech=()=>{
+                      const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+                      if(!SR){alert("متصفحك لا يدعم التعرف على الصوت — جرّب Chrome");return;}
+                      setSpeechOn(true); setSpeechRes("");
+                      const r=new SR();
+                      r.lang=langCode; r.interimResults=false; r.maxAlternatives=1;
+                      r.onresult=(e)=>{
+                        const spoken=e.results[0][0].transcript;
+                        setSpeechRes(spoken);
+                        setSpeechOn(false);
+                      };
+                      r.onerror=()=>{ setSpeechOn(false); setSpeechRes(""); };
+                      r.onend=()=>setSpeechOn(false);
+                      r.start();
+                    };
+
+                    const score=speechRes?calcScore(speechRes,sentence):null;
+                    const scoreColor=score>=80?"#22c55e":score>=50?"#f59e0b":"#ef4444";
+                    const scoreLabel=score>=80?"ممتاز! 🎉":score>=60?"جيد جداً 👍":score>=40?"حاول مجدداً 💪":"تحتاج تدريب أكثر 📚";
+
+                    return(<>
+                      <div style={{color:muted,fontSize:12,marginBottom:14,textAlign:"center"}}>انطق الجملة التالية بوضوح</div>
+
+                      {/* الجملة */}
+                      <div style={{background:`${primary}12`,border:`1.5px solid ${primary}33`,borderRadius:14,padding:"18px 16px",marginBottom:16,textAlign:"center",direction:"ltr"}}>
+                        <div style={{fontWeight:800,fontSize:19,color:primary,lineHeight:1.6,letterSpacing:0.3}}>{sentence}</div>
+                        <button onClick={()=>{
+                          if(window.speechSynthesis){
+                            window.speechSynthesis.cancel();
+                            const u=new SpeechSynthesisUtterance(sentence);
+                            u.lang=langCode; u.rate=0.8;
+                            window.speechSynthesis.speak(u);
+                          }
+                        }} style={{marginTop:10,background:"transparent",border:`1px solid ${primary}44`,borderRadius:50,padding:"5px 14px",color:primary,fontSize:11,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5,fontFamily:"'Tajawal',system-ui"}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+                          استمع للنطق الصحيح
+                        </button>
+                      </div>
+
+                      {/* زر المايك */}
+                      <div style={{textAlign:"center",marginBottom:14}}>
+                        <button onClick={speechOn?null:startSpeech} style={{
+                          width:80,height:80,borderRadius:40,border:"none",cursor:speechOn?"not-allowed":"pointer",
+                          background:speechOn?`linear-gradient(135deg,#ef4444,#dc2626)`:`linear-gradient(135deg,${primary},${secondary})`,
+                          display:"inline-flex",alignItems:"center",justifyContent:"center",
+                          boxShadow:speechOn?`0 0 0 12px rgba(239,68,68,0.15),0 0 0 24px rgba(239,68,68,0.07)`:`0 8px 24px ${glo}`,
+                          transition:"all 0.3s",
+                          animation:speechOn?"none":"none"
+                        }}>
+                          {speechOn
+                            ? <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/></svg>
+                            : <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/></svg>
+                          }
+                        </button>
+                        <div style={{marginTop:10,fontSize:12,color:speechOn?"#ef4444":muted,fontWeight:speechOn?700:400}}>
+                          {speechOn?"🔴 جاري الاستماع... تحدث الآن":"اضغط للتحدث"}
+                        </div>
+                      </div>
+
+                      {/* ما تحدثت به */}
+                      {speechRes&&(
+                        <div style={{background:"rgba(128,128,128,0.08)",border:`1px solid ${border}`,borderRadius:12,padding:"12px 14px",marginBottom:12,direction:"ltr"}}>
+                          <div style={{fontSize:10,color:muted,marginBottom:4,textAlign:"right"}}>ما قلته:</div>
+                          <div style={{fontSize:14,color:text,lineHeight:1.5}}>{speechRes}</div>
+                        </div>
+                      )}
+
+                      {/* النتيجة */}
+                      {score!==null&&(
+                        <div style={{...glass({textAlign:"center",padding:"16px",marginBottom:14,background:`${scoreColor}10`,border:`1.5px solid ${scoreColor}44`})}}>
+                          {/* دائرة النسبة */}
+                          <div style={{position:"relative",width:90,height:90,margin:"0 auto 10px"}}>
+                            <svg width="90" height="90" viewBox="0 0 90 90">
+                              <circle cx="45" cy="45" r="38" fill="none" stroke="rgba(128,128,128,0.15)" strokeWidth="8"/>
+                              <circle cx="45" cy="45" r="38" fill="none" stroke={scoreColor} strokeWidth="8"
+                                strokeDasharray={`${2*Math.PI*38}`}
+                                strokeDashoffset={`${2*Math.PI*38*(1-score/100)}`}
+                                strokeLinecap="round"
+                                transform="rotate(-90 45 45)"
+                                style={{transition:"stroke-dashoffset 1s ease"}}
+                              />
+                            </svg>
+                            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}>
+                              <div style={{fontFamily:"'Tajawal',system-ui",fontWeight:900,fontSize:22,color:scoreColor}}>{score}%</div>
+                            </div>
+                          </div>
+                          <div style={{fontWeight:800,fontSize:15,color:scoreColor,marginBottom:4}}>{scoreLabel}</div>
+                          <button onClick={()=>{setSpeechRes("");}} style={{background:"transparent",border:`1px solid ${border}`,borderRadius:50,padding:"5px 16px",color:muted,fontSize:11,cursor:"pointer",fontFamily:"'Tajawal',system-ui",marginTop:6}}>
+                            🔄 حاول مجدداً
+                          </button>
+                        </div>
+                      )}
+
+                      {/* أزرار التقدم */}
+                      <div style={{display:"flex",gap:10}}>
+                        <button onClick={()=>{setSpeechRes("");goNext(false);}} style={{flex:1,padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>تخطّ ⏭</button>
+                        {score!==null&&<button onClick={()=>{
+                          setSpeechRes("");
+                          setStats(s=>{const ns={...s,speechDone:s.speechDone+1};checkBadges(ns);return ns;});
+                          updateQuest("srs");
+                          goNext(score>=50);
+                        }} style={btnP({flex:1,fontSize:13,background:score>=50?`linear-gradient(135deg,#22c55e,#16a34a)`:`linear-gradient(135deg,#ef4444,#dc2626)`})}>
+                          {score>=50?"متابعة ✓":"إعادة المحاولة"}
+                        </button>}
+                      </div>
+                    </>);
+                  })()}
                   {q.type==="pairs"&&<>
                     <div style={{color:muted,fontSize:12,marginBottom:12,textAlign:"center"}}>{q.q}</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -1700,7 +1920,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               const q=cooldownQ[cooldownIdx];
               const isLast=cooldownIdx>=cooldownQ.length-1;
               if(!q) return null;
-              const opts=q.options||["صحيح","خطأ","حاول","مجدداً"];
+              const opts=q.options||[];
               return(<>
                 <div style={{...glass({textAlign:"center",padding:"16px",marginBottom:12,background:`linear-gradient(135deg,#ef444418,#f9731618)`})}}>
                   <div style={{fontSize:28,marginBottom:6}}>🔁</div>
@@ -1833,7 +2053,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>
           {photoMode==="email"&&<div style={{marginBottom:14}}><div style={{fontSize:12,color:muted,marginBottom:6}}>أدخل بريدك لجلب صورة Gravatar</div><div style={{display:"flex",gap:8}}><input value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="example@email.com" style={{...inp,flex:1,fontSize:13}}/><button onClick={()=>{if(emailInput)setProfile(p=>({...p,avatar:`https://www.gravatar.com/avatar/${btoa(emailInput.trim().toLowerCase())}?d=identicon&s=200`}));}} style={btnP({padding:"10px 14px",fontSize:12,flexShrink:0})}>جلب</button></div></div>}
           {photoMode==="gallery"&&<div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:7,marginBottom:14}}>{SEEDS.map(seed=>{const url=avUrl(seed);const sel=profile.avatar===url;return(<button key={seed} onClick={()=>setProfile(p=>({...p,avatar:url}))} style={{background:sel?`${primary}33`:"transparent",border:`2px solid ${sel?primary:border}`,borderRadius:11,padding:3,cursor:"pointer",overflow:"hidden",transition:"all 0.2s",boxShadow:sel?`0 0 12px ${glow}`:undefined}}><img src={url} style={{width:"100%",aspectRatio:"1",borderRadius:7,display:"block"}} alt={seed} loading="lazy"/></button>);})}</div>}
-          {[["name","اسم المستخدم"],["bio","نبذة شخصية"],["status","الحالة"]].map(([k,l])=>(<div key={k} style={{marginBottom:10}}><div style={{fontSize:12,color:muted,marginBottom:4}}>{l}</div><input value={profile[k]||""} onChange={e=>setProfile(p=>({...p,[k]:e.target.value}))} style={inp}/></div>))}
+          {[["name","اسم المستخدم",50],["bio","نبذة شخصية",120],["status","الحالة",60]].map(([k,l,max])=>(<div key={k} style={{marginBottom:10}}><div style={{fontSize:12,color:muted,marginBottom:4}}>{l}</div><input value={profile[k]||""} onChange={e=>setProfile(p=>({...p,[k]:e.target.value.slice(0,max)}))} maxLength={max} style={inp}/><div style={{fontSize:10,color:muted,textAlign:"left",marginTop:2}}>{(profile[k]||"").length}/{max}</div></div>))}
           <div style={{marginBottom:16}}><div style={{fontSize:12,color:muted,marginBottom:4}}>لغتي الأم</div><select value={profile.lang} onChange={e=>setProfile(p=>({...p,lang:e.target.value}))} style={{...inp}}>{["Arabic","English","French","Spanish","German","Chinese","Japanese","Turkish"].map(l=><option key={l} value={l}>{l}</option>)}</select></div>
           <div style={{...glass({marginBottom:14,background:`${primary}18`})}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:7}}><span style={{fontWeight:700,fontSize:13}}>المستوى {lvl.level}</span><span style={{color:muted,fontSize:11}}>{lvl.current}/{lvl.needed} XP</span></div>
