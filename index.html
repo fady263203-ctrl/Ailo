@@ -7,7 +7,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/stream-chat@8/dist/browser.full-bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -716,105 +715,107 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){}
   };
 
-  // ── Stream Chat ─────────────────────────────────────────────────────────────
+  // ── Stream Chat — REST API مباشرة (بدون SDK) ─────────────────────────────
 
-  // تهيئة Stream وربطه بالمستخدم الحالي
   const initStream = async (uid, name, avatar) => {
-    if(!uid || !window.StreamChat) return;
+    if(!uid) return;
     try{
-      // احصل على Token من Edge Function
       const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
         method:"POST",
         headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
         body: JSON.stringify({ user_id: uid, name, avatar })
       });
-      const { token, api_key } = await res.json();
-      if(!token) return;
-
-      // اتصل بـ Stream
-      const client = window.StreamChat.getInstance(api_key || STREAM_API_KEY);
-      await client.connectUser({ id: uid, name, image: avatar }, token);
-      streamClientRef.current = client;
+      const data = await res.json();
+      if(!data.token) return;
+      streamClientRef.current = { token: data.token, userId: uid, apiKey: data.api_key || STREAM_API_KEY };
       setStreamReady(true);
-      console.log("Stream connected for:", uid);
-    }catch(e){ console.error("Stream init error:", e); }
+      console.log("Stream ready for:", uid);
+    }catch(e){ console.error("Stream init:", e); }
   };
 
-  // انضم لقناة محادثة مع مستخدم آخر
+  const streamGet = async (path) => {
+    const c = streamClientRef.current; if(!c) return null;
+    try{
+      const res = await fetch(`https://chat.stream-io-api.com${path}?api_key=${c.apiKey}`, {
+        headers:{ "Stream-Auth-Type":"jwt", "Authorization": c.token, "Content-Type":"application/json" }
+      });
+      return await res.json();
+    }catch(e){ return null; }
+  };
+
+  const streamPost = async (path, body) => {
+    const c = streamClientRef.current; if(!c) return null;
+    try{
+      const res = await fetch(`https://chat.stream-io-api.com${path}?api_key=${c.apiKey}`, {
+        method:"POST",
+        headers:{ "Stream-Auth-Type":"jwt", "Authorization": c.token, "Content-Type":"application/json" },
+        body: JSON.stringify(body)
+      });
+      return await res.json();
+    }catch(e){ return null; }
+  };
+
   const joinStreamChannel = async (myId, partnerId, partnerName, partnerAvatar) => {
     if(!streamClientRef.current) return;
     try{
-      // Channel ID ثابت بين المستخدمين (مرتّب أبجدياً لضمان نفس الـ ID للطرفين)
-      const cid = [myId, partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
-      const channel = streamClientRef.current.channel("messaging", cid, {
-        members: [myId, partnerId],
-        name: partnerName,
-        image: partnerAvatar,
+      const cid = [myId, partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
+      streamChannelRef.current = { id: cid, type: "messaging" };
+
+      // إنشاء أو جلب القناة
+      await streamPost(`/channels/messaging/${cid}/query`, {
+        data: { members: [myId, partnerId] },
+        messages: { limit: 50 },
+        watch: true
       });
-      await channel.watch();
-      streamChannelRef.current = channel;
 
       // جلب الرسائل السابقة
-      const { messages } = await channel.query({ messages: { limit: 50 } });
-      setStreamMessages(messages || []);
+      const data = await streamGet(`/channels/messaging/${cid}/query`);
+      if(data?.messages) setStreamMessages(data.messages);
 
-      // الاستماع للرسائل الجديدة
-      channel.on("message.new", (event) => {
-        setStreamMessages(prev => {
-          const exists = prev.find(m => m.id === event.message.id);
-          return exists ? prev : [...prev, event.message];
-        });
-        // تمييز مقروءة
-        if(event.message.user?.id !== myId) channel.markRead();
-      });
-
-      // Typing indicator
-      channel.on("typing.start", (event) => {
-        if(event.user?.id !== myId) setStreamTyping(true);
-      });
-      channel.on("typing.stop", (event) => {
-        if(event.user?.id !== myId) setStreamTyping(false);
-      });
+      // Polling للرسائل الجديدة كل 2 ثانية
+      if(streamChannelRef.current._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
+      let lastMsgId = data?.messages?.[data.messages.length-1]?.id || "";
+      streamChannelRef.current._pollInterval = setInterval(async()=>{
+        const fresh = await streamGet(`/channels/messaging/${cid}/query`);
+        if(fresh?.messages){
+          const newMsgs = lastMsgId
+            ? fresh.messages.filter(m => {
+                const idx = fresh.messages.findIndex(x=>x.id===lastMsgId);
+                return idx === -1 || fresh.messages.indexOf(m) > idx;
+              })
+            : fresh.messages;
+          if(newMsgs.length > 0){
+            lastMsgId = fresh.messages[fresh.messages.length-1]?.id || lastMsgId;
+            setStreamMessages(fresh.messages);
+          }
+        }
+      }, 2000);
 
       console.log("Stream channel ready:", cid);
-    }catch(e){ console.error("Stream channel error:", e); }
+    }catch(e){ console.error("Stream channel:", e); }
   };
 
-  // إرسال رسالة عبر Stream
   const sendStreamMessage = async (text, imageData=null) => {
-    if(!streamChannelRef.current) return false;
+    if(!streamChannelRef.current || !streamClientRef.current) return false;
     try{
-      if(imageData){
-        // رفع الصورة
-        const blob = await (await fetch(imageData)).blob();
-        const { file } = await streamChannelRef.current.sendImage(blob, "image.jpg");
-        await streamChannelRef.current.sendMessage({ text:"", attachments:[{ type:"image", image_url: file }] });
-      } else {
-        await streamChannelRef.current.sendMessage({ text });
-      }
-      return true;
-    }catch(e){ console.error("Stream send error:", e); return false; }
+      const { id, type } = streamChannelRef.current;
+      const c = streamClientRef.current;
+      const body = imageData
+        ? { message:{ text:"", attachments:[{ type:"image", image_url: imageData }], user_id: c.userId } }
+        : { message:{ text, user_id: c.userId } };
+      const res = await streamPost(`/channels/${type}/${id}/message`, body);
+      return !!res?.message;
+    }catch(e){ return false; }
   };
 
-  // Typing notification
-  const streamTypingStart = () => {
-    streamChannelRef.current?.keystroke().catch(()=>{});
-  };
-  const streamTypingStop = () => {
-    streamChannelRef.current?.stopTyping().catch(()=>{});
-  };
+  const streamTypingStart = () => {};
+  const streamTypingStop  = () => {};
 
-  // قطع الاتصال عند تسجيل الخروج
   const disconnectStream = async () => {
     try{
-      if(streamChannelRef.current){
-        streamChannelRef.current.off();
-        streamChannelRef.current = null;
-      }
-      if(streamClientRef.current){
-        await streamClientRef.current.disconnectUser();
-        streamClientRef.current = null;
-      }
+      if(streamChannelRef.current?._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
+      streamChannelRef.current = null;
+      streamClientRef.current  = null;
       setStreamReady(false);
       setStreamMessages([]);
     }catch(e){}
