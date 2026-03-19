@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stream-chat@8/dist/browser.full-bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -131,6 +132,7 @@ function Ailo(){
   const setAccentKey=(v)=>{ setAccentKeyRaw(v); save("accent",v); };
     const SUPA_URL="https://tsdpznjarcvmpcrmmbdu.supabase.co";
   const SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
+  const STREAM_API_KEY="mhxnemwpdcfg"; // API Key only — Secret is in Supabase Edge Function
 
   const[darkMode,setDarkModeRaw]=useState(()=>load("dark",true));
   const setDarkMode=(v)=>{ const nv=typeof v==="function"?v(darkMode):v; setDarkModeRaw(nv); save("dark",nv); };
@@ -490,6 +492,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const lobbyRef=useRef(null);
   const roomRef=useRef(null);
   const inboxRef=useRef(null);
+  // Stream Chat refs
+  const streamClientRef=useRef(null);
+  const streamChannelRef=useRef(null);
+  const[streamReady,setStreamReady]=useState(false);
+  const[streamMessages,setStreamMessages]=useState([]);
+  const[streamTyping,setStreamTyping]=useState(false);
   const msgEnd=useRef(null);
   const botEnd=useRef(null);
   const fileRef=useRef(null);
@@ -705,6 +713,110 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         headers: { "Content-Type":"application/json", "apikey": SUPA_KEY },
         body: JSON.stringify({ target_user_id: targetUserId, title, body, type, data })
       });
+    }catch(e){}
+  };
+
+  // ── Stream Chat ─────────────────────────────────────────────────────────────
+
+  // تهيئة Stream وربطه بالمستخدم الحالي
+  const initStream = async (uid, name, avatar) => {
+    if(!uid || !window.StreamChat) return;
+    try{
+      // احصل على Token من Edge Function
+      const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body: JSON.stringify({ user_id: uid, name, avatar })
+      });
+      const { token, api_key } = await res.json();
+      if(!token) return;
+
+      // اتصل بـ Stream
+      const client = window.StreamChat.getInstance(api_key || STREAM_API_KEY);
+      await client.connectUser({ id: uid, name, image: avatar }, token);
+      streamClientRef.current = client;
+      setStreamReady(true);
+      console.log("Stream connected for:", uid);
+    }catch(e){ console.error("Stream init error:", e); }
+  };
+
+  // انضم لقناة محادثة مع مستخدم آخر
+  const joinStreamChannel = async (myId, partnerId, partnerName, partnerAvatar) => {
+    if(!streamClientRef.current) return;
+    try{
+      // Channel ID ثابت بين المستخدمين (مرتّب أبجدياً لضمان نفس الـ ID للطرفين)
+      const cid = [myId, partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+      const channel = streamClientRef.current.channel("messaging", cid, {
+        members: [myId, partnerId],
+        name: partnerName,
+        image: partnerAvatar,
+      });
+      await channel.watch();
+      streamChannelRef.current = channel;
+
+      // جلب الرسائل السابقة
+      const { messages } = await channel.query({ messages: { limit: 50 } });
+      setStreamMessages(messages || []);
+
+      // الاستماع للرسائل الجديدة
+      channel.on("message.new", (event) => {
+        setStreamMessages(prev => {
+          const exists = prev.find(m => m.id === event.message.id);
+          return exists ? prev : [...prev, event.message];
+        });
+        // تمييز مقروءة
+        if(event.message.user?.id !== myId) channel.markRead();
+      });
+
+      // Typing indicator
+      channel.on("typing.start", (event) => {
+        if(event.user?.id !== myId) setStreamTyping(true);
+      });
+      channel.on("typing.stop", (event) => {
+        if(event.user?.id !== myId) setStreamTyping(false);
+      });
+
+      console.log("Stream channel ready:", cid);
+    }catch(e){ console.error("Stream channel error:", e); }
+  };
+
+  // إرسال رسالة عبر Stream
+  const sendStreamMessage = async (text, imageData=null) => {
+    if(!streamChannelRef.current) return false;
+    try{
+      if(imageData){
+        // رفع الصورة
+        const blob = await (await fetch(imageData)).blob();
+        const { file } = await streamChannelRef.current.sendImage(blob, "image.jpg");
+        await streamChannelRef.current.sendMessage({ text:"", attachments:[{ type:"image", image_url: file }] });
+      } else {
+        await streamChannelRef.current.sendMessage({ text });
+      }
+      return true;
+    }catch(e){ console.error("Stream send error:", e); return false; }
+  };
+
+  // Typing notification
+  const streamTypingStart = () => {
+    streamChannelRef.current?.keystroke().catch(()=>{});
+  };
+  const streamTypingStop = () => {
+    streamChannelRef.current?.stopTyping().catch(()=>{});
+  };
+
+  // قطع الاتصال عند تسجيل الخروج
+  const disconnectStream = async () => {
+    try{
+      if(streamChannelRef.current){
+        streamChannelRef.current.off();
+        streamChannelRef.current = null;
+      }
+      if(streamClientRef.current){
+        await streamClientRef.current.disconnectUser();
+        streamClientRef.current = null;
+      }
+      setStreamReady(false);
+      setStreamMessages([]);
     }catch(e){}
   };
   useEffect(()=>{
@@ -1029,12 +1141,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           setProfile(p => ({ ...p, name: userName, lang: userLang }));
           addNotif("👋","مرحباً بعودتك!",`أهلاً ${userName}، جاهز لتعلم لغة جديدة اليوم؟`,"info");
 
-          // ✅ ربط userId بـ OneSignal حتى يصله الإشعار بالاسم
+          // ✅ ربط userId بـ OneSignal
           if(window.OneSignal && newUid){
-            try{
-              await window.OneSignal.login(newUid);
-            }catch(e){}
+            try{ await window.OneSignal.login(newUid); }catch(e){}
           }
+
+          // ✅ تهيئة Stream Chat
+          const av = load("profile",{})?.avatar || "";
+          initStream(newUid, userName, av);
 
           // ✅ نشر تلقائي في جدول leaderboard عند تسجيل الدخول حتى يظهر في البحث
           const finalShortId = load("shortId","") || (existingShortId||"");
@@ -1623,48 +1737,53 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {/* شاشة محادثة الصديق */}
           {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
-              <button onClick={()=>setActiveChat(null)} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)} رجوع</button>
+              <button onClick={()=>{setActiveChat(null);streamTypingStop();}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)} رجوع</button>
               <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
                 {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
               </div>
-              <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{partner.name}</div><div style={{fontSize:11,color:muted}}>{partner.country}</div></div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
+                <div style={{fontSize:10,color:streamTyping?"#22c55e":muted}}>{streamTyping?"يكتب الآن...":streamReady?"متصل ✓":"..."}</div>
+              </div>
+              {streamReady&&<div style={{background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:50,padding:"2px 8px",fontSize:9,color:"#22c55e",fontWeight:700}}>Stream ✓</div>}
             </div>
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
-              {messages.map(m=>(
-                <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
-                  <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:m.isImage?"6px":"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
-                    {m.isImage&&m.imageData?<img src={m.imageData} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>:m.text}
+              {streamMessages.length===0&&!streamReady&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>جاري الاتصال...</div>}
+              {streamMessages.length===0&&streamReady&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
+              {streamMessages.map(m=>{
+                const isMe=m.user?.id===userId;
+                const img=m.attachments?.[0]?.image_url;
+                const t=m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):"";
+                return(<div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"76%"}}>
+                  <div style={{background:isMe?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:isMe?"white":text,padding:img?"6px":"10px 15px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
+                    {img?<img src={img} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>:m.text}
                   </div>
-                </div>
-              ))}
+                  <div style={{fontSize:10,color:muted,marginTop:2,display:"flex",justifyContent:isMe?"flex-end":"flex-start",alignItems:"center",gap:4}}>
+                    {t}{isMe&&(m.readBy?.length>1?Ic.checks("#22c55e",12):Ic.check(muted,11))}
+                  </div>
+                </div>);
+              })}
+              {streamTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
               <div ref={msgEnd}/>
             </div>
-            {/* شريط الإرسال */}
             <div style={{display:"flex",gap:8,paddingTop:8,borderTop:`1px solid ${border}`,alignItems:"center"}}>
-              <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{sendMsg("",true,ev.target.result);};r.readAsDataURL(f);}}/>
-              <button onClick={()=>{if(fileRef.current){fileRef.current.accept="application/pdf,.doc,.docx,.txt";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.attach(muted,20)}</button>
+              <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
+                const f=e.target.files?.[0]; if(!f)return;
+                if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}
+                const r=new FileReader();
+                r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};
+                r.readAsDataURL(f); e.target.value="";
+              }}/>
               <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.image(muted,20)}</button>
-              <input value={chatInput} onChange={e=>setChatInput(e.target.value.slice(0,500))} onKeyDown={e=>{
-                if(e.key==="Enter"&&chatInput.trim()){
-                  const t=now();
-                  const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
-                  setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
-                  setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});
-                  updateQuest("msgs"); setCoins(c=>c+1);
-                  if(roomRef.current){ roomRef.current.send({type:"broadcast",event:"msg",payload:{text:nm.text,time:t}}); }
-                }
+              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{
+                if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}
               }} placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"12px 18px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
-              <button onClick={()=>{
-                if(!chatInput.trim())return;
-                const t=now();
-                const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
-                setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
-                setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});
-                updateQuest("msgs"); setCoins(c=>c+1);
-                if(roomRef.current){ roomRef.current.send({type:"broadcast",event:"msg",payload:{text:nm.text,time:t}}); }
+              <button onClick={async()=>{
+                if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();
+                const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}
               }} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
-          </div>}
+          </div>}          </div>}
         </div>}
 
         {/* HISTORY */}
@@ -2343,6 +2462,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   const rid="direct_"+[userId,targetUserId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
                   setPartner({av:u.avatar||"🌍",name:u.name||"مستخدم",country:"—"});
                   setRoomId(rid); setCallType("text");
+                  // ✅ Stream Chat — انضم للقناة وجلب الرسائل السابقة
+                  setStreamMessages([]);
+                  joinStreamChannel(userId, targetUserId, u.name||"مستخدم", u.avatar||"");
                   // ✅ أعلم المستخدم الآخر عبر inbox الخاص به
                   const supa=getSupa();
                   if(supa && targetUserId){
