@@ -17,8 +17,8 @@
     await OneSignal.init({
       appId: "0f14f7db-8b55-42ec-b0db-f8cf41229ac2",
       notifyButton: { enable: false },
-      serviceWorkerParam: { scope: "/" },
-      serviceWorkerPath: "OneSignalSDKWorker.js",
+      serviceWorkerParam: { scope: "/Ailo/" },
+      serviceWorkerPath: "/Ailo/OneSignalSDKWorker.js",
       promptOptions: {
         slidedown: {
           prompts: [{
@@ -169,7 +169,7 @@ function Ailo(){
   const[searchTime,setSearchTime]=useState(0);
   const[matched,setMatched]=useState(false);
   const[partner,setPartner]=useState(()=>load("last_partner",{av:"🐬",name:"Alex",country:"?"}));
-  const[messages,setMessages]=useState(()=>load("chat_messages",[]));
+  const[messages,setMessages]=useState([]); // النظام القديم — لا نحمل من localStorage
   const[chatInput,setChatInput]=useState("");
   const[isTyping,setIsTyping]=useState(false);
   const[blocked,setBlocked]=useState([]);
@@ -434,6 +434,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[tutorialStep,setTutorialStep]=useState(0);
   // Feature 5: coins info modal
   const[showCoinsInfo,setShowCoinsInfo]=useState(false);
+  // ✅ مسح بيانات النظام القديم عند أول تشغيل
+  useEffect(()=>{
+    try{
+      localStorage.removeItem("chat_messages");
+      // نضع علامة أننا انتقلنا للنظام الجديد
+      if(!localStorage.getItem("stream_v2")){
+        localStorage.setItem("stream_v2","1");
+        console.log("Migrated to Stream Chat v2");
+      }
+    }catch(e){}
+  },[]);
+
   // ── Notifications system ──
   const[notifications,setNotifications]=useState(()=>load("notifications",[]));
   useEffect(()=>{ save("notifications", notifications); },[notifications]);
@@ -959,7 +971,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     };
     return()=>{window._callRejectedHandler=null;};
   },[screen,callStatus]);
-  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});save("chat_messages",messages.slice(-100));},[messages]);
+  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]); // لا نحفظ رسائل النظام القديم
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
   useEffect(()=>{if(partner.name!=="Alex")save("last_partner",partner);},[partner]);
   useEffect(()=>{ const q=exQuestions[exIdx]; if(q&&q.type==='arrange'&&q.words){setExArrWords([...q.words].sort(()=>Math.random()-0.5));} if(q&&q.type==='pairs'){setExPairDone({});setExPairShuffled(q.pairs?[...q.pairs].sort(()=>Math.random()-0.5):[]);} },[exIdx,exQuestions]);
