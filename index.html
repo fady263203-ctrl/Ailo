@@ -497,6 +497,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[streamReady,setStreamReady]=useState(false);
   const[streamMessages,setStreamMessages]=useState([]);
   const[streamTyping,setStreamTyping]=useState(false);
+  // Online/offline presence
+  const[onlineUsers,setOnlineUsers]=useState({});
+  const presenceRef=useRef(null);
   // Voice note state
   const[isRecording,setIsRecording]=useState(false);
   const[recordSecs,setRecordSecs]=useState(0);
@@ -695,6 +698,33 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     return ()=>{ leaveAgora(); };
   },[screen]);
 
+  // ── Presence: تتبع حالة المستخدمين متصل/غير متصل ──
+  useEffect(()=>{
+    if(!userId) return;
+    const supa=getSupa(); if(!supa) return;
+    if(presenceRef.current){ try{supa.removeChannel(presenceRef.current);}catch(e){} }
+    const ch=supa.channel("online_users",{config:{presence:{key:userId}}});
+    ch.on("presence",{event:"sync"},()=>{
+      const state=ch.presenceState();
+      const online={};
+      Object.keys(state).forEach(k=>{ online[k]=true; });
+      setOnlineUsers(online);
+    });
+    ch.on("presence",{event:"join"},({key})=>{
+      setOnlineUsers(prev=>({...prev,[key]:true}));
+    });
+    ch.on("presence",{event:"leave"},({key})=>{
+      setOnlineUsers(prev=>{const n={...prev};delete n[key];return n;});
+    });
+    ch.subscribe(async(status)=>{
+      if(status==="SUBSCRIBED"){
+        await ch.track({user_id:userId,online_at:new Date().toISOString()});
+      }
+    });
+    presenceRef.current=ch;
+    return()=>{ try{supa.removeChannel(ch);}catch(e){} };
+  },[userId]);
+
   // ── نشر تلقائي عند فتح التطبيق لضمان الظهور في البحث ──
   useEffect(()=>{
     if(!userId) return;
@@ -806,10 +836,24 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     try{
       const { id, type } = streamChannelRef.current;
       const c = streamClientRef.current;
+      // Add message locally immediately (optimistic update)
+      const localMsg = {
+        id: "local_"+Date.now(),
+        text: text||"",
+        user: { id: c.userId },
+        created_at: new Date().toISOString(),
+        attachments: imageData ? [{ type:"image", image_url: imageData }] : [],
+        readBy: []
+      };
+      setStreamMessages(prev => [...prev, localMsg]);
       const body = imageData
         ? { message:{ text:"", attachments:[{ type:"image", image_url: imageData }], user_id: c.userId } }
         : { message:{ text, user_id: c.userId } };
       const res = await streamPost(`/channels/${type}/${id}/message`, body);
+      if(res?.message){
+        // Replace local message with server message
+        setStreamMessages(prev => prev.map(m => m.id===localMsg.id ? res.message : m));
+      }
       return !!res?.message;
     }catch(e){ return false; }
   };
@@ -832,7 +876,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     if(inboxRef.current){ try{supa.removeChannel(inboxRef.current);}catch(e){} inboxRef.current=null; }
     const ch=supa.channel("inbox_"+userId);
     ch.on("broadcast",{event:"direct_request"},({payload})=>{
-      // طلب محادثة أو مكالمة واردة
       setIncomingData(payload);
       setShowIncoming(true);
       if(payload.callType!=="text"){
@@ -840,6 +883,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       } else {
         addNotif("💬","رسالة واردة",`${payload.from?.name||"مستخدم"} يريد محادثتك`,"msg");
       }
+    });
+    // إشعار مكالمة فائتة
+    ch.on("broadcast",{event:"missed_call"},({payload})=>{
+      const icon=payload.callType==="video"?"📹":"🎙️";
+      const label=payload.callType==="video"?"فيديو":"صوتية";
+      addNotif(icon,`مكالمة ${label} فائتة`,`${payload.from?.name||"مستخدم"} اتصل بك ولم ترد`,"call");
+      playNotifSound("call");
     });
     ch.subscribe();
     inboxRef.current=ch;
@@ -1311,6 +1361,29 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         {[
           {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"كتم":"تشغيل", active:micOn, action:toggleMic},
           {icon:Ic.endCall("white",24), label:callStatus==="outgoing"?"إلغاء":"إنهاء", end:true, action:async()=>{
+            // إشعار مكالمة فائتة إذا كانت لم تُرد بعد
+            if(callStatus==="outgoing" && roomId){
+              const supa0=getSupa();
+              if(supa0){
+                const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+                if(targetId){
+                  // إرسال إشعار مكالمة فائتة عبر inbox
+                  try{
+                    const ib=supa0.channel("inbox_"+targetId);
+                    await ib.subscribe();
+                    await ib.send({type:"broadcast",event:"missed_call",payload:{
+                      callType, from:{name:profile.name,av:profile.avatar,userId}
+                    }});
+                    supa0.removeChannel(ib);
+                  }catch(e){}
+                  // Push notification مكالمة فائتة
+                  sendPushNotif(targetId,
+                    callType==="video"?`📹 مكالمة فيديو فائتة من ${profile.name}`:`🎙️ مكالمة صوتية فائتة من ${profile.name}`,
+                    "اضغط للرد","call",{callType}
+                  );
+                }
+              }
+            }
             if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
             await leaveAgora();
             const supa2=getSupa();
@@ -1751,7 +1824,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
-                <div style={{fontSize:10,color:streamTyping?"#22c55e":muted}}>{streamTyping?"يكتب الآن...":"متصل"}</div>
+                <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
+                  <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
+                  {streamTyping?"يكتب الآن...":partner._uid&&onlineUsers[partner._uid]?"متصل":"غير متصل"}
+                </div>
               </div>
               <button onClick={async()=>{
                 setCallType("voice");setCallStatus("outgoing");setCallTime(0);setScreen("call");
@@ -1803,27 +1879,58 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               await sendStreamMessage(`📎 ${f.name}`);e.target.value="";
             }}/>
             {/* شريط التسجيل */}
-            {isRecording&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:`${primary}15`,border:`1px solid ${primary}33`,borderRadius:14,marginBottom:6}}>
+            {isRecording&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:14,marginBottom:6}}>
               <div style={{width:9,height:9,borderRadius:5,background:"#ef4444",animation:"dot0 0.8s ease-in-out infinite"}}/>
-              <div style={{flex:1,fontSize:13,color:primary,fontWeight:600}}>🎙️ جاري التسجيل... {recordSecs}ث</div>
-              <button onClick={()=>{if(mediaRecorderRef.current)mediaRecorderRef.current.stop();}} style={{background:"#ef4444",border:"none",borderRadius:50,padding:"4px 12px",color:"white",fontSize:12,cursor:"pointer",fontFamily:"'Tajawal',system-ui",fontWeight:700}}>إرسال ✓</button>
-              <button onClick={()=>{if(mediaRecorderRef.current)mediaRecorderRef.current.stop();voiceChunksRef.current=[];setIsRecording(false);setRecordSecs(0);}} style={{background:"transparent",border:`1px solid ${border}`,borderRadius:50,padding:"4px 10px",color:muted,fontSize:12,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إلغاء</button>
+              <div style={{flex:1,fontSize:13,color:"#ef4444",fontWeight:700}}>🎙️ ارفع إصبعك للإرسال... {recordSecs}ث</div>
             </div>}
             {/* شريط الإرسال */}
             <div style={{display:"flex",gap:6,paddingTop:8,borderTop:`1px solid ${border}`,alignItems:"center"}}>
               <button onClick={()=>fileRef.current?.click()} title="صورة" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.image(muted,19)}</button>
               <button onClick={()=>docFileRef.current?.click()} title="ملف" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.attach(muted,19)}</button>
-              <button onClick={async()=>{
-                if(isRecording)return;
-                try{
-                  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-                  const mr=new MediaRecorder(stream);mediaRecorderRef.current=mr;voiceChunksRef.current=[];
-                  mr.ondataavailable=e=>voiceChunksRef.current.push(e.data);
-                  mr.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());setIsRecording(false);setRecordSecs(0);await sendStreamMessage("🎙️ رسالة صوتية");addXp(3,"صوتية");};
-                  mr.start();setIsRecording(true);setRecordSecs(0);
-                  const iv=setInterval(()=>setRecordSecs(s=>{if(s>=59){clearInterval(iv);mr.stop();return 0;}return s+1;}),1000);
-                }catch(e){alert("لا يمكن الوصول للميكروفون");}
-              }} title="رسالة صوتية" style={{width:33,height:33,background:isRecording?`${primary}22`:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.mic(isRecording?primary:muted,19)}</button>
+              <button
+                onPointerDown={async(e)=>{
+                  e.preventDefault();
+                  if(isRecording)return;
+                  try{
+                    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+                    const mr=new MediaRecorder(stream);
+                    mediaRecorderRef.current=mr; voiceChunksRef.current=[];
+                    mr.ondataavailable=e2=>voiceChunksRef.current.push(e2.data);
+                    mr.onstop=async()=>{
+                      stream.getTracks().forEach(t=>t.stop());
+                      setIsRecording(false); setRecordSecs(0);
+                      if(voiceChunksRef.current.length>0){
+                        await sendStreamMessage("🎙️ رسالة صوتية");
+                        addXp(3,"صوتية"); setCoins(c=>c+1);
+                      }
+                      voiceChunksRef.current=[];
+                    };
+                    mr.start(); setIsRecording(true); setRecordSecs(0);
+                    const iv=setInterval(()=>setRecordSecs(s=>{
+                      if(s>=59){clearInterval(iv);if(mediaRecorderRef.current?.state==="recording")mediaRecorderRef.current.stop();return 0;}
+                      return s+1;
+                    }),1000);
+                    mediaRecorderRef.current._interval=iv;
+                  }catch(e){alert("لا يمكن الوصول للميكروفون");}
+                }}
+                onPointerUp={()=>{
+                  if(mediaRecorderRef.current?.state==="recording"){
+                    if(mediaRecorderRef.current._interval) clearInterval(mediaRecorderRef.current._interval);
+                    mediaRecorderRef.current.stop();
+                  }
+                }}
+                onPointerLeave={()=>{
+                  if(mediaRecorderRef.current?.state==="recording"){
+                    if(mediaRecorderRef.current._interval) clearInterval(mediaRecorderRef.current._interval);
+                    // إلغاء إذا خرج الإصبع عن الزر
+                    voiceChunksRef.current=[];
+                    mediaRecorderRef.current.stop();
+                    setIsRecording(false); setRecordSecs(0);
+                  }
+                }}
+                title="اضغط مطولاً للتسجيل"
+                style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",transform:isRecording?"scale(1.1)":"scale(1)",userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
+              >{Ic.mic(isRecording?"white":muted,19)}</button>
               <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}}
               } placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
               <button onClick={async()=>{if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
@@ -2505,11 +2612,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setSearchResult(null); setShowUserSearch(false);
                   const targetUserId=u.user_id;
                   const rid="direct_"+[userId,targetUserId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
-                  setPartner({av:u.avatar||"🌍",name:u.name||"مستخدم",country:"—"});
+                  setPartner({av:u.avatar||"🌍",name:u.name||"مستخدم",country:"—",_uid:targetUserId});
                   setRoomId(rid); setCallType("text");
                   // ✅ Stream Chat — انضم للقناة وجلب الرسائل السابقة
                   setStreamMessages([]);
-                  joinStreamChannel(userId, targetUserId, u.name||"مستخدم", u.avatar||"");
+                  await joinStreamChannel(userId, targetUserId, u.name||"مستخدم", u.avatar||"");
                   // ✅ أعلم المستخدم الآخر عبر inbox الخاص به
                   const supa=getSupa();
                   if(supa && targetUserId){
@@ -2527,7 +2634,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     "اضغط للرد 💬",
                     "msg", {rid, callType:"text"}
                   );
-                  joinRoom(rid); setScreen("chat");
+                  // ✅ فتح شاشة الرسائل الجديدة (Stream) لا القديمة
+                  setTab("messages"); setActiveChat("friend"); joinRoom(rid);
                 }} style={btnP({padding:"9px 14px",fontSize:12,display:"flex",alignItems:"center",gap:6})}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                   دردشة</button>
@@ -2570,7 +2678,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 <button onClick={()=>{
                   const d=incomingData;
                   setShowIncoming(false); setIncomingData(null);
-                  setPartner({av:d.from?.av||"🌍",name:d.from?.name||"مستخدم",country:"—"});
+                  setPartner({av:d.from?.av||"🌍",name:d.from?.name||"مستخدم",country:"—",_uid:d.from?.userId||""});
                   setRoomId(d.rid);
                   joinRoom(d.rid);
                   if(d.callType!=="text"){
