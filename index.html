@@ -497,6 +497,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[streamReady,setStreamReady]=useState(false);
   const[streamMessages,setStreamMessages]=useState([]);
   const[streamTyping,setStreamTyping]=useState(false);
+  // Voice note state
+  const[isRecording,setIsRecording]=useState(false);
+  const[recordSecs,setRecordSecs]=useState(0);
+  const mediaRecorderRef=useRef(null);
+  const voiceChunksRef=useRef([]);
+  const docFileRef=useRef(null);
   const msgEnd=useRef(null);
   const botEnd=useRef(null);
   const fileRef=useRef(null);
@@ -1737,27 +1743,46 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
           {/* شاشة محادثة الصديق */}
           {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
-              <button onClick={()=>{setActiveChat(null);streamTypingStop();}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)} رجوع</button>
+            {/* Header */}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
+              <button onClick={()=>{setActiveChat(null);streamTypingStop();}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
               <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
                 {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
               </div>
-              <div style={{flex:1}}>
+              <div style={{flex:1,minWidth:0}}>
                 <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
-                <div style={{fontSize:10,color:streamTyping?"#22c55e":muted}}>{streamTyping?"يكتب الآن...":streamReady?"متصل ✓":"..."}</div>
+                <div style={{fontSize:10,color:streamTyping?"#22c55e":muted}}>{streamTyping?"يكتب الآن...":"متصل"}</div>
               </div>
-              {streamReady&&<div style={{background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:50,padding:"2px 8px",fontSize:9,color:"#22c55e",fontWeight:700}}>Stream ✓</div>}
+              <button onClick={async()=>{
+                setCallType("voice");setCallStatus("outgoing");setCallTime(0);setScreen("call");
+                const supa=getSupa();
+                if(supa&&roomId){const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+                if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة صوتية من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}}
+                setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"voice"),300);
+              }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.phone(primary,16)}</button>
+              <button onClick={async()=>{
+                setCallType("video");setCallStatus("outgoing");setCallTime(0);setScreen("call");
+                const supa=getSupa();
+                if(supa&&roomId){const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+                if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}}
+                setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"video"),300);
+              }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.video(primary,16)}</button>
+              <button onClick={()=>setShowBlock(true)} style={{width:32,height:32,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.flag(muted,16)}</button>
             </div>
+            {/* Messages */}
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
-              {streamMessages.length===0&&!streamReady&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>جاري الاتصال...</div>}
-              {streamMessages.length===0&&streamReady&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
+              {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
               {streamMessages.map(m=>{
                 const isMe=m.user?.id===userId;
                 const img=m.attachments?.[0]?.image_url;
+                const isAudio=m.attachments?.[0]?.type==="audio";
+                const audioUrl=m.attachments?.[0]?.asset_url;
                 const t=m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):"";
-                return(<div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"76%"}}>
-                  <div style={{background:isMe?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:isMe?"white":text,padding:img?"6px":"10px 15px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
-                    {img?<img src={img} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>:m.text}
+                return(<div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%"}}>
+                  <div style={{background:isMe?`linear-gradient(135deg,${primary},${secondary})`:card,color:isMe?"white":text,padding:img?"8px":"10px 14px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
+                    {img&&<img src={img} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>}
+                    {isAudio&&audioUrl&&<audio controls src={audioUrl} style={{maxWidth:200,height:36}}/>}
+                    {!img&&!isAudio&&m.text}
                   </div>
                   <div style={{fontSize:10,color:muted,marginTop:2,display:"flex",justifyContent:isMe?"flex-end":"flex-start",alignItems:"center",gap:4}}>
                     {t}{isMe&&(m.readBy?.length>1?Ic.checks("#22c55e",12):Ic.check(muted,11))}
@@ -1767,22 +1792,41 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               {streamTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
               <div ref={msgEnd}/>
             </div>
-            <div style={{display:"flex",gap:8,paddingTop:8,borderTop:`1px solid ${border}`,alignItems:"center"}}>
-              <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
-                const f=e.target.files?.[0]; if(!f)return;
-                if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}
-                const r=new FileReader();
-                r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};
-                r.readAsDataURL(f); e.target.value="";
-              }}/>
-              <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",color:muted,flexShrink:0}}>{Ic.image(muted,20)}</button>
-              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{
-                if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}
-              }} placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"12px 18px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
+            {/* hidden inputs */}
+            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
+              const f=e.target.files?.[0]; if(!f)return;
+              if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}
+              const r=new FileReader();r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};r.readAsDataURL(f);e.target.value="";
+            }}/>
+            <input ref={docFileRef} type="file" accept=".pdf,.doc,.docx,.txt,.ppt,.xlsx" style={{display:"none"}} onChange={async e=>{
+              const f=e.target.files?.[0]; if(!f)return;
+              await sendStreamMessage(`📎 ${f.name}`);e.target.value="";
+            }}/>
+            {/* شريط التسجيل */}
+            {isRecording&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:`${primary}15`,border:`1px solid ${primary}33`,borderRadius:14,marginBottom:6}}>
+              <div style={{width:9,height:9,borderRadius:5,background:"#ef4444",animation:"dot0 0.8s ease-in-out infinite"}}/>
+              <div style={{flex:1,fontSize:13,color:primary,fontWeight:600}}>🎙️ جاري التسجيل... {recordSecs}ث</div>
+              <button onClick={()=>{if(mediaRecorderRef.current)mediaRecorderRef.current.stop();}} style={{background:"#ef4444",border:"none",borderRadius:50,padding:"4px 12px",color:"white",fontSize:12,cursor:"pointer",fontFamily:"'Tajawal',system-ui",fontWeight:700}}>إرسال ✓</button>
+              <button onClick={()=>{if(mediaRecorderRef.current)mediaRecorderRef.current.stop();voiceChunksRef.current=[];setIsRecording(false);setRecordSecs(0);}} style={{background:"transparent",border:`1px solid ${border}`,borderRadius:50,padding:"4px 10px",color:muted,fontSize:12,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إلغاء</button>
+            </div>}
+            {/* شريط الإرسال */}
+            <div style={{display:"flex",gap:6,paddingTop:8,borderTop:`1px solid ${border}`,alignItems:"center"}}>
+              <button onClick={()=>fileRef.current?.click()} title="صورة" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.image(muted,19)}</button>
+              <button onClick={()=>docFileRef.current?.click()} title="ملف" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.attach(muted,19)}</button>
               <button onClick={async()=>{
-                if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();
-                const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}
-              }} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
+                if(isRecording)return;
+                try{
+                  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+                  const mr=new MediaRecorder(stream);mediaRecorderRef.current=mr;voiceChunksRef.current=[];
+                  mr.ondataavailable=e=>voiceChunksRef.current.push(e.data);
+                  mr.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());setIsRecording(false);setRecordSecs(0);await sendStreamMessage("🎙️ رسالة صوتية");addXp(3,"صوتية");};
+                  mr.start();setIsRecording(true);setRecordSecs(0);
+                  const iv=setInterval(()=>setRecordSecs(s=>{if(s>=59){clearInterval(iv);mr.stop();return 0;}return s+1;}),1000);
+                }catch(e){alert("لا يمكن الوصول للميكروفون");}
+              }} title="رسالة صوتية" style={{width:33,height:33,background:isRecording?`${primary}22`:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.mic(isRecording?primary:muted,19)}</button>
+              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}}
+              } placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
+              <button onClick={async()=>{if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
         </div>}
