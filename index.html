@@ -17,17 +17,27 @@
     await OneSignal.init({
       appId: "0f14f7db-8b55-42ec-b0db-f8cf41229ac2",
       notifyButton: { enable: false },
+      serviceWorkerParam: { scope: "/" },
+      serviceWorkerPath: "OneSignalSDKWorker.js",
       promptOptions: {
         slidedown: {
           prompts: [{
             type: "push",
             autoPrompt: true,
-            text: { actionMessage: "اسمح لـ Ailo بإرسال إشعارات المكالمات والرسائل", acceptButton: "اسمح", cancelButton: "لاحقاً" },
-            delay: { pageViews: 1, timeDelay: 3 }
+            text: {
+              actionMessage: "اسمح لـ Ailo بإرسال إشعارات المكالمات والرسائل",
+              acceptButton: "اسمح",
+              cancelButton: "لاحقاً"
+            },
+            delay: { pageViews: 1, timeDelay: 5 }
           }]
         }
       }
     });
+    // طلب الإذن بعد 5 ثوانٍ
+    setTimeout(()=>{
+      OneSignal.Slidedown?.promptPush?.();
+    }, 5000);
   });
 </script>
 <style>
@@ -458,12 +468,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         new Notification(`${icon} ${title}`,{body, icon:"/favicon.ico", badge:"/favicon.ico", tag:type, renotify:true});
       }catch(e){}
     }
-    // ✅ OneSignal push للأحداث المهمة
-    if((type==="call"||type==="msg"||type==="match") && window.OneSignal){
-      try{
-        window.OneSignal.sendSelfNotification?.(title, body, window.location.href, "/favicon.ico",{},{});
-      }catch(e){}
-    }
+    // OneSignal push — يُرسل عبر Edge Function (sendPushNotif) وليس هنا مباشرة
     // ✅ صوت للأحداث المهمة فقط
     if(type==="call"||type==="match") playNotifSound("call");
     else if(type==="msg") playNotifSound("msg");
@@ -765,7 +770,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       });
       const data = await res.json();
       if(!data.token) return;
-      streamClientRef.current = { token: data.token, userId: uid, apiKey: data.api_key || STREAM_API_KEY };
+      streamClientRef.current = {
+        token: data.token,              // user token — للإرسال
+        serverToken: data.server_token, // server token — للقنوات
+        userId: uid,
+        apiKey: data.api_key || STREAM_API_KEY
+      };
       setStreamReady(true);
       console.log("Stream ready for:", uid);
     }catch(e){ console.error("Stream init:", e); }
@@ -783,12 +793,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){ return null; }
   };
 
-  const streamPost = async (path, body) => {
+  const streamPost = async (path, body, useServerToken=false) => {
     const c = streamClientRef.current; if(!c) return null;
     try{
+      const tok = useServerToken ? (c.serverToken||c.token) : c.token;
       const res = await fetch(`https://chat.stream-io-api.com${path}?api_key=${c.apiKey}`, {
         method:"POST",
-        headers:{ "Stream-Auth-Type":"jwt", "Authorization": c.token, "Content-Type":"application/json" },
+        headers:{ "Stream-Auth-Type":"jwt", "Authorization": tok, "Content-Type":"application/json" },
         body: JSON.stringify(body)
       });
       return await res.json();
@@ -809,15 +820,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       const cid = [myId, partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
       streamChannelRef.current = { id: cid, type: "messaging" };
 
-      // إنشاء أو جلب القناة
-      await streamPost(`/channels/messaging/${cid}/query`, {
-        data: { members: [myId, partnerId] },
-        messages: { limit: 50 },
-        watch: true
+      // ✅ أنشئ القناة server-side (عبر Edge Function) مع كلا المستخدمين كأعضاء
+      const setupRes = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body: JSON.stringify({ user_id: myId, partner_id: partnerId })
       });
+      const setupData = await setupRes.json();
+      if(setupData.server_token){
+        // حدّث الـ server token
+        streamClientRef.current.serverToken = setupData.server_token;
+      }
 
-      // جلب الرسائل السابقة
-      const data = await streamGet(`/channels/messaging/${cid}/query`);
+      // جلب الرسائل السابقة بـ server token
+      const data = await streamPost(`/channels/messaging/${cid}/query`,{
+        messages:{ limit:50 }, state:true, watch:false
+      }, true); // true = use server token
       if(data?.messages) setStreamMessages(data.messages);
 
       // Polling للرسائل الجديدة كل 2 ثانية
@@ -828,7 +846,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
           messages:{ limit:50 },
           watch: false
-        });
+        }, true); // server token for reliable access
         if(fresh?.messages && Array.isArray(fresh.messages)){
           const newLastId = fresh.messages[fresh.messages.length-1]?.id || "";
           if(newLastId && newLastId !== lastMsgId){
@@ -847,7 +865,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     try{
       const { id, type } = streamChannelRef.current;
       const c = streamClientRef.current;
-      // Add message locally immediately (optimistic update)
+      // أضف الرسالة محلياً فوراً
       const localMsg = {
         id: "local_"+Date.now(),
         text: text||"",
@@ -857,15 +875,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         readBy: []
       };
       setStreamMessages(prev => [...prev, localMsg]);
+      // ✅ استخدم server token + user_id في body لضمان الإرسال
       const body = imageData
-        ? { message:{ text:"", attachments:[{ type:"image", image_url: imageData }], user_id: c.userId } }
-        : { message:{ text, user_id: c.userId } };
-      const res = await streamPost(`/channels/${type}/${id}/message`, body);
+        ? { message:{ text:"", attachments:[{ type:"image", image_url: imageData }] }, user_id: c.userId }
+        : { message:{ text }, user_id: c.userId };
+      const res = await streamPost(`/channels/${type}/${id}/message`, body, true);
       if(res?.message){
-        // Replace local message with server message
         setStreamMessages(prev => prev.map(m => m.id===localMsg.id ? res.message : m));
+        return true;
       }
-      return !!res?.message;
+      return false;
     }catch(e){ return false; }
   };
 
