@@ -659,6 +659,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setCallTime(0);
     });
     ch.on("broadcast",{event:"call_end"},async()=>{
+      // رسالة نظام: انتهت المكالمة
+      addCallSystemMsg("📞","انتهت المكالمة","أنهى شريكك المكالمة");
       try{ await leaveAgora(); }catch(e){}
       const supa2=getSupa();
       if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
@@ -769,10 +771,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){ console.error("Stream init:", e); }
   };
 
-  const streamGet = async (path) => {
+  const streamGet = async (path, params={}) => {
     const c = streamClientRef.current; if(!c) return null;
     try{
-      const res = await fetch(`https://chat.stream-io-api.com${path}?api_key=${c.apiKey}`, {
+      const qs = new URLSearchParams({api_key: c.apiKey, ...params}).toString();
+      const res = await fetch(`https://chat.stream-io-api.com${path}?${qs}`, {
+        method: "GET",
         headers:{ "Stream-Auth-Type":"jwt", "Authorization": c.token, "Content-Type":"application/json" }
       });
       return await res.json();
@@ -792,7 +796,15 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   };
 
   const joinStreamChannel = async (myId, partnerId, partnerName, partnerAvatar) => {
-    if(!streamClientRef.current) return;
+    // انتظر حتى يجهز Stream (max 5 ثوانٍ)
+    if(!streamClientRef.current){
+      let waited=0;
+      while(!streamClientRef.current && waited<5000){
+        await new Promise(r=>setTimeout(r,300));
+        waited+=300;
+      }
+      if(!streamClientRef.current){ console.warn("Stream not ready"); return; }
+    }
     try{
       const cid = [myId, partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
       streamChannelRef.current = { id: cid, type: "messaging" };
@@ -812,17 +824,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       if(streamChannelRef.current._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
       let lastMsgId = data?.messages?.[data.messages.length-1]?.id || "";
       streamChannelRef.current._pollInterval = setInterval(async()=>{
-        const fresh = await streamGet(`/channels/messaging/${cid}/query`);
-        if(fresh?.messages){
-          const newMsgs = lastMsgId
-            ? fresh.messages.filter(m => {
-                const idx = fresh.messages.findIndex(x=>x.id===lastMsgId);
-                return idx === -1 || fresh.messages.indexOf(m) > idx;
-              })
-            : fresh.messages;
-          if(newMsgs.length > 0){
-            lastMsgId = fresh.messages[fresh.messages.length-1]?.id || lastMsgId;
-            setStreamMessages(fresh.messages);
+        if(!streamChannelRef.current) return;
+        const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
+          messages:{ limit:50 },
+          watch: false
+        });
+        if(fresh?.messages && Array.isArray(fresh.messages)){
+          const newLastId = fresh.messages[fresh.messages.length-1]?.id || "";
+          if(newLastId && newLastId !== lastMsgId){
+            lastMsgId = newLastId;
+            setStreamMessages([...fresh.messages]);
           }
         }
       }, 2000);
@@ -861,6 +872,21 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const streamTypingStart = () => {};
   const streamTypingStop  = () => {};
 
+  // ✅ رسالة نظام داخل المحادثة (مكالمات)
+  const addCallSystemMsg = (icon, label, sub="") => {
+    const msg = {
+      id: "sys_"+Date.now(),
+      _isSystem: true,
+      _icon: icon,
+      _label: label,
+      _sub: sub,
+      user: { id: "system" },
+      created_at: new Date().toISOString(),
+      text: "", attachments: [], readBy: []
+    };
+    setStreamMessages(prev => [...prev, msg]);
+  };
+
   const disconnectStream = async () => {
     try{
       if(streamChannelRef.current?._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
@@ -884,6 +910,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         addNotif("💬","رسالة واردة",`${payload.from?.name||"مستخدم"} يريد محادثتك`,"msg");
       }
     });
+    // رفض المكالمة من الطرف الآخر
+    ch.on("broadcast",{event:"call_rejected"},({payload})=>{
+      if(window._callRejectedHandler) window._callRejectedHandler(payload);
+    });
     // إشعار مكالمة فائتة
     ch.on("broadcast",{event:"missed_call"},({payload})=>{
       const icon=payload.callType==="video"?"📹":"🎙️";
@@ -897,6 +927,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   },[userId]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
   useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
+
+  // استقبال رفض المكالمة
+  useEffect(()=>{
+    window._callRejectedHandler=async(payload)=>{
+      if(screen!=="call"||callStatus!=="outgoing") return;
+      await leaveAgora();
+      setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
+      setCallStatus("idle");setScreen("home");
+      addNotif("📵","رُفضت مكالمتك",`${payload?.from?.name||"المستخدم"} رفض المكالمة`,"call");
+      playNotifSound("msg");
+    };
+    return()=>{window._callRejectedHandler=null;};
+  },[screen,callStatus]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});save("chat_messages",messages.slice(-100));},[messages]);
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
   useEffect(()=>{if(partner.name!=="Alex")save("last_partner",partner);},[partner]);
@@ -1365,7 +1408,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             if(callStatus==="outgoing" && roomId){
               const supa0=getSupa();
               if(supa0){
-                const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+                const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
                 if(targetId){
                   // إرسال إشعار مكالمة فائتة عبر inbox
                   try{
@@ -1384,12 +1427,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 }
               }
             }
+            // رسالة نظام: مكالمة ملغاة
+            addCallSystemMsg(callType==="video"?"📹":"🎙️","مكالمة ملغاة");
             if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
             await leaveAgora();
             const supa2=getSupa();
             if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
             const dur=fmt(callTime);
             if(callStatus==="connected"){
+              // رسالة نظام: انتهت المكالمة + مدتها
+              addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
               const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
               setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
               setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
@@ -1479,7 +1526,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             // ✅ أعلم المستخدم الآخر بالمكالمة
             const supa=getSupa();
             if(supa && roomId){
-              const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+              const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
               if(targetId){
                 const inbox=supa.channel("inbox_"+targetId);
                 await inbox.subscribe();
@@ -1503,7 +1550,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             // ✅ أعلم المستخدم الآخر بالمكالمة
             const supa=getSupa();
             if(supa && roomId){
-              const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+              const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
               if(targetId){
                 const inbox=supa.channel("inbox_"+targetId);
                 await inbox.subscribe();
@@ -1831,15 +1878,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               </div>
               <button onClick={async()=>{
                 setCallType("voice");setCallStatus("outgoing");setCallTime(0);setScreen("call");
+                addCallSystemMsg("🎙️","مكالمة صوتية صادرة","جاري الاتصال...");
+                joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
                 if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة صوتية من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}}
                 setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"voice"),300);
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.phone(primary,16)}</button>
               <button onClick={async()=>{
                 setCallType("video");setCallStatus("outgoing");setCallTime(0);setScreen("call");
+                addCallSystemMsg("📹","مكالمة فيديو صادرة","جاري الاتصال...");
+                joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=roomId.replace("direct_","").replace(userId.replace(/-/g,""),"").replace("__","").replace(/^_|_$/g,"");
+                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
                 if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}}
                 setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"video"),300);
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.video(primary,16)}</button>
@@ -1849,6 +1900,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
               {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
               {streamMessages.map(m=>{
+                // ── رسالة نظام (مكالمة) ──
+                if(m._isSystem) return(
+                  <div key={m.id} style={{alignSelf:"center",maxWidth:"85%",margin:"4px 0"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:7,background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"6px 14px",fontSize:12,color:muted}}>
+                      <span style={{fontSize:16}}>{m._icon}</span>
+                      <div>
+                        <span style={{fontWeight:700,color:text}}>{m._label}</span>
+                        {m._sub&&<span style={{marginRight:6,fontSize:11}}>{m._sub}</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
                 const isMe=m.user?.id===userId;
                 const img=m.attachments?.[0]?.image_url;
                 const isAudio=m.attachments?.[0]?.type==="audio";
@@ -2668,7 +2731,24 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             <div style={{display:"flex",gap:14,justifyContent:"center"}}>
               {/* رفض */}
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-                <button onClick={()=>{setShowIncoming(false);setIncomingData(null);}} style={{width:64,height:64,borderRadius:32,background:"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 18px rgba(239,68,68,0.4)",fontSize:26}}>
+                <button onClick={async()=>{
+                  const d=incomingData;
+                  setShowIncoming(false); setIncomingData(null);
+                  // أعلم المتصل بالرفض عبر inbox
+                  if(d.callType!=="text" && d.from?.userId){
+                    const supa=getSupa();
+                    if(supa){
+                      try{
+                        const ib=supa.channel("inbox_"+d.from.userId);
+                        await ib.subscribe();
+                        await ib.send({type:"broadcast",event:"call_rejected",payload:{
+                          from:{name:profile.name,av:profile.avatar}
+                        }});
+                        supa.removeChannel(ib);
+                      }catch(e){}
+                    }
+                  }
+                }} style={{width:64,height:64,borderRadius:32,background:"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 18px rgba(239,68,68,0.4)",fontSize:26}}>
                   {incomingData.callType==="text"?"✕":"📵"}
                 </button>
                 <span style={{fontSize:11,color:muted}}>{incomingData.callType==="text"?"تجاهل":"رفض"}</span>
@@ -2682,20 +2762,27 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setRoomId(d.rid);
                   joinRoom(d.rid);
                   if(d.callType!=="text"){
+                    addCallSystemMsg(d.callType==="video"?"📹":"🎙️",d.callType==="video"?"مكالمة فيديو واردة":"مكالمة صوتية واردة","جاري القبول...");
                     setCallType(d.callType);
                     setCallStatus("connected");
                     setCallTime(0);
                     setScreen("call");
-                    setTimeout(()=>joinAgora(d.rid.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),d.callType),400);
+                    const agoraRid = d.rid.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
+                    setTimeout(async()=>{
+                      await joinAgora(agoraRid, d.callType);
+                      // أعلم المتصل أننا قبلنا
+                      if(roomRef.current){
+                        try{ roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}}); }catch(e){}
+                      }
+                    },400);
                   } else {
                     setCallType("text");
-                    setScreen("chat");
-                    // أعلم المُرسِل أننا دخلنا الغرفة
-                    const supa=getSupa();
-                    if(supa){
-                      const ch=supa.channel("room_"+d.rid);
-                      ch.subscribe();
-                    }
+                    setStreamMessages([]);
+                    // ✅ فتح شاشة Stream الجديدة
+                    setTab("messages"); setActiveChat("friend");
+                    // ✅ انضم لقناة Stream مع المرسل
+                    const partnerUid = d.from?.userId||"";
+                    joinStreamChannel(userId, partnerUid, d.from?.name||"مستخدم", d.from?.av||"");
                   }
                 }} style={{width:64,height:64,borderRadius:32,background:`linear-gradient(135deg,#22c55e,#16a34a)`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 18px rgba(34,197,94,0.4)",fontSize:26}}>
                   {incomingData.callType==="text"?"💬":"📞"}
