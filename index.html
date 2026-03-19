@@ -1784,7 +1784,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}
               }} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
-          </div>}          </div>}
+          </div>}
         </div>}
 
         {/* HISTORY */}
