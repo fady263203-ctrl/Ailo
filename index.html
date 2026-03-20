@@ -217,6 +217,16 @@ function Ailo(){
   const[searchTime,setSearchTime]=useState(0);
   const[matched,setMatched]=useState(false);
   const[partner,setPartner]=useState(()=>load("last_partner",{av:"🐬",name:"Alex",country:"?"}));
+  // ✅ قائمة المحادثات المحفوظة
+  const[conversations,setConversations]=useState(()=>load("conversations",[]));
+  const saveConversation=(conv)=>{
+    setConversations(prev=>{
+      const filtered=prev.filter(c=>c.partnerId!==conv.partnerId);
+      const updated=[conv,...filtered].slice(0,50);
+      save("conversations",updated);
+      return updated;
+    });
+  };
   const[messages,setMessages]=useState([]); // النظام القديم — لا نحمل من localStorage
   const[chatInput,setChatInput]=useState("");
   const[isTyping,setIsTyping]=useState(false);
@@ -759,6 +769,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setIsTyping(false);
       if(!payload.isImage) addNotif("💬","رسالة جديدة",payload.text.length>40?payload.text.slice(0,40)+"…":payload.text,"msg");
       else addNotif("📷","أرسل صورة","شريكك أرسل لك صورة","msg");
+      // ✅ تحديث عدد الرسائل غير المقروءة
+      setConversations(prev=>prev.map(c=>
+        c.rid===roomId ? {...c,lastMsg:payload.text||"📷 صورة",unread:(c.unread||0)+1,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})} : c
+      ));
     });
     ch.on("broadcast",{event:"media_status"},({payload})=>{
       if(payload.mic !== undefined) setRemoteMicOff(!payload.mic);
@@ -2133,8 +2147,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setStreamMessages([]);
                     await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");
                     joinRoom(rid);
+                    // ✅ حفظ المحادثة
+                    saveConversation({
+                      partnerId:targetUserId,
+                      partnerName:req.from?.name||"مستخدم",
+                      partnerAv:req.from?.av||"🌍",
+                      rid,lastMsg:"",
+                      time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),
+                      unread:0
+                    });
                     setTab("messages"); setActiveChat("friend");
-                    // حذف الطلب من القائمة
                     setChatRequests(prev=>{const u=prev.filter((_,j)=>j!==i);save("chat_requests",u);return u;});
                   }} style={{width:36,height:36,borderRadius:18,background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e44",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>✓</button>
                   {/* حظر */}
@@ -2150,29 +2172,51 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               ))}
             </>}
 
-            {/* محادثة الصديق */}
-            <div style={{color:muted,fontSize:11,fontWeight:700,marginBottom:8,marginTop:4}}>محادثات الأصدقاء</div>
-            {messages.length>0
-              ?<div onClick={()=>setActiveChat("friend")} style={{...glass({display:"flex",alignItems:"center",gap:12,padding:"12px 14px",cursor:"pointer"})}}>
-                <div style={{width:48,height:48,borderRadius:24,overflow:"hidden",flexShrink:0,border:`2px solid ${border}`}}>
-                  {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:28,lineHeight:"48px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
-                </div>
-                <div style={{flex:1,overflow:"hidden"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
-                    <div style={{fontSize:10,color:muted}}>{messages[messages.length-1]?.time||""}</div>
+            {/* ── قائمة المحادثات — Telegram Style ── */}
+            {conversations.length>0
+              ? conversations.map((conv,i)=>(
+                <div key={conv.partnerId||i} onClick={async()=>{
+                  setPartner({av:conv.partnerAv||"🌍",name:conv.partnerName||"مستخدم",country:"—",_uid:conv.partnerId});
+                  setRoomId(conv.rid);
+                  setStreamMessages([]);
+                  setCallType("text");
+                  joinRoom(conv.rid);
+                  await joinStreamChannel(userId, conv.partnerId, conv.partnerName, conv.partnerAv);
+                  setActiveChat("friend");
+                  // مسح الرسائل غير المقروءة
+                  saveConversation({...conv,unread:0});
+                }} style={{
+                  display:"flex",alignItems:"center",gap:12,
+                  padding:"10px 12px",marginBottom:2,cursor:"pointer",borderRadius:14,
+                  background: conv.unread>0 ? `${primary}08` : "transparent",
+                  transition:"background 0.15s"
+                }}>
+                  {/* Avatar */}
+                  <div style={{width:50,height:50,borderRadius:25,overflow:"hidden",flexShrink:0,border:`2px solid ${conv.unread>0?primary:border}`,transition:"border-color 0.2s"}}>
+                    {conv.partnerAv?.startsWith("http")
+                      ?<img src={conv.partnerAv} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                      :<span style={{fontSize:28,lineHeight:"50px",display:"block",textAlign:"center"}}>{conv.partnerAv||"🌍"}</span>}
                   </div>
-                  <div style={{color:muted,fontSize:12,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                    {(messages[messages.length-1]?.text||"...").slice(0,40)}
+                  {/* Content */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:3}}>
+                      <span style={{fontWeight:700,fontSize:14,color:text}}>{conv.partnerName}</span>
+                      <span style={{fontSize:10,color:muted,flexShrink:0}}>{conv.time}</span>
+                    </div>
+                    <div style={{color:conv.unread>0?text:muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:conv.unread>0?600:400}}>
+                      {conv.lastMsg||"ابدأ المحادثة..."}
+                    </div>
                   </div>
+                  {/* Unread badge */}
+                  {conv.unread>0&&<div style={{background:primary,color:"white",borderRadius:50,minWidth:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,flexShrink:0,padding:"0 5px",boxShadow:`0 2px 8px ${glow}`}}>{conv.unread}</div>}
                 </div>
-                {messages.filter(m=>m.from!=="me").length>0&&<div style={{background:primary,color:"white",borderRadius:50,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>{messages.filter(m=>m.from!=="me").length}</div>}
-              </div>
-              :<div style={{...glass({textAlign:"center",padding:24,color:muted})}}>
-                <div style={{fontSize:32,marginBottom:8}}>💬</div>
-                <div style={{fontSize:13,marginBottom:12}}>لا توجد محادثات بعد</div>
-                <button onClick={()=>{setSearchQuery("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:12,padding:"10px 20px"})}>ابحث عن صديق</button>
-              </div>}
+              ))
+              : <div style={{textAlign:"center",padding:"32px 0",color:muted}}>
+                  <div style={{fontSize:48,marginBottom:12,opacity:0.4}}>💬</div>
+                  <div style={{fontSize:13,marginBottom:16}}>لا توجد محادثات بعد</div>
+                  <button onClick={()=>{setSearchQuery("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:12,padding:"10px 20px"})}>ابحث عن صديق</button>
+                </div>
+            }
           </>}
 
           {/* شاشة Ailo AI */}
@@ -3106,8 +3150,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setSearchResult(null); setShowUserSearch(false);
                   const targetUserId=u.user_id;
                   const rid="direct_"+[userId,targetUserId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
-                  setPartner({av:u.avatar||"🌍",name:u.name||"مستخدم",country:"—",_uid:targetUserId});
+                  const partnerObj={av:u.avatar||"🌍",name:u.name||"مستخدم",country:"—",_uid:targetUserId};
+                  setPartner(partnerObj);
                   setRoomId(rid); setCallType("text");
+                  // ✅ حفظ المحادثة في القائمة
+                  saveConversation({
+                    partnerId:targetUserId,
+                    partnerName:u.name||"مستخدم",
+                    partnerAv:u.avatar||"🌍",
+                    rid,
+                    lastMsg:"",
+                    time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),
+                    unread:0
+                  });
                   // ✅ Stream Chat — انضم للقناة وجلب الرسائل السابقة
                   setStreamMessages([]);
                   await joinStreamChannel(userId, targetUserId, u.name||"مستخدم", u.avatar||"");
