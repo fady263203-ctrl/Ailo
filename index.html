@@ -204,6 +204,7 @@ function Ailo(){
   const[showSettings,setShowSettings]=useState(false);
   const[showNotif,setShowNotif]=useState(false);
   const[showBlock,setShowBlock]=useState(false);
+  const[showPartnerProfile,setShowPartnerProfile]=useState(false);
   const[profile,setProfileRaw]=useState(()=>load("profile",{avatar:avUrl("Aisha"),name:"مستخدم جديد",status:"👋 مرحباً!",lang:"Arabic",bio:"أتعلم لغة جديدة"}));
   const setProfile=(fn)=>{ setProfileRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("profile",nv); return nv; }); };
   const[emailInput,setEmailInput]=useState("");
@@ -1011,20 +1012,24 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       streamChannelRef.current._pollInterval = setInterval(async()=>{
         if(!streamChannelRef.current) return;
         const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
-          messages:{ limit:50 },
-          watch: false
-        }, true); // server token for reliable access
+          messages:{ limit:50 }, watch: false
+        }, true);
         if(fresh?.messages && Array.isArray(fresh.messages)){
-          const newLastId = fresh.messages[fresh.messages.length-1]?.id || "";
-          if(newLastId && newLastId !== lastMsgId){
-            lastMsgId = newLastId;
-            setStreamMessages(prev => {
-              const pendingLocals = prev.filter(m => m.id.toString().startsWith("local_"));
-              return [...fresh.messages, ...pendingLocals];
-            });
-          }
+          const partnerRead = fresh.read?.find(r=>r.user.id!==myId)?.last_read || new Date(0).toISOString();
+          setStreamMessages(prev=>{
+            const locals=prev.filter(m=>m.id.toString().startsWith("local_"));
+            const freshIds=new Set(fresh.messages.map(m=>m.id));
+            const activeLocals=locals.filter(m=>!freshIds.has(m.id));
+            const updatedMessages=fresh.messages.map(m=>({
+              ...m,
+              status: m.user.id===myId
+                ? (new Date(m.created_at)<=new Date(partnerRead)?"read":"delivered")
+                : m.status
+            }));
+            return [...updatedMessages,...activeLocals];
+          });
         }
-      }, 2000);
+      }, 1500);
 
       console.log("Stream channel ready:", cid);
     }catch(e){ console.error("Stream channel:", e); }
@@ -1110,6 +1115,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         addNotif("💬","طلب دردشة جديد",`${payload.from?.name||"مستخدم"} يريد محادثتك`,"msg");
         playNotifSound("msg");
       }
+    });
+    // تحديث آخر رسالة في القائمة فوراً
+    ch.on("broadcast",{event:"new_text_msg"},({payload})=>{
+      setConversations(prev=>prev.map(c=>
+        c.partnerId===payload.fromId
+          ?{...c,lastMsg:payload.text,unread:(c.unread||0)+1,time:payload.time}
+          :c
+      ));
     });
     // رفض المكالمة من الطرف الآخر
     ch.on("broadcast",{event:"call_rejected"},({payload})=>{
@@ -1605,7 +1618,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ── CALL ──────────────────────────────────────────────────────────────────
   if(screen==="call") return(
     <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
+      {/* 🌟 خلفية ضبابية ديناميكية */}
+      {callType!=="video" && partner.av?.startsWith("http") && (
+        <div style={{position:"absolute",inset:-50,background:`url(${partner.av}) center/cover`,filter:"blur(35px) brightness(0.35)",zIndex:0}}/>
+      )}
+      <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}55 0%, ${darkMode?"rgba(6,6,18,0.9)":"rgba(255,255,255,0.85)"} 100%)`,pointerEvents:"none",zIndex:0}}/>
       {callType==="video" && <div ref={remoteVideoElRef} style={{position:"absolute",inset:0,background:"#111",zIndex:0}}/>}
       {/* Remote cam off overlay */}
       {callType==="video" && remoteCamOff && (
@@ -1673,7 +1690,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             if(callStatus==="outgoing" && roomId){
               const supa0=getSupa();
               if(supa0){
-                const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
+                const targetId = partner._uid;
                 if(targetId){
                   // إرسال إشعار مكالمة فائتة عبر inbox
                   try{
@@ -1775,6 +1792,15 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setCoins(c=>c+1);
       if(roomRef.current){
         roomRef.current.send({type:"broadcast",event:"msg",payload:{text:chatInput,time:t}});
+        // إعلام القائمة بالرسالة الجديدة
+        const _supa=getSupa();
+        if(_supa&&partner._uid){
+          const _ib=_supa.channel("inbox_"+partner._uid);
+          _ib.subscribe().then(()=>{
+            _ib.send({type:"broadcast",event:"new_text_msg",payload:{fromId:userId,text:chatInput,time:t}});
+            _supa.removeChannel(_ib);
+          });
+        }
         setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),600);
         setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1200);
       }
@@ -1791,7 +1817,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             // ✅ أعلم المستخدم الآخر بالمكالمة
             const supa=getSupa();
             if(supa && roomId){
-              const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
+              const targetId = partner._uid;
               if(targetId){
                 const inbox=supa.channel("inbox_"+targetId);
                 await inbox.subscribe();
@@ -1815,7 +1841,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             // ✅ أعلم المستخدم الآخر بالمكالمة
             const supa=getSupa();
             if(supa && roomId){
-              const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
+              const targetId = partner._uid;
               if(targetId){
                 const inbox=supa.channel("inbox_"+targetId);
                 await inbox.subscribe();
@@ -2143,31 +2169,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     const targetUserId=req.from?.userId;
                     const rid=req.rid||"direct_"+[userId,targetUserId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
                     setPartner({av:req.from?.av||"🌍",name:req.from?.name||"مستخدم",country:"—",_uid:targetUserId});
-                    setRoomId(rid); setCallType("text");
-                    setStreamMessages([]);
-                    await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");
-                    joinRoom(rid);
-                    // ✅ حفظ المحادثة
-                    saveConversation({
-                      partnerId:targetUserId,
-                      partnerName:req.from?.name||"مستخدم",
-                      partnerAv:req.from?.av||"🌍",
-                      rid,lastMsg:"",
-                      time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),
-                      unread:0
-                    });
-                    setTab("messages"); setActiveChat("friend");
+                    setRoomId(rid);setCallType("text");setStreamMessages([]);
+                    await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");joinRoom(rid);
+                    saveConversation({partnerId:targetUserId,partnerName:req.from?.name||"مستخدم",partnerAv:req.from?.av||"🌍",rid,lastMsg:"",time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),unread:0});
+                    setTab("messages");setActiveChat("friend");
                     setChatRequests(prev=>{const u=prev.filter((_,j)=>j!==i);save("chat_requests",u);return u;});
-                  }} style={{width:36,height:36,borderRadius:18,background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e44",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>✓</button>
+                  }} style={{width:36,height:36,borderRadius:18,background:"rgba(34,197,94,0.15)",border:"1px solid rgba(34,197,94,0.3)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#22c55e",position:"relative",zIndex:10}}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
                   {/* حظر */}
                   <button onClick={()=>{
-                    // حظر المستخدم
                     const blockId=req.from?.userId;
-                    if(blockId){
-                      setBlocked(prev=>{const u=[...prev,{id:blockId,name:req.from?.name,av:req.from?.av}];save("blocked",u);return u;});
-                    }
+                    if(blockId){setBlocked(prev=>{const u=[...prev,{id:blockId,name:req.from?.name,av:req.from?.av}];save("blocked",u);return u;});}
                     setChatRequests(prev=>{const u=prev.filter((_,j)=>j!==i);save("chat_requests",u);return u;});
-                  }} style={{width:36,height:36,borderRadius:18,background:"rgba(239,68,68,0.15)",border:"1px solid #ef444444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>🚫</button>
+                  }} style={{width:36,height:36,borderRadius:18,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#ef4444",position:"relative",zIndex:10}}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
                 </div>
               ))}
             </>}
@@ -2187,6 +2204,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   saveConversation({...conv,unread:0});
                 }} style={{
                   display:"flex",alignItems:"center",gap:12,
+                  position:"relative",zIndex:10,
                   padding:"10px 12px",marginBottom:2,cursor:"pointer",borderRadius:14,
                   background: conv.unread>0 ? `${primary}08` : "transparent",
                   transition:"background 0.15s"
@@ -2247,9 +2265,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
               <button onClick={()=>{setActiveChat(null);streamTypingStop();}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
-              <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
-                {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
-              </div>
+              <button onClick={()=>setShowPartnerProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,flexShrink:0}}>
+                <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`}}>
+                  {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
+                </div>
+              </button>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
                 <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
@@ -2262,7 +2282,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 addCallSystemMsg("🎙️","مكالمة صوتية صادرة","جاري الاتصال...");
                 joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
+                if(supa&&roomId){const targetId = partner._uid;
                 if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة صوتية من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}}
                 setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"voice"),300);
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.phone(primary,16)}</button>
@@ -2271,7 +2291,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 addCallSystemMsg("📹","مكالمة فيديو صادرة","جاري الاتصال...");
                 joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
+                if(supa&&roomId){const targetId = partner._uid;
                 if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}}
                 setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"video"),300);
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.video(primary,16)}</button>
@@ -2430,8 +2450,28 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 title="اضغط مطولاً للتسجيل"
                 style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",transform:isRecording?"scale(1.1)":"scale(1)",userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
               >{Ic.mic(isRecording?"white":muted,19)}</button>
-              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}}
-              } placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
+              {/* 🌟 حقل كتابة متطور يتمدد تلقائياً */}
+              <textarea
+                value={chatInput}
+                rows={1}
+                onChange={e=>{
+                  setChatInput(e.target.value.slice(0,500));
+                  streamTypingStart();
+                  e.target.style.height="auto";
+                  e.target.style.height=Math.min(e.target.scrollHeight,100)+"px";
+                }}
+                onKeyDown={async e=>{
+                  if(e.key==="Enter"&&!e.shiftKey&&chatInput.trim()){
+                    e.preventDefault();
+                    const txt=chatInput; setChatInput(""); streamTypingStop();
+                    e.target.style.height="auto";
+                    const ok=await sendStreamMessage(txt);
+                    if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}
+                  }
+                }}
+                placeholder="اكتب رسالة..."
+                style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:20,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui",resize:"none",overflowY:"auto",maxHeight:100,minHeight:42,lineHeight:1.4,display:"block"}}
+              />
               <button onClick={async()=>{if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
@@ -3279,6 +3319,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>
         </div>
       )}
+      {/* ── MODAL: PARTNER PROFILE ── */}
+      {showPartnerProfile&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowPartnerProfile(false)}>
+          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:24})}} onClick={e=>e.stopPropagation()}>
+            <div style={{textAlign:"center",marginBottom:16}}>
+              <div style={{width:90,height:90,borderRadius:45,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 0 4px ${glow}`}}>
+                {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:60,lineHeight:"90px",display:"block"}}>{partner.av||"🌍"}</span>}
+              </div>
+              <div style={{fontWeight:900,fontSize:20}}>{partner.name}</div>
+              <div style={{color:muted,fontSize:13,marginTop:4}}>مستخدم Ailo</div>
+            </div>
+            <button onClick={()=>setShowPartnerProfile(false)} style={{width:"100%",padding:"13px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:text,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إغلاق</button>
+          </div>
+        </div>
+      )}
+
       {showProfileView&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowProfileView(false)}>
           <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:24})}} onClick={e=>e.stopPropagation()}>
