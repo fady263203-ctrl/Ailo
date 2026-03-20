@@ -775,7 +775,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const initStream = async (uid, name, avatar) => {
     if(!uid) return;
     try{
-      const userToken = localStorage.getItem("ailo_token") || "";
+      const userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
       const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
         method:"POST",
         headers:{
@@ -786,7 +786,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         body: JSON.stringify({ user_id: uid, name, avatar })
       });
       const data = await res.json();
-      // 🔍 تشخيص مؤقت
       if(data.error || !data.token) {
         alert("Stream Error:\n" + JSON.stringify(data).slice(0,200));
         return;
@@ -842,7 +841,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       streamChannelRef.current = { id: cid, type: "messaging" };
 
       // ✅ أنشئ القناة server-side (عبر Edge Function) مع كلا المستخدمين كأعضاء
-      const userToken = localStorage.getItem("ailo_token") || "";
+      const userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
       const setupRes = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
         method:"POST",
         headers:{
