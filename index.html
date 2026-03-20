@@ -775,14 +775,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const initStream = async (uid, name, avatar) => {
     if(!uid) return;
     try{
+      const userToken = localStorage.getItem("ailo_token") || "";
       const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
         method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        headers:{
+          "Content-Type":"application/json",
+          "apikey":SUPA_KEY,
+          "Authorization":`Bearer ${userToken}`
+        },
         body: JSON.stringify({ user_id: uid, name, avatar })
       });
       const data = await res.json();
       if(data.error || !data.token) {
-        alert("خطأ من الـ Edge Function:\n" + JSON.stringify(data));
+        console.error("Stream token error:", data);
         return;
       }
       streamClientRef.current = {
@@ -793,10 +798,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       };
       setStreamReady(true);
       console.log("Stream ready for:", uid);
-    }catch(e){
-      alert("تعذر الوصول لـ Edge Function:\n" + e.message);
-      console.error("Stream init error:", e);
-    }
+    }catch(e){ console.error("Stream init error:", e); }
   };
 
   const streamGet = async (path, params={}) => {
@@ -839,9 +841,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       streamChannelRef.current = { id: cid, type: "messaging" };
 
       // ✅ أنشئ القناة server-side (عبر Edge Function) مع كلا المستخدمين كأعضاء
+      const userToken = localStorage.getItem("ailo_token") || "";
       const setupRes = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
         method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        headers:{
+          "Content-Type":"application/json",
+          "apikey":SUPA_KEY,
+          "Authorization":`Bearer ${userToken}`
+        },
         body: JSON.stringify({ user_id: myId, partner_id: partnerId })
       });
       const setupData = await setupRes.json();
