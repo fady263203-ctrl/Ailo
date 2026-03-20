@@ -963,6 +963,31 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     return()=>{ try{supa.removeChannel(ch);}catch(e){} };
   },[userId]);
   useEffect(()=>{if(screen!=="matching")return;const i=setInterval(()=>setSearchTime(s=>s+1),1000);return()=>clearInterval(i);},[screen]);
+  // ✅ استرجاع الجلسة والاتصال بـ Stream عند فتح التطبيق
+  useEffect(()=>{
+    const restoreSession = async () => {
+      const token = localStorage.getItem("ailo_token");
+      if(token && !streamClientRef.current){
+        const supa = getSupa();
+        if(supa){
+          try{
+            const { data, error } = await supa.auth.getUser(token);
+            if(data?.user){
+              const uid = data.user.id;
+              setUserId(uid);
+              const savedProfile = load("profile",{});
+              initStream(uid, savedProfile.name||profile.name, savedProfile.avatar||profile.avatar);
+            } else if(error){
+              localStorage.removeItem("ailo_token");
+              setAppScreen("login");
+            }
+          }catch(e){ console.error("Session restore:", e); }
+        }
+      }
+    };
+    if(appScreen === "main") restoreSession();
+  },[appScreen]);
+
   useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
 
   // استقبال رفض المكالمة
