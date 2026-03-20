@@ -863,7 +863,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           const newLastId = fresh.messages[fresh.messages.length-1]?.id || "";
           if(newLastId && newLastId !== lastMsgId){
             lastMsgId = newLastId;
-            setStreamMessages([...fresh.messages]);
+            setStreamMessages(prev => {
+              // الاحتفاظ بالرسائل المحلية التي لم تُستبدل بعد
+              const pendingLocals = prev.filter(m => m.id.toString().startsWith("local_"));
+              return [...fresh.messages, ...pendingLocals];
+            });
           }
         }
       }, 2000);
@@ -888,9 +892,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       };
       setStreamMessages(prev => [...prev, localMsg]);
       // ✅ استخدم server token + user_id في body لضمان الإرسال
+      // ✅ user_id داخل message — مطلوب عند استخدام Server Token
       const body = imageData
-        ? { message:{ text:"", attachments:[{ type:"image", image_url: imageData }] }, user_id: c.userId }
-        : { message:{ text }, user_id: c.userId };
+        ? { message:{ text:"", user_id: c.userId, attachments:[{ type:"image", image_url: imageData }] } }
+        : { message:{ text, user_id: c.userId } };
       const res = await streamPost(`/channels/${type}/${id}/message`, body, true);
       if(res?.message){
         setStreamMessages(prev => prev.map(m => m.id===localMsg.id ? res.message : m));
