@@ -43,11 +43,37 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{min-height:100vh;overflow-x:hidden}
-body{background:linear-gradient(135deg,#0f0c29,#302b63,#1a0a2e);font-family:'Tajawal',system-ui}
+body{background:#f0f2f5;font-family:'Tajawal',system-ui}
 #root{max-width:480px;margin:0 auto;min-height:100vh}
-::-webkit-scrollbar{width:3px}
-::-webkit-scrollbar-thumb{background:rgba(99,102,241,0.3);border-radius:2px}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:2px}
+::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.15);border-radius:2px}
 input,select,button,textarea{font-family:'Tajawal',system-ui}
+
+/* Ripple effect */
+@keyframes ripple{0%{transform:scale(0);opacity:0.4}100%{transform:scale(4);opacity:0}}
+.ripple{position:relative;overflow:hidden}
+.ripple::after{content:"";position:absolute;border-radius:50%;background:rgba(255,255,255,0.35);width:40px;height:40px;top:50%;left:50%;transform:scale(0);transform-origin:center;pointer-events:none}
+.ripple:active::after{animation:ripple 0.5s ease-out forwards}
+
+/* Tab animation */
+@keyframes tabSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.tab-content{animation:tabSlideIn 0.22s cubic-bezier(0.4,0,0.2,1)}
+
+/* Bubble animations */
+@keyframes bubbleIn{from{opacity:0;transform:scale(0.88) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.msg-bubble{animation:bubbleIn 0.18s cubic-bezier(0.34,1.56,0.64,1)}
+
+/* Glow pulse for call */
+@keyframes glowPulse{0%,100%{box-shadow:0 0 0 0 rgba(99,102,241,0.4)}50%{box-shadow:0 0 0 14px rgba(99,102,241,0)}}
+
+/* Bottom nav */
+@keyframes navPop{0%{transform:scale(1)}50%{transform:scale(1.18)}100%{transform:scale(1)}}
+
+/* Shimmer for loading */
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.shimmer{background:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,0.6) 50%,rgba(255,255,255,0) 100%);background-size:200% 100%;animation:shimmer 1.5s infinite}
 </style>
 </head>
 <body>
@@ -56,17 +82,33 @@ input,select,button,textarea{font-family:'Tajawal',system-ui}
 const{useState,useEffect,useRef,useCallback}=React;
 
 
-const LIGHT = { bg:"linear-gradient(135deg,#f8fafc 0%,#eef2ff 50%,#faf5ff 100%)", card:"rgba(255,255,255,0.82)", border:"rgba(99,102,241,0.15)", text:"#1e1b4b", muted:"#6b7280", input:"rgba(0,0,0,0.05)" };
-const DARK  = { bg:"linear-gradient(135deg,#0f0c29 0%,#1a1040 50%,#0f0c29 100%)", card:"rgba(30,25,80,0.65)", border:"rgba(129,140,248,0.18)", text:"#e0e7ff", muted:"#8b8fa8", input:"rgba(255,255,255,0.08)" };
+// ── Light: أبيض/رمادي نظيف فاخر
+const LIGHT = {
+  bg:"#f0f2f5",
+  card:"rgba(255,255,255,0.98)",
+  border:"rgba(0,0,0,0.07)",
+  text:"#0a0a0a",
+  muted:"#8a8a8a",
+  input:"rgba(0,0,0,0.04)"
+};
+// ── Dark: أزرق باهت غامق من الفضاء
+const DARK = {
+  bg:"#0d1421",
+  card:"rgba(21,31,51,0.95)",
+  border:"rgba(255,255,255,0.07)",
+  text:"#e8eaf0",
+  muted:"#7a8499",
+  input:"rgba(255,255,255,0.05)"
+};
 const ACCENTS = {
-  gray:    { primary:"#64748b", secondary:"#94a3b8", accent:"#7c3aed", glow:"rgba(100,116,139,0.3)"  },
-  indigo:  { primary:"#6366f1", secondary:"#a5b4fc", accent:"#f0abfc", glow:"rgba(99,102,241,0.3)"   },
-  rose:    { primary:"#f43f5e", secondary:"#fb7185", accent:"#fbbf24", glow:"rgba(244,63,94,0.3)"    },
-  emerald: { primary:"#10b981", secondary:"#34d399", accent:"#06b6d4", glow:"rgba(16,185,129,0.3)"   },
-  gold:    { primary:"#f59e0b", secondary:"#fbbf24", accent:"#ef4444", glow:"rgba(245,158,11,0.3)"   },
-  ocean:   { primary:"#0ea5e9", secondary:"#38bdf8", accent:"#818cf8", glow:"rgba(14,165,233,0.3)"   },
-  sakura:  { primary:"#ec4899", secondary:"#f9a8d4", accent:"#a78bfa", glow:"rgba(236,72,153,0.3)"   },
-  violet:  { primary:"#8b5cf6", secondary:"#c4b5fd", accent:"#f472b6", glow:"rgba(139,92,246,0.3)"   },
+  gray:    { primary:"#6366f1", secondary:"#818cf8", accent:"#a5b4fc", glow:"rgba(99,102,241,0.25)" },
+  indigo:  { primary:"#3b82f6", secondary:"#60a5fa", accent:"#93c5fd", glow:"rgba(59,130,246,0.25)" },
+  rose:    { primary:"#f43f5e", secondary:"#fb7185", accent:"#fda4af", glow:"rgba(244,63,94,0.25)"  },
+  emerald: { primary:"#10b981", secondary:"#34d399", accent:"#6ee7b7", glow:"rgba(16,185,129,0.25)" },
+  gold:    { primary:"#f59e0b", secondary:"#fbbf24", accent:"#fcd34d", glow:"rgba(245,158,11,0.25)" },
+  ocean:   { primary:"#0ea5e9", secondary:"#38bdf8", accent:"#7dd3fc", glow:"rgba(14,165,233,0.25)" },
+  sakura:  { primary:"#ec4899", secondary:"#f9a8d4", accent:"#fbcfe8", glow:"rgba(236,72,153,0.25)" },
+  violet:  { primary:"#8b5cf6", secondary:"#c4b5fd", accent:"#ddd6fe", glow:"rgba(139,92,246,0.25)" },
 };
 const xpForLevel = (l) => l===1?100:xpForLevel(l-1)+l*100;
 const getLvl = (xp) => { let l=1,acc=0; while(acc+xpForLevel(l)<=xp){acc+=xpForLevel(l);l++;} return{level:l,current:xp-acc,needed:xpForLevel(l),pct:Math.round(((xp-acc)/xpForLevel(l))*100)}; };
@@ -124,7 +166,13 @@ function XPBar({pct,primary,accent}){
   const[w,setW]=useState(0);
   useEffect(()=>{const t=setTimeout(()=>setW(pct),400);return()=>clearTimeout(t);},[pct]);
   const col=pct>75?accent:primary;
-  return(<div style={{height:7,background:"rgba(128,128,128,0.2)",borderRadius:50,overflow:"hidden"}}><div style={{width:`${w}%`,height:"100%",background:`linear-gradient(90deg,${primary},${col})`,borderRadius:50,transition:"width 1s cubic-bezier(.4,0,.2,1)",boxShadow:w>0?`0 0 10px ${col}88`:undefined}}/></div>);
+  return(
+    <div style={{height:5,background:"rgba(128,128,128,0.12)",borderRadius:50,overflow:"hidden",position:"relative"}}>
+      <div style={{width:`${w}%`,height:"100%",background:`linear-gradient(90deg,${primary},${col})`,borderRadius:50,transition:"width 1.2s cubic-bezier(.4,0,.2,1)",boxShadow:w>0?`0 0 8px ${col}66`:undefined,position:"relative"}}>
+        {w>5&&<div style={{position:"absolute",right:0,top:"50%",transform:"translate(50%,-50%)",width:8,height:8,borderRadius:"50%",background:col,boxShadow:`0 0 6px ${col}`}}/>}
+      </div>
+    </div>
+  );
 }
 
 function WeekChart({data,primary}){
@@ -543,10 +591,56 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const tierC={gold:"#f59e0b",silver:"#94a3b8",bronze:"#cd7f32"};
   const lvl=getLvl(totalXp);
 
-  const glass=(extra={})=>({background:card,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",border:`1px solid ${border}`,borderRadius:20,padding:16,boxShadow:`0 8px 32px rgba(0,0,0,0.12),inset 0 1px 0 rgba(255,255,255,${darkMode?0.06:0.5})`,...extra});
-  const inp={background:input,border:`1px solid ${border}`,borderRadius:50,padding:"12px 18px",color:text,fontSize:14,outline:"none",width:"100%",fontFamily:"'Tajawal',system-ui"};
-  const btnP=(extra={})=>({background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",border:"none",borderRadius:50,padding:"13px 28px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"'Tajawal',system-ui",boxShadow:`0 4px 18px ${glow}`,transition:"all 0.2s",...extra});
-  const tag=(c)=>({background:`${c}22`,color:c,border:`1px solid ${c}44`,borderRadius:50,padding:"3px 11px",fontSize:11,fontWeight:700,display:"inline-block"});
+  // ── Design Utilities ──
+  const glass=(extra={})=>({
+    background: darkMode ? "rgba(21,31,51,0.92)" : "rgba(255,255,255,0.97)",
+    backdropFilter:"blur(24px)",
+    WebkitBackdropFilter:"blur(24px)",
+    border:`1px solid ${border}`,
+    borderRadius:20,
+    padding:16,
+    boxShadow: darkMode
+      ? "0 4px 24px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.05)"
+      : "0 2px 16px rgba(0,0,0,0.06),inset 0 1px 0 rgba(255,255,255,0.9)",
+    ...extra
+  });
+  const inp={
+    background: darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)",
+    border:`1.5px solid ${border}`,
+    borderRadius:14,
+    padding:"13px 18px",
+    color:text,
+    fontSize:14,
+    outline:"none",
+    width:"100%",
+    fontFamily:"'Tajawal',system-ui",
+    transition:"border-color 0.2s, box-shadow 0.2s"
+  };
+  const btnP=(extra={})=>({
+    background:`linear-gradient(135deg,${primary},${secondary})`,
+    color:"white",
+    border:"none",
+    borderRadius:14,
+    padding:"13px 28px",
+    fontWeight:700,
+    cursor:"pointer",
+    fontSize:14,
+    fontFamily:"'Tajawal',system-ui",
+    boxShadow:`0 4px 20px ${glow},0 1px 0 rgba(255,255,255,0.15) inset`,
+    transition:"all 0.18s cubic-bezier(0.4,0,0.2,1)",
+    transform:"translateY(0)",
+    ...extra
+  });
+  const tag=(c)=>({
+    background:`${c}18`,
+    color:c,
+    border:`1px solid ${c}33`,
+    borderRadius:50,
+    padding:"3px 11px",
+    fontSize:11,
+    fontWeight:700,
+    display:"inline-block"
+  });
 
   // XP double state
   const[xpDouble,setXpDouble]=useState(()=>{ try{ return Date.now()<(parseInt(localStorage.getItem("ailo_xp_double_until")||"0")); }catch(e){return false;} });
@@ -1035,15 +1129,40 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               setAppScreen("login");
               return;
             }
-            // الجلسة صالحة → أكمل الاتصال
-            setUserId(data.user.id);
-            initStream(data.user.id, profile.name, profile.avatar);
+            // الجلسة صالحة → استرجع كل البيانات
+            const uid = data.user.id;
+            setUserId(uid);
+            // ✅ استرجاع الـ shortId والبيانات المحفوظة
+            const sid = load("shortId","");
+            if(sid) setShortId(sid);
+            const sp = load("profile",null);
+            if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
+            const sx = load("xp",0); if(sx>0) setTotalXp(sx);
+            const sc = load("coins",0); if(sc>0) setCoins(sc);
+            initStream(uid, sp?.name||profile.name, sp?.avatar||profile.avatar);
           }catch(e){ console.error("Session check error:", e); }
         }
       }
     };
     if(appScreen === "main") restoreSession();
   },[appScreen, profile.name, profile.avatar]);
+
+  // ✅ تجديد تلقائي للـ token كل 23 ساعة
+  useEffect(()=>{
+    const refreshInterval = setInterval(async()=>{
+      const supa = getSupa(); if(!supa) return;
+      try{
+        const { data } = await supa.auth.refreshSession();
+        if(data?.session?.access_token){
+          localStorage.setItem("ailo_token", data.session.access_token);
+          console.log("Token refreshed automatically");
+          // أعد تهيئة Stream بالتوكن الجديد
+          if(userId) initStream(userId, profile.name, profile.avatar);
+        }
+      }catch(e){ console.warn("Auto refresh failed:", e); }
+    }, 23 * 60 * 60 * 1000); // 23 ساعة
+    return ()=> clearInterval(refreshInterval);
+  },[userId]);
 
   useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
 
@@ -1256,12 +1375,15 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   const CSS=`
     @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
-    @keyframes slideIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+    @keyframes slideIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
     @keyframes spin{to{transform:rotate(360deg)}}
     @keyframes dot0{0%,100%{transform:translateY(0)}33%{transform:translateY(-6px)}}
     @keyframes dot1{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
     @keyframes dot2{0%,100%{transform:translateY(0)}66%{transform:translateY(-6px)}}
+    @keyframes popIn{0%{transform:scale(0.85);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes glow{0%,100%{opacity:0.6}50%{opacity:1}}
     *{-webkit-tap-highlight-color:transparent}
     select option{background:#1a1040;color:white}
   `;
@@ -1340,24 +1462,34 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
           const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
           const userLang = data.user?.user_metadata?.lang || "Arabic";
-          // Generate short ID - owner gets special AIL-F, others get random AIL-XXXXX
+          // ✅ تعيين الـ ID — المالك يحصل دائماً على AIL-F
           const existingShortId = load("shortId","");
-          if(!existingShortId){
-            const newShortId = _checkOwner(authForm.email) ? OWNER_SHORT_ID : genShortId();
+          if(_checkOwner(authForm.email)){
+            // المالك — دائماً AIL-F
+            save("shortId", OWNER_SHORT_ID);
+            setShortId(OWNER_SHORT_ID);
+          } else if(!existingShortId){
+            // مستخدم جديد — توليد ID عشوائي
+            const newShortId = genShortId();
             save("shortId", newShortId);
             setShortId(newShortId);
           } else {
-            // If owner logs in and has wrong ID, fix it
-            if(_checkOwner(authForm.email) && existingShortId!==OWNER_SHORT_ID){
-              save("shortId", OWNER_SHORT_ID);
-              setShortId(OWNER_SHORT_ID);
-            } else {
-              setShortId(existingShortId);
-            }
+            // مستخدم عائد — نفس الـ ID المحفوظ
+            setShortId(existingShortId);
           }
           const newUid = data.user?.id || "";
           setUserId(newUid);
-          setProfile(p => ({ ...p, name: userName, lang: userLang }));
+          // ✅ استرجاع البيانات المحفوظة
+          const savedProfile = load("profile", null);
+          if(savedProfile && savedProfile.name && savedProfile.name !== "مستخدم جديد"){
+            setProfile(p => ({ ...p, ...savedProfile }));
+          } else {
+            setProfile(p => ({ ...p, name: userName, lang: userLang }));
+          }
+          const savedXp    = load("xp", 0);
+          const savedCoins = load("coins", 0);
+          if(savedXp > 0) setTotalXp(savedXp);
+          if(savedCoins > 0) setCoins(savedCoins);
           addNotif("👋","مرحباً بعودتك!",`أهلاً ${userName}، جاهز لتعلم لغة جديدة اليوم؟`,"info");
 
           // ✅ ربط userId بـ OneSignal
@@ -1770,26 +1902,64 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   ];
 
   return(
-    <div style={{background:bg,minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",maxWidth:480,margin:"0 auto",paddingBottom:72,position:"relative",overflow:"hidden"}}>
-      <div style={{position:"fixed",top:-100,right:-100,width:280,height:280,borderRadius:"50%",background:glow,filter:"blur(80px)",pointerEvents:"none",zIndex:0}}/>
-      <div style={{position:"fixed",bottom:-100,left:-100,width:250,height:250,borderRadius:"50%",background:`${accent}18`,filter:"blur(80px)",pointerEvents:"none",zIndex:0}}/>
+    <div style={{
+      background: darkMode
+        ? "linear-gradient(160deg,#0d1421 0%,#0f1f35 50%,#0a0f1a 100%)"
+        : "linear-gradient(160deg,#f8fafc 0%,#f0f4ff 50%,#f5f5f5 100%)",
+      minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",
+      maxWidth:480,margin:"0 auto",paddingBottom:72,position:"relative",overflow:"hidden"
+    }}>
+      {/* Space atmosphere */}
+      <div style={{position:"fixed",top:-120,right:-80,width:320,height:320,borderRadius:"50%",background:`radial-gradient(circle,${primary}20 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
+      <div style={{position:"fixed",bottom:-80,left:-80,width:260,height:260,borderRadius:"50%",background:`radial-gradient(circle,${accent}15 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
+      {darkMode&&<div style={{position:"fixed",top:"30%",left:"60%",width:2,height:2,borderRadius:"50%",background:"white",boxShadow:"0 0 6px 1px rgba(255,255,255,0.8)",pointerEvents:"none",zIndex:0}}/>}
 
       {xpPopup&&<div style={{position:"fixed",top:88,left:"50%",transform:"translateX(-50%)",background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",padding:"7px 18px",borderRadius:50,fontWeight:700,fontSize:13,zIndex:500,animation:"fadeUp 0.4s ease",pointerEvents:"none",boxShadow:`0 4px 18px ${glow}`,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>{Ic.zap("white",13)} +{xpPopup.amt} XP · {xpPopup.label}</div>}
 
       {/* HEADER */}
-      <div style={{background:card,backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderBottom:`1px solid ${border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50,boxShadow:"0 4px 20px rgba(0,0,0,0.08)"}}>
+      <div style={{
+        background: darkMode ? "rgba(13,20,33,0.97)" : "rgba(255,255,255,0.98)",
+        backdropFilter:"blur(30px)",WebkitBackdropFilter:"blur(30px)",
+        borderBottom:`1px solid ${border}`,
+        padding:"12px 16px",position:"sticky",top:0,zIndex:50,
+        boxShadow: darkMode
+          ? "0 1px 0 rgba(255,255,255,0.05)"
+          : "0 1px 0 rgba(0,0,0,0.06)"
+      }}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
           <button onClick={()=>setShowProfileView(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
-          <div style={{fontWeight:900,fontSize:22,color:primary,letterSpacing:1}}>✦ Ailo</div>
+          <div style={{
+            fontWeight:900,fontSize:20,letterSpacing:0.5,
+            background:`linear-gradient(135deg,${primary},${secondary})`,
+            WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
+            display:"flex",alignItems:"center",gap:6
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill={primary} stroke="none"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            Ailo
+          </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <button onClick={()=>setDarkMode(d=>!d)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:"7px 8px",display:"flex",alignItems:"center",gap:4}}>
-              {darkMode?Ic.sun(primary,16):Ic.moon(primary,16)}
+            <button onClick={()=>setDarkMode(d=>!d)} style={{
+              background:"transparent",border:"none",cursor:"pointer",padding:"7px",
+              display:"flex",alignItems:"center",opacity:0.75,transition:"opacity 0.2s"
+            }}>
+              {darkMode?Ic.sun(text,17):Ic.moon(text,17)}
             </button>
-            <button onClick={()=>{setShowNotif(p=>!p);}} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex",position:"relative"}}>
-              {Ic.bell(primary,17)}
-              {unreadCount>0&&<div style={{position:"absolute",top:3,right:3,minWidth:16,height:16,borderRadius:8,background:"#ef4444",color:"white",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px",boxShadow:"0 0 5px #ef4444"}}>{unreadCount>9?"9+":unreadCount}</div>}
+            <button onClick={()=>{setShowNotif(p=>!p);}} style={{
+              background:"transparent",border:"none",cursor:"pointer",padding:7,
+              display:"flex",position:"relative",opacity:0.75,transition:"opacity 0.2s"
+            }}>
+              {Ic.bell(unreadCount>0?primary:text, 18)}
+              {unreadCount>0&&<div style={{
+                position:"absolute",top:4,right:4,minWidth:14,height:14,borderRadius:7,
+                background:"#ef4444",color:"white",fontSize:8,fontWeight:900,
+                display:"flex",alignItems:"center",justifyContent:"center",padding:"0 2px",
+                boxShadow:"0 0 0 2px "+card
+              }}>{unreadCount>9?"9+":unreadCount}</div>}
             </button>
-            <button onClick={()=>setShowSettings(true)} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:10,cursor:"pointer",padding:8,display:"flex"}}>{Ic.cog(primary,17)}</button>
+            <button onClick={()=>setShowSettings(true)} style={{
+              background:"transparent",border:"none",cursor:"pointer",padding:7,
+              display:"flex",opacity:0.75,transition:"opacity 0.2s"
+            }}>{Ic.cog(text,17)}</button>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1848,7 +2018,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       <div style={{padding:14,position:"relative",zIndex:1}}>
 
         {/* HOME */}
-        {tab==="home"&&<div style={{animation:"slideIn 0.4s ease"}}>
+        {tab==="home"&&<div className="tab-content" style={{animation:"slideIn 0.25s ease"}}>
           <div style={{...glass({marginBottom:14,padding:20,background:`linear-gradient(135deg,${primary}22,${accent}11)`})}}>
             <div style={{display:"flex",alignItems:"center",gap:14}}>
               <Av src={profile.avatar} size={56}/>
@@ -1899,20 +2069,27 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               </button>
             </div>
-            {showMsgSearch&&<div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
-              <div style={{flex:1,display:"flex",alignItems:"center",background:"rgba(128,128,128,0.1)",borderRadius:12,border:`1px solid ${border}`,overflow:"hidden"}}>
+            {showMsgSearch&&<div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",animation:"popIn 0.2s ease"}}>
+              <div style={{
+                flex:1,display:"flex",alignItems:"center",gap:8,
+                background: darkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+                borderRadius:14,border:`1.5px solid ${primary}44`,
+                padding:"2px 14px",backdropFilter:"blur(10px)",
+                boxShadow:`0 0 0 3px ${primary}10`
+              }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <input
                   autoFocus
                   value={searchQuery}
                   onChange={e=>setSearchQuery(e.target.value.toUpperCase())}
                   onKeyDown={e=>{if(e.key==="Enter"){setShowMsgSearch(false);setSearchResult(null);setSearchError("");setShowUserSearch(true);}}}
-                  placeholder="ابحث بـ ID — مثال: AIL-F"
-                  style={{...inp,flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,letterSpacing:1}}
+                  placeholder="AIL-..."
+                  style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,letterSpacing:1.5,color:text,fontFamily:"'Tajawal',system-ui",padding:"10px 0",fontWeight:700}}
                 />
                 <button
                   onMouseDown={e=>e.preventDefault()}
                   onClick={()=>{setShowMsgSearch(false);setSearchResult(null);setSearchError("");setShowUserSearch(true);}}
-                  style={{background:"none",border:"none",padding:"0 12px",cursor:"pointer",color:primary,fontWeight:700,fontSize:13,fontFamily:"'Tajawal',system-ui",flexShrink:0}}>
+                  style={{background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",borderRadius:10,padding:"5px 12px",cursor:"pointer",color:"white",fontWeight:700,fontSize:12,fontFamily:"'Tajawal',system-ui",flexShrink:0,boxShadow:`0 2px 8px ${glow}`}}>
                   بحث
                 </button>
               </div>
@@ -2060,33 +2237,54 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
               {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
               {streamMessages.map(m=>{
-                // ── رسالة نظام (مكالمة) ──
+                // ── رسالة نظام (مكالمة) — Telegram style ──
                 if(m._isSystem) return(
-                  <div key={m.id} style={{alignSelf:"center",maxWidth:"85%",margin:"4px 0"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:7,background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"6px 14px",fontSize:12,color:muted}}>
-                      <span style={{fontSize:16}}>{m._icon}</span>
-                      <div>
-                        <span style={{fontWeight:700,color:text}}>{m._label}</span>
-                        {m._sub&&<span style={{marginRight:6,fontSize:11}}>{m._sub}</span>}
-                      </div>
+                  <div key={m.id} style={{alignSelf:"center",maxWidth:"88%",margin:"6px 0"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:7,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:50,padding:"5px 14px",fontSize:11,color:muted,backdropFilter:"blur(8px)"}}>
+                      <span style={{fontSize:14}}>{m._icon}</span>
+                      <span style={{fontWeight:600,color:text}}>{m._label}</span>
+                      {m._sub&&<span style={{color:muted}}>{m._sub}</span>}
                     </div>
                   </div>
                 );
                 const isMe=m.user?.id===userId;
                 const img=m.attachments?.[0]?.image_url;
                 const isAudio=m.attachments?.[0]?.type==="audio";
-                const audioUrl=m.attachments?.[0]?.asset_url;
+                const audioUrl=m.attachments?.[0]?.asset_url||m.attachments?.[0]?.image_url;
                 const t=m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):"";
-                return(<div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%"}}>
-                  <div style={{background:isMe?`linear-gradient(135deg,${primary},${secondary})`:card,color:isMe?"white":text,padding:img?"8px":"10px 14px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,overflow:"hidden"}}>
-                    {img&&<img src={img} style={{maxWidth:200,borderRadius:10,display:"block"}} alt=""/>}
-                    {isAudio&&audioUrl&&<audio controls src={audioUrl} style={{maxWidth:200,height:36}}/>}
-                    {!img&&!isAudio&&m.text}
+                // Telegram-style bubbles
+                const bubbleBg = isMe
+                  ? `linear-gradient(135deg,${primary},${secondary})`
+                  : darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,1)";
+                const bubbleShadow = isMe
+                  ? `0 2px 8px ${glow}`
+                  : darkMode ? "0 1px 4px rgba(0,0,0,0.3)" : "0 1px 4px rgba(0,0,0,0.08)";
+                return(
+                  <div key={m.id} className="msg-bubble" style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%",display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
+                    <div style={{
+                      background:bubbleBg,
+                      color:isMe?"white":text,
+                      padding:img||isAudio?"8px":"10px 14px",
+                      borderRadius:isMe?"18px 4px 18px 18px":"4px 18px 18px 18px",
+                      fontSize:14,
+                      lineHeight:1.6,
+                      boxShadow:bubbleShadow,
+                      border:isMe?"none":`1px solid ${border}`,
+                      overflow:"hidden",
+                      maxWidth:"100%"
+                    }}>
+                      {img&&<img src={img} style={{maxWidth:220,borderRadius:10,display:"block"}} alt=""/>}
+                      {isAudio&&audioUrl&&(
+                        <audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>
+                      )}
+                      {!img&&!isAudio&&<span style={{wordBreak:"break-word"}}>{m.text}</span>}
+                    </div>
+                    <div style={{fontSize:10,color:muted,marginTop:3,display:"flex",alignItems:"center",gap:3,padding:"0 4px"}}>
+                      {t}
+                      {isMe&&<span style={{display:"flex"}}>{m.readBy?.length>1?Ic.checks("#22c55e",11):Ic.check(muted,10)}</span>}
+                    </div>
                   </div>
-                  <div style={{fontSize:10,color:muted,marginTop:2,display:"flex",justifyContent:isMe?"flex-end":"flex-start",alignItems:"center",gap:4}}>
-                    {t}{isMe&&(m.readBy?.length>1?Ic.checks("#22c55e",12):Ic.check(muted,11))}
-                  </div>
-                </div>);
+                );
               })}
               {streamTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
               <div ref={msgEnd}/>
@@ -2196,7 +2394,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         </div>}
 
         {/* HISTORY */}
-        {tab==="history"&&<div style={{animation:"slideIn 0.4s ease"}}>
+        {tab==="history"&&<div className="tab-content" style={{animation:"slideIn 0.25s ease"}}>
           <div style={{fontWeight:800,fontSize:15,marginBottom:12,color:muted}}>سجل المحادثات</div>
           {callHistory.length===0&&<div style={{...glass({textAlign:"center",padding:32,color:muted})}}>لا توجد محادثات بعد</div>}
           {callHistory.map((h,i)=>{
@@ -2690,7 +2888,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         </div>}
 
         {/* LEADERBOARD */}
-        {tab==="leaderboard"&&<div style={{animation:"slideIn 0.4s ease"}}>
+        {tab==="leaderboard"&&<div className="tab-content" style={{animation:"slideIn 0.25s ease"}}>
           {(()=>{
             const days=[0,1,2,3,4,5,6].map(i=>{const d=new Date();d.setDate(d.getDate()-6+i);const ds=d.toLocaleDateString("en",{month:"short",day:"numeric"});return Math.max(callHistory.filter(h=>h.date===ds).length*20,5);});
             return(<div style={{...glass({marginBottom:14})}}>
@@ -2723,8 +2921,40 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       </div>
 
       {/* BOTTOM NAV */}
-      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:card,backdropFilter:"blur(24px)",borderTop:`1px solid ${border}`,display:"flex",zIndex:50,boxShadow:"0 -4px 20px rgba(0,0,0,0.1)"}}>
-        {TABS.map(({id,label,icon})=>(<button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"10px 4px 13px",background:"none",border:"none",color:tab===id?primary:muted,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,position:"relative",transition:"color 0.2s"}}>{tab===id&&<div style={{position:"absolute",top:0,left:"18%",right:"18%",height:2,background:`linear-gradient(90deg,${primary},${secondary})`,borderRadius:"0 0 2px 2px",boxShadow:`0 0 8px ${glow}`}}/>}{icon(tab===id?primary:muted,20)}<span style={{fontSize:9,fontWeight:tab===id?700:400}}>{label}</span></button>))}
+      <div style={{
+        position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
+        width:"100%",maxWidth:480,
+        background: darkMode ? "rgba(13,20,33,0.97)" : "rgba(255,255,255,0.98)",
+        backdropFilter:"blur(30px)",WebkitBackdropFilter:"blur(30px)",
+        borderTop:`1px solid ${border}`,
+        display:"flex",zIndex:50,
+        paddingBottom:"env(safe-area-inset-bottom)",
+        boxShadow: darkMode ? "0 -1px 0 rgba(255,255,255,0.05)" : "0 -1px 0 rgba(0,0,0,0.05)"
+      }}>
+        {TABS.map(({id,label,icon})=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            flex:1,padding:"8px 4px 10px",background:"none",border:"none",
+            cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,
+            position:"relative",transition:"color 0.18s"
+          }}>
+            {/* top indicator */}
+            {tab===id&&<div style={{
+              position:"absolute",top:0,left:"22%",right:"22%",height:2.5,
+              background:`linear-gradient(90deg,${primary},${secondary})`,
+              borderRadius:"0 0 3px 3px",boxShadow:`0 0 10px ${glow}`
+            }}/>}
+            {/* icon with background pill */}
+            <div style={{
+              padding:"4px 12px",borderRadius:12,
+              background:tab===id?`${primary}15`:"transparent",
+              transform:tab===id?"scale(1.1)":"scale(1)",
+              transition:"all 0.18s cubic-bezier(0.34,1.56,0.64,1)"
+            }}>
+              {icon(tab===id?primary:muted, 20)}
+            </div>
+            <span style={{fontSize:9,fontWeight:tab===id?800:400,color:tab===id?primary:muted,fontFamily:"'Tajawal',system-ui",transition:"color 0.18s"}}>{label}</span>
+          </button>
+        ))}
       </div>
 
       {/* PROFILE MODAL */}
@@ -2796,7 +3026,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <button onClick={()=>setShowSettings(false)} style={btnP({width:"100%",marginBottom:10})}>حفظ ✓</button>
 
           {/* LOGOUT */}
-          <button onClick={()=>{setShowSettings(false);setAppScreen("login");setAuthForm({name:"",email:"",password:"",lang:"Arabic"});try{localStorage.removeItem("ailo_token");}catch(e){}}}
+          <button onClick={()=>{
+            setShowSettings(false);
+            // ✅ احفظ كل البيانات — لا تمسح إلا التوكن فقط
+            try{ localStorage.removeItem("ailo_token"); }catch(e){}
+            disconnectStream();
+            setAppScreen("login");
+            setAuthForm({name:"",email:"",password:"",lang:"Arabic"});
+          }}
             style={{width:"100%",padding:"13px",borderRadius:50,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#ef4444",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             {Ic.logout("#ef4444",17)}<span>تسجيل الخروج</span>
           </button>
