@@ -529,7 +529,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── Incoming direct chat / call states ──
   const[showIncoming,setShowIncoming]=useState(false);
-  const[incomingData,setIncomingData]=useState(null); // {type:"chat"|"voice"|"video", rid, from:{name,av,userId}}
+  const[incomingData,setIncomingData]=useState(null);
+  // ✅ طلبات الدردشة الواردة — تظهر في قائمة الرسائل
+  const[chatRequests,setChatRequests]=useState(()=>load("chat_requests",[]));
 
   const getSupa=()=>window.supabase?.createClient(SUPA_URL,SUPA_KEY);
 
@@ -775,7 +777,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const initStream = async (uid, name, avatar) => {
     if(!uid) return;
     try{
-      const userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
+      let userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
+
+      // ✅ تحديث تلقائي للـ token إذا انتهت صلاحيته
+      const tryRefresh = async () => {
+        const supa = getSupa();
+        if(!supa) return userToken;
+        try{
+          const { data } = await supa.auth.refreshSession();
+          if(data?.session?.access_token){
+            localStorage.setItem("ailo_token", data.session.access_token);
+            return data.session.access_token;
+          }
+        }catch(e){}
+        return userToken;
+      };
+
       const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
         method:"POST",
         headers:{
@@ -786,10 +803,26 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         body: JSON.stringify({ user_id: uid, name, avatar })
       });
       const data = await res.json();
-      if(data.error || !data.token) {
-        alert("Stream Error:\n" + JSON.stringify(data).slice(0,200));
+
+      // إذا انتهت الصلاحية — جدّد التوكن وأعد المحاولة
+      if(data.error || !data.token){
+        userToken = await tryRefresh();
+        const res2 = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "apikey":SUPA_KEY,
+            "Authorization":`Bearer ${userToken}`
+          },
+          body: JSON.stringify({ user_id: uid, name, avatar })
+        });
+        const data2 = await res2.json();
+        if(data2.error || !data2.token){ console.error("Stream token error:", data2); return; }
+        streamClientRef.current = { token: data2.token, serverToken: data2.server_token, userId: uid, apiKey: data2.api_key || STREAM_API_KEY };
+        setStreamReady(true);
         return;
       }
+
       streamClientRef.current = {
         token: data.token,
         serverToken: data.server_token,
@@ -952,12 +985,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     if(inboxRef.current){ try{supa.removeChannel(inboxRef.current);}catch(e){} inboxRef.current=null; }
     const ch=supa.channel("inbox_"+userId);
     ch.on("broadcast",{event:"direct_request"},({payload})=>{
-      setIncomingData(payload);
-      setShowIncoming(true);
       if(payload.callType!=="text"){
+        // مكالمة واردة — عرض واجهة القبول/الرفض
+        setIncomingData(payload);
+        setShowIncoming(true);
         addNotif("📞","مكالمة واردة",`${payload.from?.name||"مستخدم"} يتصل بك...`,"call");
       } else {
-        addNotif("💬","رسالة واردة",`${payload.from?.name||"مستخدم"} يريد محادثتك`,"msg");
+        // طلب دردشة — أضفه لقائمة الطلبات في الرسائل
+        setChatRequests(prev=>{
+          const exists=prev.find(r=>r.from?.userId===payload.from?.userId);
+          if(exists) return prev;
+          const updated=[payload,...prev].slice(0,20);
+          save("chat_requests",updated);
+          return updated;
+        });
+        addNotif("💬","طلب دردشة جديد",`${payload.from?.name||"مستخدم"} يريد محادثتك`,"msg");
+        playNotifSound("msg");
       }
     });
     // رفض المكالمة من الطرف الآخر
@@ -985,21 +1028,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         if(supa){
           try{
             const { data, error } = await supa.auth.getUser(token);
-            if(data?.user){
-              const uid = data.user.id;
-              setUserId(uid);
-              const savedProfile = load("profile",{});
-              initStream(uid, savedProfile.name||profile.name, savedProfile.avatar||profile.avatar);
-            } else if(error){
+            // ✅ token منتهي أو غير صالح → تسجيل خروج تلقائي
+            if(error || !data?.user){
+              console.warn("Session expired. Logging out.");
               localStorage.removeItem("ailo_token");
               setAppScreen("login");
+              return;
             }
-          }catch(e){ console.error("Session restore:", e); }
+            // الجلسة صالحة → أكمل الاتصال
+            setUserId(data.user.id);
+            initStream(data.user.id, profile.name, profile.avatar);
+          }catch(e){ console.error("Session check error:", e); }
         }
       }
     };
     if(appScreen === "main") restoreSession();
-  },[appScreen]);
+  },[appScreen, profile.name, profile.avatar]);
 
   useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
 
@@ -1888,6 +1932,47 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 </div>
               </div>
             </div>
+            {/* ── طلبات الدردشة الواردة ── */}
+            {chatRequests.length>0&&<>
+              <div style={{color:muted,fontSize:11,fontWeight:700,marginBottom:8,marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+                <span>طلبات الدردشة</span>
+                <span style={{background:"#ef4444",color:"white",borderRadius:50,padding:"1px 7px",fontSize:10,fontWeight:700}}>{chatRequests.length}</span>
+              </div>
+              {chatRequests.map((req,i)=>(
+                <div key={i} style={{...glass({display:"flex",alignItems:"center",gap:10,padding:"12px 14px",marginBottom:8,border:`1px solid ${primary}33`})}}>
+                  <div style={{width:44,height:44,borderRadius:22,overflow:"hidden",flexShrink:0,border:`2px solid ${primary}`}}>
+                    {req.from?.av?.startsWith("http")?<img src={req.from.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:26,lineHeight:"44px",display:"block",textAlign:"center"}}>{req.from?.av||"🌍"}</span>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:13}}>{req.from?.name||"مستخدم"}</div>
+                    <div style={{color:muted,fontSize:11,marginTop:2}}>يريد محادثتك 💬</div>
+                  </div>
+                  {/* قبول */}
+                  <button onClick={async()=>{
+                    const targetUserId=req.from?.userId;
+                    const rid=req.rid||"direct_"+[userId,targetUserId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
+                    setPartner({av:req.from?.av||"🌍",name:req.from?.name||"مستخدم",country:"—",_uid:targetUserId});
+                    setRoomId(rid); setCallType("text");
+                    setStreamMessages([]);
+                    await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");
+                    joinRoom(rid);
+                    setTab("messages"); setActiveChat("friend");
+                    // حذف الطلب من القائمة
+                    setChatRequests(prev=>{const u=prev.filter((_,j)=>j!==i);save("chat_requests",u);return u;});
+                  }} style={{width:36,height:36,borderRadius:18,background:"rgba(34,197,94,0.15)",border:"1px solid #22c55e44",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>✓</button>
+                  {/* حظر */}
+                  <button onClick={()=>{
+                    // حظر المستخدم
+                    const blockId=req.from?.userId;
+                    if(blockId){
+                      setBlocked(prev=>{const u=[...prev,{id:blockId,name:req.from?.name,av:req.from?.av}];save("blocked",u);return u;});
+                    }
+                    setChatRequests(prev=>{const u=prev.filter((_,j)=>j!==i);save("chat_requests",u);return u;});
+                  }} style={{width:36,height:36,borderRadius:18,background:"rgba(239,68,68,0.15)",border:"1px solid #ef444444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>🚫</button>
+                </div>
+              ))}
+            </>}
+
             {/* محادثة الصديق */}
             <div style={{color:muted,fontSize:11,fontWeight:700,marginBottom:8,marginTop:4}}>محادثات الأصدقاء</div>
             {messages.length>0
@@ -2038,8 +2123,42 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       stream.getTracks().forEach(t=>t.stop());
                       setIsRecording(false); setRecordSecs(0);
                       if(voiceChunksRef.current.length>0){
-                        await sendStreamMessage("🎙️ رسالة صوتية");
-                        addXp(3,"صوتية"); setCoins(c=>c+1);
+                        // ✅ تحويل الصوت لـ base64 وإرساله كـ data URL
+                        const blob=new Blob(voiceChunksRef.current,{type:"audio/webm"});
+                        const reader=new FileReader();
+                        reader.onload=async(ev)=>{
+                          const audioData=ev.target.result; // base64 data URL
+                          // إضافة محلياً فوراً مع audio player
+                          const localMsg={
+                            id:"local_"+Date.now(),
+                            text:"",
+                            _audioData: audioData, // للعرض المحلي
+                            user:{id:streamClientRef.current?.userId},
+                            created_at:new Date().toISOString(),
+                            attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],
+                            readBy:[]
+                          };
+                          setStreamMessages(prev=>[...prev,localMsg]);
+                          // إرسال للسيرفر كـ attachment
+                          if(streamChannelRef.current && streamClientRef.current){
+                            const {id,type}=streamChannelRef.current;
+                            const c2=streamClientRef.current;
+                            const body={
+                              message:{
+                                text:"🎙️",
+                                user_id:c2.userId,
+                                attachments:[{type:"audio",asset_url:audioData,title:"رسالة صوتية"}]
+                              },
+                              user_id:c2.userId
+                            };
+                            const res=await streamPost(`/channels/${type}/${id}/message`,body,true);
+                            if(res?.message){
+                              setStreamMessages(prev=>prev.map(m=>m.id===localMsg.id?res.message:m));
+                            }
+                          }
+                          addXp(3,"صوتية"); setCoins(c=>c+1);
+                        };
+                        reader.readAsDataURL(blob);
                       }
                       voiceChunksRef.current=[];
                     };
