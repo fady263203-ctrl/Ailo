@@ -846,8 +846,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
       // جلب الرسائل السابقة بـ server token
       const data = await streamPost(`/channels/messaging/${cid}/query`,{
+        data: { created_by_id: myId, members: [myId, partnerId] },
         messages:{ limit:50 }, state:true, watch:false
-      }, true); // true = use server token
+      }, true);
       if(data?.messages) setStreamMessages(data.messages);
 
       // Polling للرسائل الجديدة كل 2 ثانية
@@ -864,7 +865,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           if(newLastId && newLastId !== lastMsgId){
             lastMsgId = newLastId;
             setStreamMessages(prev => {
-              // الاحتفاظ بالرسائل المحلية التي لم تُستبدل بعد
               const pendingLocals = prev.filter(m => m.id.toString().startsWith("local_"));
               return [...fresh.messages, ...pendingLocals];
             });
@@ -877,11 +877,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   };
 
   const sendStreamMessage = async (text, imageData=null) => {
-    if(!streamChannelRef.current || !streamClientRef.current) return false;
+    if(!streamChannelRef.current || !streamClientRef.current) {
+      alert("جارٍ الاتصال بالخادم، انتظر ثانية وحاول مجدداً ⏳");
+      return false;
+    }
     try{
       const { id, type } = streamChannelRef.current;
       const c = streamClientRef.current;
-      // أضف الرسالة محلياً فوراً
       const localMsg = {
         id: "local_"+Date.now(),
         text: text||"",
@@ -891,11 +893,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         readBy: []
       };
       setStreamMessages(prev => [...prev, localMsg]);
-      // ✅ استخدم server token + user_id في body لضمان الإرسال
-      // ✅ user_id داخل message — مطلوب عند استخدام Server Token
+      // user_id في جذر الطلب وداخل message معاً
       const body = imageData
-        ? { message:{ text:"", user_id: c.userId, attachments:[{ type:"image", image_url: imageData }] } }
-        : { message:{ text, user_id: c.userId } };
+        ? { message:{ text:"", user_id: c.userId, attachments:[{ type:"image", image_url: imageData }] }, user_id: c.userId }
+        : { message:{ text, user_id: c.userId }, user_id: c.userId };
       const res = await streamPost(`/channels/${type}/${id}/message`, body, true);
       if(res?.message){
         setStreamMessages(prev => prev.map(m => m.id===localMsg.id ? res.message : m));
