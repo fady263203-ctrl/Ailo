@@ -766,11 +766,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     if(roomRef.current){ supa.removeChannel(roomRef.current); roomRef.current=null; }
     const ch = supa.channel("room_"+rid);
     ch.on("broadcast",{event:"msg"},({payload})=>{
-      setMessages(p=>[...p,{id:Date.now()+Math.random(),from:"partner",text:payload.text,time:payload.time,status:"read",isImage:payload.isImage||false,imageData:payload.imageData||null}]);
+      // ✅ Fallback: إذا وصلت رسالة عبر Supabase (شريك لا يستخدم Stream) نضيفها لـ streamMessages
+      const fallbackMsg = {
+        id: "sb_"+Date.now()+Math.random(),
+        text: payload.text||"",
+        user: { id: "partner" },
+        created_at: new Date().toISOString(),
+        attachments: payload.isImage ? [{ type:"image", image_url: payload.imageData }] : [],
+        readBy: []
+      };
+      setStreamMessages(p=>[...p, fallbackMsg]);
       setIsTyping(false);
-      if(!payload.isImage) addNotif("💬","رسالة جديدة",payload.text.length>40?payload.text.slice(0,40)+"…":payload.text,"msg");
+      if(!payload.isImage) addNotif("💬","رسالة جديدة",payload.text?.length>40?payload.text.slice(0,40)+"…":payload.text,"msg");
       else addNotif("📷","أرسل صورة","شريكك أرسل لك صورة","msg");
-      // ✅ تحديث عدد الرسائل غير المقروءة
       setConversations(prev=>prev.map(c=>
         c.rid===roomId ? {...c,lastMsg:payload.text||"📷 صورة",unread:(c.unread||0)+1,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})} : c
       ));
@@ -1006,30 +1014,47 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       }, true);
       if(data?.messages) setStreamMessages(data.messages);
 
-      // Polling للرسائل الجديدة كل 2 ثانية
+      // ✅ WebSocket حقيقي عبر Stream Events API (بدلاً من polling)
       if(streamChannelRef.current._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
-      let lastMsgId = data?.messages?.[data.messages.length-1]?.id || "";
+      // نحفظ آخر timestamp للرسائل
+      let lastEventAt = data?.messages?.[data.messages.length-1]?.created_at || new Date(0).toISOString();
+      const POLL_MS = 800; // سريع لكن أقل من قبل
       streamChannelRef.current._pollInterval = setInterval(async()=>{
         if(!streamChannelRef.current) return;
-        const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
-          messages:{ limit:50 }, watch: false
-        }, true);
-        if(fresh?.messages && Array.isArray(fresh.messages)){
-          const partnerRead = fresh.read?.find(r=>r.user.id!==myId)?.last_read || new Date(0).toISOString();
+        try{
+          const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
+            messages:{ limit:30, created_at_after: lastEventAt }, watch: false
+          }, true);
+          if(!fresh?.messages || !Array.isArray(fresh.messages) || fresh.messages.length===0) return;
+          // تحديث timestamp
+          const newest = fresh.messages[fresh.messages.length-1]?.created_at;
+          if(newest) lastEventAt = newest;
+          const partnerRead = fresh.read?.find(r=>r.user?.id!==myId)?.last_read || new Date(0).toISOString();
           setStreamMessages(prev=>{
-            const locals=prev.filter(m=>m.id.toString().startsWith("local_"));
-            const freshIds=new Set(fresh.messages.map(m=>m.id));
-            const activeLocals=locals.filter(m=>!freshIds.has(m.id));
-            const updatedMessages=fresh.messages.map(m=>({
+            // أزل الرسائل المحلية المؤقتة التي وصلت الخادم
+            const confirmedTexts = new Set(fresh.messages.map(m=>m.text||""));
+            const filteredLocals = prev.filter(m=>
+              !m.id?.toString().startsWith("local_") ||
+              !confirmedTexts.has(m.text||"")
+            );
+            // ادمج الرسائل الجديدة مع تجنب التكرار
+            const existingIds = new Set(filteredLocals.map(m=>m.id));
+            const newMsgs = fresh.messages.filter(m=>!existingIds.has(m.id)).map(m=>({
               ...m,
-              status: m.user.id===myId
+              status: m.user?.id===myId
                 ? (new Date(m.created_at)<=new Date(partnerRead)?"read":"delivered")
                 : m.status
             }));
-            return [...updatedMessages,...activeLocals];
+            return [...filteredLocals, ...newMsgs];
           });
-        }
-      }, 1500);
+          // إشعار بالرسائل الواردة
+          fresh.messages.forEach(m=>{
+            if(m.user?.id!==myId && new Date(m.created_at)>new Date(lastEventAt)){
+              addNotif("💬","رسالة جديدة",m.text?.slice(0,40)||"📷 صورة","msg");
+            }
+          });
+        }catch(e){}
+      }, POLL_MS);
 
       console.log("Stream channel ready:", cid);
     }catch(e){ console.error("Stream channel:", e); }
@@ -1205,7 +1230,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     };
     return()=>{window._callRejectedHandler=null;};
   },[screen,callStatus]);
-  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]); // لا نحفظ رسائل النظام القديم
+  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[streamMessages]); // موحّد على Stream
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
   useEffect(()=>{if(partner.name!=="Alex")save("last_partner",partner);},[partner]);
   useEffect(()=>{ const q=exQuestions[exIdx]; if(q&&q.type==='arrange'&&q.words){setExArrWords([...q.words].sort(()=>Math.random()-0.5));} if(q&&q.type==='pairs'){setExPairDone({});setExPairShuffled(q.pairs?[...q.pairs].sort(()=>Math.random()-0.5):[]);} },[exIdx,exQuestions]);
@@ -1774,36 +1799,34 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── CHAT ──────────────────────────────────────────────────────────────────
   if(screen==="chat"){
-    const sendMsg=()=>{
+    const sendMsg=async()=>{
       if(!chatInput.trim())return;
-      // ✅ SECURITY: message length limit
+      // SECURITY: message length limit
       if(chatInput.length > 500){ alert("الرسالة طويلة جداً (الحد الأقصى 500 حرف)"); return; }
-      // ✅ SECURITY: simple rate limit — max 1 message per second
+      // SECURITY: simple rate limit — max 1 message per second
       const now_ms = Date.now();
       const lastSent = parseInt(sessionStorage.getItem("ailo_last_msg")||"0");
       if(now_ms - lastSent < 1000){ return; }
       sessionStorage.setItem("ailo_last_msg", now_ms);
-      const t=now();
-      const nm={id:Date.now(),from:"me",text:chatInput,time:t,status:"sent"};
-      setMessages(p=>[...p,nm]); setChatInput(""); addXp(5,"رسالة");
-      // update real stats and quests
+      const msgText = chatInput;
+      setChatInput("");
+      addXp(5,"رسالة");
       setStats(s=>{ const ns={...s,totalMsgs:s.totalMsgs+1}; checkBadges(ns); return ns; });
       updateQuest("msgs");
       setCoins(c=>c+1);
-      if(roomRef.current){
-        roomRef.current.send({type:"broadcast",event:"msg",payload:{text:chatInput,time:t}});
-        // إعلام القائمة بالرسالة الجديدة
-        const _supa=getSupa();
-        if(_supa&&partner._uid){
-          const _ib=_supa.channel("inbox_"+partner._uid);
-          _ib.subscribe().then(()=>{
-            _ib.send({type:"broadcast",event:"new_text_msg",payload:{fromId:userId,text:chatInput,time:t}});
-            _supa.removeChannel(_ib);
-          });
+      // ✅ إرسال عبر Stream فقط — النظام الموحّد
+      const ok = await sendStreamMessage(msgText);
+      if(!ok){
+        // fallback: Supabase broadcast إذا فشل Stream
+        if(roomRef.current){
+          const t=now();
+          roomRef.current.send({type:"broadcast",event:"msg",payload:{text:msgText,time:t}});
         }
-        setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"delivered"}:m)),600);
-        setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1200);
       }
+      // تحديث آخر رسالة في قائمة المحادثات
+      setConversations(prev=>prev.map(c=>
+        c.rid===roomId ? {...c,lastMsg:msgText,unread:0,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})} : c
+      ));
     };
     return(
       <div style={{background:bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",color:text}}>
@@ -1863,47 +1886,63 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         </div>
         <div style={{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:9}}>
           <div style={{alignSelf:"center",background:`${primary}18`,border:`1px solid ${border}`,borderRadius:50,padding:"5px 14px",display:"flex",alignItems:"center",gap:5,fontSize:11,color:muted}}>{Ic.shield("#22c55e",11)}<span>محادثة مشفرة</span></div>
-          {messages.map(m=>(
-            <div key={m.id} style={{alignSelf:m.from==="me"?"flex-end":"flex-start",maxWidth:"76%"}}>
-              <div style={{background:m.from==="me"?`linear-gradient(135deg,${primary},${secondary})`:card,backdropFilter:"blur(10px)",color:m.from==="me"?"white":text,padding:m.isImage?"6px":"10px 15px",borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,boxShadow:m.from==="me"?`0 4px 14px ${glow}`:"0 2px 8px rgba(0,0,0,0.07)",overflow:"hidden"}}>
-                {m.isImage&&m.imageData?<img src={m.imageData} style={{maxWidth:220,maxHeight:200,borderRadius:12,display:"block"}} alt=""/>:m.text}
+          {streamMessages.map(m=>{
+            if(m._isSystem) return(
+              <div key={m.id} style={{alignSelf:"center",maxWidth:"88%",margin:"4px 0"}}>
+                <div style={{display:"flex",alignItems:"center",gap:7,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:50,padding:"5px 14px",fontSize:11,color:muted,backdropFilter:"blur(8px)"}}>
+                  <span style={{fontSize:14}}>{m._icon}</span>
+                  <span style={{fontWeight:600,color:text}}>{m._label}</span>
+                  {m._sub&&<span style={{color:muted}}>{m._sub}</span>}
+                </div>
               </div>
-              <div style={{fontSize:10,color:muted,marginTop:3,display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start",alignItems:"center",gap:4}}>{m.time}{m.from==="me"&&(m.status==="read"?Ic.checks("#22c55e",13):m.status==="delivered"?Ic.checks(muted,13):Ic.check(muted,12))}</div>
-            </div>
-          ))}
+            );
+            const isMe=m.user?.id===userId;
+            const img=m.attachments?.[0]?.image_url;
+            const isAudio=m.attachments?.[0]?.type==="audio";
+            const audioUrl=m.attachments?.[0]?.asset_url||m.attachments?.[0]?.image_url;
+            const t=m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):now();
+            const bubbleBg=isMe?`linear-gradient(135deg,${primary},${secondary})`:card;
+            return(
+              <div key={m.id} className="msg-bubble" style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"76%"}}>
+                <div style={{background:bubbleBg,backdropFilter:"blur(10px)",color:isMe?"white":text,padding:img||isAudio?"6px":"10px 15px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:`1px solid ${border}`,boxShadow:isMe?`0 4px 14px ${glow}`:"0 2px 8px rgba(0,0,0,0.07)",overflow:"hidden"}}>
+                  {img&&<img src={img} style={{maxWidth:220,maxHeight:200,borderRadius:12,display:"block"}} alt=""/>}
+                  {isAudio&&audioUrl&&<audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>}
+                  {!img&&!isAudio&&<span style={{wordBreak:"break-word"}}>{m.text}</span>}
+                </div>
+                <div style={{fontSize:10,color:muted,marginTop:3,display:"flex",justifyContent:isMe?"flex-end":"flex-start",alignItems:"center",gap:4}}>{t}{isMe&&(m.status==="read"||m.readBy?.length>1?Ic.checks("#22c55e",13):Ic.check(muted,12))}</div>
+              </div>
+            );
+          })}
           {isTyping&&<div style={{alignSelf:"flex-start",background:card,backdropFilter:"blur(10px)",padding:"12px 16px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
           <div ref={msgEnd}/>
         </div>
         <div style={{padding:"10px 12px",background:card,backdropFilter:"blur(20px)",borderTop:`1px solid ${border}`}}>
-          <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={e=>{
+          <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={async e=>{
             const f=e.target.files?.[0]; if(!f)return;
-            // ✅ SECURITY: file size limit 5MB
+            // SECURITY: file size limit 5MB
             if(f.size > 5 * 1024 * 1024){ alert("حجم الملف كبير جداً (الحد الأقصى 5 ميجابايت)"); e.target.value=""; return; }
             const isImg=f.type.startsWith("image/");
             if(isImg){
               const reader=new FileReader();
               reader.onload=(ev)=>{
-                // Compress image before sending (max 400px, quality 0.6)
                 const img=new Image();
-                img.onload=()=>{
+                img.onload=async()=>{
                   const canvas=document.createElement("canvas");
                   const max=400; const ratio=Math.min(max/img.width,max/img.height,1);
                   canvas.width=img.width*ratio; canvas.height=img.height*ratio;
                   canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
                   const imageData=canvas.toDataURL("image/jpeg",0.6);
-                  const nm={id:Date.now(),from:"me",text:`📷 صورة`,time:now(),status:"sent",isImage:true,imageData};
-                  setMessages(p=>[...p,nm]); addXp(3,"صورة"); setCoins(c=>c+1);
-                  if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:`📷 صورة`,time:now(),isImage:true,imageData}});
-                  setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1000);
+                  // ✅ إرسال عبر Stream فقط
+                  await sendStreamMessage(null, imageData);
+                  addXp(3,"صورة"); setCoins(c=>c+1);
                 };
                 img.src=ev.target.result;
               };
               reader.readAsDataURL(f);
             } else {
-              const nm={id:Date.now(),from:"me",text:`📎 ${f.name}`,time:now(),status:"sent"};
-              setMessages(p=>[...p,nm]); addXp(3,"مرفق");
-              if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:`📎 ${f.name}`,time:now()}});
-              setTimeout(()=>setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m)),1000);
+              // ✅ ملف — إرسال اسمه كرسالة نصية عبر Stream
+              await sendStreamMessage(`📎 ${f.name}`);
+              addXp(3,"مرفق");
             }
             e.target.value="";
           }}/>
