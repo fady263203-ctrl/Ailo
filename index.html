@@ -781,16 +781,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         body: JSON.stringify({ user_id: uid, name, avatar })
       });
       const data = await res.json();
-      if(!data.token) return;
+      if(data.error || !data.token) {
+        alert("خطأ من الـ Edge Function:\n" + JSON.stringify(data));
+        return;
+      }
       streamClientRef.current = {
-        token: data.token,              // user token — للإرسال
-        serverToken: data.server_token, // server token — للقنوات
+        token: data.token,
+        serverToken: data.server_token,
         userId: uid,
         apiKey: data.api_key || STREAM_API_KEY
       };
       setStreamReady(true);
       console.log("Stream ready for:", uid);
-    }catch(e){ console.error("Stream init:", e); }
+    }catch(e){
+      alert("تعذر الوصول لـ Edge Function:\n" + e.message);
+      console.error("Stream init error:", e);
+    }
   };
 
   const streamGet = async (path, params={}) => {
