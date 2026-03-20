@@ -786,8 +786,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         body: JSON.stringify({ user_id: uid, name, avatar })
       });
       const data = await res.json();
+      // 🔍 تشخيص مؤقت
       if(data.error || !data.token) {
-        console.error("Stream token error:", data);
+        alert("Stream Error:\n" + JSON.stringify(data).slice(0,200));
         return;
       }
       streamClientRef.current = {
