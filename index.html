@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/stream-chat/dist/stream-chat.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stream-chat@8.40.6/dist/stream-chat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -794,11 +794,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     ch.on("broadcast",{event:"call_accept"},()=>{
       setCallStatus("connected");
       setCallTime(0);
-      // ✅ ابدأ Agora فقط الآن — بعد ما قبل الطرف الثاني
-      setCallType(ct=>{
-        const safeRoom = (roomRef.current?.topic||"").replace("room_","").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64) || "ailo"+Date.now();
-        setTimeout(()=>joinAgora(safeRoom, ct), 200);
-        return ct;
+      // ✅ ابدأ Agora فقط بعد قبول الطرف الثاني
+      setRoomId(rid=>{
+        setCallType(ct=>{
+          const safeRoom = rid.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64) || "ailo"+Date.now();
+          setTimeout(()=>joinAgora(safeRoom, ct), 200);
+          return ct;
+        });
+        return rid;
       });
     });
     ch.on("broadcast",{event:"call_end"},async()=>{
@@ -935,8 +938,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       }
 
       // إنشاء Stream SDK Client
-      const StreamChat = window.StreamChat?.StreamChat || window["stream-chat"]?.StreamChat;
-      if(!StreamChat){ console.error("Stream SDK not loaded"); return; }
+      // انتظر حتى يتحمل Stream SDK (max 10 ثوانٍ)
+      let StreamChat = window.StreamChat?.StreamChat || window["stream-chat"]?.StreamChat;
+      if(!StreamChat){
+        let w=0;
+        while(!StreamChat && w<10000){
+          await new Promise(r=>setTimeout(r,200)); w+=200;
+          StreamChat = window.StreamChat?.StreamChat || window["stream-chat"]?.StreamChat;
+        }
+      }
+      if(!StreamChat){ console.warn("Stream SDK not loaded — skipping"); return; }
 
       const client = StreamChat.getInstance(data.api_key || STREAM_API_KEY);
       await client.connectUser(
@@ -982,7 +993,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         // تحديث آخر رسالة في القائمة
         const txt = event.message.text || (event.message.attachments?.length ? "📎 مرفق" : "");
         setConversations(prev => prev.map(c =>
-          c.partnerId === partnerId
+          (c.partnerId === partnerId || c.rid === roomId)
             ? {...c, lastMsg: txt, time: new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}), unread: (c.unread||0)+1}
             : c
         ));
@@ -1068,10 +1079,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   };
 
   const streamTypingStart = async () => {
-    try{ if(streamChannelRef.current?._sdkChannel || streamChannelRef.current?.keystroke) await streamChannelRef.current.keystroke(); }catch(e){}
+    try{ if(streamChannelRef.current) await streamChannelRef.current.keystroke(); }catch(e){}
   };
   const streamTypingStop = async () => {
-    try{ if(streamChannelRef.current?.stopTyping) await streamChannelRef.current.stopTyping(); }catch(e){}
+    try{ if(streamChannelRef.current) await streamChannelRef.current.stopTyping(); }catch(e){}
   };
 
   // ✅ رسالة نظام داخل المحادثة (مكالمات)
