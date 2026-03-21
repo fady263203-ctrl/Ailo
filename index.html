@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stream-chat/dist/stream-chat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -572,6 +573,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[streamReady,setStreamReady]=useState(false);
   const[streamMessages,setStreamMessages]=useState([]);
   const[streamTyping,setStreamTyping]=useState(false);
+  // ── دردشة مباشرة — ميزات إضافية ──
+  const[replyTo,setReplyTo]=useState(null); // {id, text, user}
+  const[msgMenuId,setMsgMenuId]=useState(null); // قائمة الضغط المطوّل
+  const[reactMenuId,setReactMenuId]=useState(null); // شريط التفاعل
+  const[showPartnerProfile,setShowPartnerProfile]=useState(false);
   // Online/offline presence
   const[onlineUsers,setOnlineUsers]=useState({});
   const presenceRef=useRef(null);
@@ -788,6 +794,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     ch.on("broadcast",{event:"call_accept"},()=>{
       setCallStatus("connected");
       setCallTime(0);
+      // ✅ ابدأ Agora فقط الآن — بعد ما قبل الطرف الثاني
+      setCallType(ct=>{
+        const safeRoom = (roomRef.current?.topic||"").replace("room_","").replace(/[^a-zA-Z0-9_]/g,"").slice(0,64) || "ailo"+Date.now();
+        setTimeout(()=>joinAgora(safeRoom, ct), 200);
+        return ct;
+      });
     });
     ch.on("broadcast",{event:"call_end"},async()=>{
       // رسالة نظام: انتهت المكالمة
@@ -884,203 +896,182 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){}
   };
 
-  // ── Stream Chat — REST API مباشرة (بدون SDK) ─────────────────────────────
+  // ── Stream Chat SDK ───────────────────────────────────────────────────────
 
   const initStream = async (uid, name, avatar) => {
     if(!uid) return;
     try{
-      let userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
-
-      // ✅ تحديث تلقائي للـ token إذا انتهت صلاحيته
-      const tryRefresh = async () => {
-        const supa = getSupa();
-        if(!supa) return userToken;
-        try{
-          const { data } = await supa.auth.refreshSession();
-          if(data?.session?.access_token){
-            localStorage.setItem("ailo_token", data.session.access_token);
-            return data.session.access_token;
-          }
-        }catch(e){}
-        return userToken;
-      };
-
-      const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "apikey":SUPA_KEY,
-          "Authorization":`Bearer ${userToken}`
-        },
-        body: JSON.stringify({ user_id: uid, name, avatar })
-      });
-      const data = await res.json();
-
-      // إذا انتهت الصلاحية — جدّد التوكن وأعد المحاولة
-      if(data.error || !data.token){
-        userToken = await tryRefresh();
-        const res2 = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
-          method:"POST",
-          headers:{
-            "Content-Type":"application/json",
-            "apikey":SUPA_KEY,
-            "Authorization":`Bearer ${userToken}`
-          },
-          body: JSON.stringify({ user_id: uid, name, avatar })
-        });
-        const data2 = await res2.json();
-        if(data2.error || !data2.token){ console.error("Stream token error:", data2); return; }
-        streamClientRef.current = { token: data2.token, serverToken: data2.server_token, userId: uid, apiKey: data2.api_key || STREAM_API_KEY };
-        setStreamReady(true);
-        return;
+      // قطع الاتصال القديم إن وجد
+      if(streamClientRef.current?._sdkClient){
+        try{ await streamClientRef.current._sdkClient.disconnectUser(); }catch(e){}
       }
 
+      // جلب Stream Token من Edge Function
+      let userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
+      let res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SUPA_KEY,"Authorization":`Bearer ${userToken}`},
+        body: JSON.stringify({ user_id: uid, name, avatar })
+      });
+      let data = await res.json();
+
+      // تجديد تلقائي إذا انتهت الصلاحية
+      if(data.error || !data.token){
+        const supa = getSupa();
+        if(supa){
+          const { data:rd } = await supa.auth.refreshSession();
+          if(rd?.session?.access_token){
+            userToken = rd.session.access_token;
+            localStorage.setItem("ailo_token", userToken);
+          }
+        }
+        res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`,{
+          method:"POST",
+          headers:{"Content-Type":"application/json","apikey":SUPA_KEY,"Authorization":`Bearer ${userToken}`},
+          body: JSON.stringify({ user_id: uid, name, avatar })
+        });
+        data = await res.json();
+        if(data.error || !data.token){ console.error("Stream token error:", data); return; }
+      }
+
+      // إنشاء Stream SDK Client
+      const StreamChat = window.StreamChat?.StreamChat || window["stream-chat"]?.StreamChat;
+      if(!StreamChat){ console.error("Stream SDK not loaded"); return; }
+
+      const client = StreamChat.getInstance(data.api_key || STREAM_API_KEY);
+      await client.connectUser(
+        { id: uid, name, image: avatar },
+        data.token
+      );
+
       streamClientRef.current = {
+        _sdkClient: client,
         token: data.token,
         serverToken: data.server_token,
         userId: uid,
         apiKey: data.api_key || STREAM_API_KEY
       };
       setStreamReady(true);
-      console.log("Stream ready for:", uid);
+      console.log("✅ Stream SDK ready for:", uid);
     }catch(e){ console.error("Stream init error:", e); }
   };
 
-  const streamGet = async (path, params={}) => {
-    const c = streamClientRef.current; if(!c) return null;
-    try{
-      const qs = new URLSearchParams({api_key: c.apiKey, ...params}).toString();
-      const res = await fetch(`https://chat.stream-io-api.com${path}?${qs}`, {
-        method: "GET",
-        headers:{ "Stream-Auth-Type":"jwt", "Authorization": c.token, "Content-Type":"application/json" }
-      });
-      return await res.json();
-    }catch(e){ return null; }
-  };
-
-  const streamPost = async (path, body, useServerToken=false) => {
-    const c = streamClientRef.current; if(!c) return null;
-    try{
-      const tok = useServerToken ? (c.serverToken||c.token) : c.token;
-      const res = await fetch(`https://chat.stream-io-api.com${path}?api_key=${c.apiKey}`, {
-        method:"POST",
-        headers:{ "Stream-Auth-Type":"jwt", "Authorization": tok, "Content-Type":"application/json" },
-        body: JSON.stringify(body)
-      });
-      return await res.json();
-    }catch(e){ return null; }
-  };
-
   const joinStreamChannel = async (myId, partnerId, partnerName, partnerAvatar) => {
-    // انتظر حتى يجهز Stream (max 5 ثوانٍ)
-    if(!streamClientRef.current){
-      let waited=0;
-      while(!streamClientRef.current && waited<5000){
-        await new Promise(r=>setTimeout(r,300));
-        waited+=300;
-      }
-      if(!streamClientRef.current){ console.warn("Stream not ready"); return; }
+    // انتظر حتى يجهز Stream SDK (max 6 ثوانٍ)
+    let waited = 0;
+    while(!streamClientRef.current?._sdkClient && waited < 6000){
+      await new Promise(r=>setTimeout(r,200));
+      waited += 200;
     }
+    if(!streamClientRef.current?._sdkClient){ console.warn("Stream SDK not ready"); return; }
+
     try{
+      const client = streamClientRef.current._sdkClient;
       const cid = [myId, partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
-      streamChannelRef.current = { id: cid, type: "messaging" };
 
-      // ✅ أنشئ القناة server-side (عبر Edge Function) مع كلا المستخدمين كأعضاء
-      const userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
-      const setupRes = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "apikey":SUPA_KEY,
-          "Authorization":`Bearer ${userToken}`
-        },
-        body: JSON.stringify({ user_id: myId, partner_id: partnerId })
+      // إنشاء/فتح القناة
+      const channel = client.channel("messaging", cid, {
+        members: [myId, partnerId],
+        created_by_id: myId,
       });
-      const setupData = await setupRes.json();
-      if(setupData.server_token){
-        // حدّث الـ server token
-        streamClientRef.current.serverToken = setupData.server_token;
-      }
 
-      // جلب الرسائل السابقة بـ server token
-      const data = await streamPost(`/channels/messaging/${cid}/query`,{
-        data: { created_by_id: myId, members: [myId, partnerId] },
-        messages:{ limit:50 }, state:true, watch:false
-      }, true);
-      if(data?.messages) setStreamMessages(data.messages);
+      // مراقبة الأحداث الفورية
+      channel.on("message.new", event => {
+        if(event.message.user?.id === myId) return; // رسائلي أضيفتها محلياً
+        setStreamMessages(prev => [...prev, event.message]);
+        // تحديث آخر رسالة في القائمة
+        const txt = event.message.text || (event.message.attachments?.length ? "📎 مرفق" : "");
+        setConversations(prev => prev.map(c =>
+          c.partnerId === partnerId
+            ? {...c, lastMsg: txt, time: new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}), unread: (c.unread||0)+1}
+            : c
+        ));
+        // إشعار صوتي
+        playNotifSound("msg");
+      });
 
-      // Polling للرسائل الجديدة كل 2 ثانية
-      if(streamChannelRef.current._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
-      let lastMsgId = data?.messages?.[data.messages.length-1]?.id || "";
-      streamChannelRef.current._pollInterval = setInterval(async()=>{
-        if(!streamChannelRef.current) return;
-        const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
-          messages:{ limit:50 },
-          watch: false
-        }, true); // server token for reliable access
-        if(fresh?.messages && Array.isArray(fresh.messages)){
-          const newLastId = fresh.messages[fresh.messages.length-1]?.id || "";
-          if(newLastId && newLastId !== lastMsgId){
-            lastMsgId = newLastId;
-            setStreamMessages(prev => {
-              const pendingLocals = prev.filter(m => m.id.toString().startsWith("local_"));
-              return [...fresh.messages, ...pendingLocals];
-            });
-          }
-        }
-      }, 2000);
+      channel.on("typing.start", event => {
+        if(event.user?.id !== myId) setStreamTyping(true);
+      });
+      channel.on("typing.stop", event => {
+        if(event.user?.id !== myId) setStreamTyping(false);
+      });
+      channel.on("message.read", () => {
+        // تحديث علامات القراءة
+        setStreamMessages(prev => prev.map(m =>
+          m.user?.id === myId ? {...m, readBy: [{id: partnerId}]} : m
+        ));
+      });
 
-      console.log("Stream channel ready:", cid);
-    }catch(e){ console.error("Stream channel:", e); }
+      // جلب الرسائل السابقة + تفعيل WebSocket
+      const state = await channel.watch({ messages: { limit: 50 } });
+      if(state?.messages) setStreamMessages(state.messages);
+
+      streamChannelRef.current = channel;
+      console.log("✅ Stream channel watching:", cid);
+    }catch(e){ console.error("Stream channel error:", e); }
   };
 
   const sendStreamMessage = async (text, imageData=null) => {
-    if(!streamChannelRef.current || !streamClientRef.current) {
+    if(!streamChannelRef.current){
       alert("جارٍ الاتصال بالخادم، انتظر ثانية وحاول مجدداً ⏳");
       return false;
     }
     try{
-      const { id, type } = streamChannelRef.current;
-      const c = streamClientRef.current;
-      const localMsg = {
-        id: "local_"+Date.now(),
-        text: text||"",
-        user: { id: c.userId },
-        created_at: new Date().toISOString(),
-        attachments: imageData ? [{ type:"image", image_url: imageData }] : [],
-        readBy: []
-      };
-      setStreamMessages(prev => [...prev, localMsg]);
-      // user_id في جذر الطلب وداخل message معاً
-      const body = imageData
-        ? { message:{ text:"", user_id: c.userId, attachments:[{ type:"image", image_url: imageData }] }, user_id: c.userId }
-        : { message:{ text, user_id: c.userId }, user_id: c.userId };
-      const res = await streamPost(`/channels/${type}/${id}/message`, body, true);
-      if(res?.message){
-        setStreamMessages(prev => prev.map(m => m.id===localMsg.id ? res.message : m));
-        // ✅ تحديث آخر رسالة في قائمة المحادثات
-        if(text) setConversations(prev=>prev.map(c=>
-          c.rid===roomId ? {...c, lastMsg:text, time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})} : c
-        ));
-        // ✅ إشعار Push للطرف الثاني
-        if(partner._uid){
-          streamAction("notify",{
-            target_user_id: partner._uid,
-            title: profile.name,
-            body: text || "📷 صورة"
-          });
+      const channel = streamChannelRef.current;
+      const myId = streamClientRef.current?.userId;
+
+      if(imageData){
+        // رفع الصورة لـ Stream CDN أولاً
+        const localMsg = {
+          id: "local_"+Date.now(), text:"", _uploading:true,
+          user:{id:myId}, created_at:new Date().toISOString(),
+          attachments:[{type:"image", image_url: imageData}], readBy:[]
+        };
+        setStreamMessages(prev=>[...prev, localMsg]);
+        try{
+          // تحويل base64 لـ File
+          const blob = await fetch(imageData).then(r=>r.blob());
+          const file = new File([blob], "image.jpg", {type: blob.type||"image/jpeg"});
+          const uploadRes = await channel.sendImage(file);
+          const imageUrl = uploadRes.file;
+          const res = await channel.sendMessage({ text:"", attachments:[{type:"image", image_url: imageUrl, thumb_url: imageUrl}] });
+          setStreamMessages(prev=>prev.map(m=>m.id===localMsg.id ? res.message : m));
+          // إشعار
+          if(partner._uid) streamAction("notify",{target_user_id:partner._uid, title:profile.name, body:"📷 صورة"});
+          return true;
+        }catch(e){
+          setStreamMessages(prev=>prev.filter(m=>m.id!==localMsg.id));
+          console.error("Image upload error:",e);
+          return false;
         }
-        return true;
       }
-      return false;
-    }catch(e){ return false; }
+
+      // رسالة نصية
+      const localMsg = {
+        id: "local_"+Date.now(), text,
+        user:{id:myId}, created_at:new Date().toISOString(),
+        attachments:[], readBy:[]
+      };
+      setStreamMessages(prev=>[...prev, localMsg]);
+      const res = await channel.sendMessage({ text });
+      setStreamMessages(prev=>prev.map(m=>m.id===localMsg.id ? res.message : m));
+
+      // تحديث آخر رسالة في القائمة
+      setConversations(prev=>prev.map(c=>
+        c.rid===roomId ? {...c, lastMsg:text, time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})} : c
+      ));
+      // إشعار للطرف الثاني
+      if(partner._uid) streamAction("notify",{target_user_id:partner._uid, title:profile.name, body:text});
+      return true;
+    }catch(e){ console.error("sendStreamMessage:",e); return false; }
   };
 
-  const streamTypingStart = () => {
-    try{ if(roomRef.current) roomRef.current.send({type:"broadcast",event:"stream_typing",payload:{on:true}}); }catch(e){}
+  const streamTypingStart = async () => {
+    try{ if(streamChannelRef.current?._sdkChannel || streamChannelRef.current?.keystroke) await streamChannelRef.current.keystroke(); }catch(e){}
   };
-  const streamTypingStop = () => {
-    try{ if(roomRef.current) roomRef.current.send({type:"broadcast",event:"stream_typing",payload:{on:false}}); }catch(e){}
+  const streamTypingStop = async () => {
+    try{ if(streamChannelRef.current?.stopTyping) await streamChannelRef.current.stopTyping(); }catch(e){}
   };
 
   // ✅ رسالة نظام داخل المحادثة (مكالمات)
@@ -1100,12 +1091,15 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   const disconnectStream = async () => {
     try{
-      if(streamChannelRef.current?._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
+      if(streamChannelRef.current?.stopWatching) await streamChannelRef.current.stopWatching();
       streamChannelRef.current = null;
-      streamClientRef.current  = null;
+      if(streamClientRef.current?._sdkClient){
+        await streamClientRef.current._sdkClient.disconnectUser();
+      }
+      streamClientRef.current = null;
       setStreamReady(false);
       setStreamMessages([]);
-    }catch(e){}
+    }catch(e){ console.error("disconnectStream:",e); }
   };
 
   // ── ailo-stream-action: read / notify / delete ────────────────────────────
@@ -1955,7 +1949,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         ? "linear-gradient(160deg,#0d1421 0%,#0f1f35 50%,#0a0f1a 100%)"
         : "linear-gradient(160deg,#f8fafc 0%,#f0f4ff 50%,#f5f5f5 100%)",
       minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",
-      maxWidth:480,margin:"0 auto",paddingBottom:72,position:"relative",overflow:"hidden"
+      maxWidth:480,margin:"0 auto",paddingBottom:tab==="home"?72:0,position:"relative",overflow:"hidden"
     }}>
       {/* Space atmosphere */}
       <div style={{position:"fixed",top:-120,right:-80,width:320,height:320,borderRadius:"50%",background:`radial-gradient(circle,${primary}20 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
@@ -2280,210 +2274,120 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>}
 
           {/* شاشة محادثة الصديق */}
-          {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
+          {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)",userSelect:"none",WebkitUserSelect:"none"}}>
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
-              <button onClick={()=>{setActiveChat(null);streamTypingStop();}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
-              <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
-                {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
-              </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
-                <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
-                  <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
-                  {streamTyping?"يكتب الآن...":partner._uid&&onlineUsers[partner._uid]?"متصل":"غير متصل"}
+              <button onClick={()=>{setActiveChat(null);streamTypingStop();setReplyTo(null);setMsgMenuId(null);setReactMenuId(null);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
+              <button onClick={()=>setShowPartnerProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+                <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
+                  {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
                 </div>
-              </div>
+                <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                  <div style={{fontWeight:700,fontSize:14,color:text}}>{partner.name}</div>
+                  <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
+                    <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
+                    {streamTyping?"يكتب الآن...":partner._uid&&onlineUsers[partner._uid]?"متصل":"غير متصل"}
+                  </div>
+                </div>
+              </button>
               <button onClick={async()=>{
+                const targetId=partner._uid; if(!targetId){alert("لا يمكن إجراء المكالمة");return;}
                 setCallType("voice");setCallStatus("outgoing");setCallTime(0);setScreen("call");
-                addCallSystemMsg("🎙️","مكالمة صوتية صادرة","جاري الاتصال...");
-                joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
+                addCallSystemMsg("🎙️","مكالمة صوتية صادرة","في انتظار الرد...");
+                joinRoom(roomId);
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
-                if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة صوتية من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}}
-                setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"voice"),300);
+                if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة صوتية من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.phone(primary,16)}</button>
               <button onClick={async()=>{
+                const targetId=partner._uid; if(!targetId){alert("لا يمكن إجراء المكالمة");return;}
                 setCallType("video");setCallStatus("outgoing");setCallTime(0);setScreen("call");
-                addCallSystemMsg("📹","مكالمة فيديو صادرة","جاري الاتصال...");
-                joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
+                addCallSystemMsg("📹","مكالمة فيديو صادرة","في انتظار الرد...");
+                joinRoom(roomId);
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
-                if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}}
-                setTimeout(()=>joinAgora(roomId.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64),"video"),300);
+                if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.video(primary,16)}</button>
               <button onClick={()=>setShowBlock(true)} style={{width:32,height:32,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.flag(muted,16)}</button>
             </div>
-            {/* Messages */}
-            <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
-              {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
-              {streamMessages.map(m=>{
-                // ── رسالة نظام (مكالمة) — Telegram style ──
-                if(m._isSystem) return(
-                  <div key={m.id} style={{alignSelf:"center",maxWidth:"88%",margin:"6px 0"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:7,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:50,padding:"5px 14px",fontSize:11,color:muted,backdropFilter:"blur(8px)"}}>
-                      <span style={{fontSize:14}}>{m._icon}</span>
-                      <span style={{fontWeight:600,color:text}}>{m._label}</span>
-                      {m._sub&&<span style={{color:muted}}>{m._sub}</span>}
+            {/* ملف الشريك */}
+            {showPartnerProfile&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowPartnerProfile(false)}>
+                <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:24})}} onClick={e=>e.stopPropagation()}>
+                  <div style={{textAlign:"center",marginBottom:16}}>
+                    <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`}}>
+                      {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:60,lineHeight:"80px",display:"block"}}>{partner.av||"🌍"}</span>}
+                    </div>
+                    <div style={{fontWeight:900,fontSize:20}}>{partner.name}</div>
+                    <div style={{color:muted,fontSize:12,marginTop:6,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                      <div style={{width:8,height:8,borderRadius:4,background:partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8"}}/>
+                      {partner._uid&&onlineUsers[partner._uid]?"متصل الآن":"غير متصل"}
                     </div>
                   </div>
-                );
+                  <button onClick={()=>setShowPartnerProfile(false)} style={btnP({width:"100%"})}>إغلاق</button>
+                </div>
+              </div>
+            )}
+            {/* Messages */}
+            <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
+              {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
+              {streamMessages.map(m=>{
+                if(m._isSystem) return(<div key={m.id} style={{alignSelf:"center",maxWidth:"88%",margin:"6px 0"}}><div style={{display:"flex",alignItems:"center",gap:7,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:50,padding:"5px 14px",fontSize:11,color:muted}}><span style={{fontSize:14}}>{m._icon}</span><span style={{fontWeight:600,color:text}}>{m._label}</span>{m._sub&&<span style={{color:muted}}>{m._sub}</span>}</div></div>);
                 const isMe=m.user?.id===userId;
-                const img=m.attachments?.[0]?.image_url;
+                const img=m.attachments?.[0]?.image_url||m.attachments?.[0]?.thumb_url;
                 const isAudio=m.attachments?.[0]?.type==="audio";
                 const audioUrl=m.attachments?.[0]?.asset_url||m.attachments?.[0]?.image_url;
+                const isDeleted=m._deleted||m.deleted_at;
                 const t=m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):"";
-                // Telegram-style bubbles
-                const bubbleBg = isMe
-                  ? `linear-gradient(135deg,${primary},${secondary})`
-                  : darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,1)";
-                const bubbleShadow = isMe
-                  ? `0 2px 8px ${glow}`
-                  : darkMode ? "0 1px 4px rgba(0,0,0,0.3)" : "0 1px 4px rgba(0,0,0,0.08)";
+                const isRead=m.readBy?.some(r=>r.id!==userId);
+                const bubbleBg=isMe?`linear-gradient(135deg,${primary},${secondary})`:darkMode?"rgba(255,255,255,0.08)":"rgba(255,255,255,1)";
+                const REACTIONS=["❤️","😂","😮","😢","👍","🔥"];
                 return(
-                  <div key={m.id} className="msg-bubble" style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%",display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
+                  <div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%",display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start",position:"relative"}}>
+                    {reactMenuId===m.id&&(
+                      <div style={{position:"absolute",top:-44,left:isMe?"auto":0,right:isMe?0:"auto",background:darkMode?"rgba(30,25,80,0.98)":"white",borderRadius:50,padding:"6px 10px",display:"flex",gap:6,boxShadow:"0 4px 20px rgba(0,0,0,0.3)",border:`1px solid ${border}`,zIndex:10}}>
+                        {REACTIONS.map(r=>(<button key={r} onClick={async()=>{setReactMenuId(null);try{await streamChannelRef.current?.sendReaction(m.id,{type:r});}catch(e){}setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,reaction_counts:{...(x.reaction_counts||{}),[r]:(x.reaction_counts?.[r]||0)+1}}:x));}} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"2px"}}>{r}</button>))}
+                      </div>
+                    )}
                     <div
-                      onContextMenu={e=>{e.preventDefault();}}
-                      onPointerDown={isMe?(()=>{
-                        const t=setTimeout(async()=>{
-                          if(window.confirm("حذف هذه الرسالة؟")){
-                            await streamAction("delete",{message_id:m.id, user_id:userId});
-                            setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,text:"🚫 تم حذف هذه الرسالة",_deleted:true}:x));
-                          }
-                        },600);
-                        const cancel=()=>clearTimeout(t);
-                        window.addEventListener("pointerup",cancel,{once:true});
-                      }):undefined}
-                      style={{
-                      background:bubbleBg,
-                      color:isMe?"white":text,
-                      padding:img||isAudio?"8px":"10px 14px",
-                      borderRadius:isMe?"18px 4px 18px 18px":"4px 18px 18px 18px",
-                      fontSize:14,
-                      lineHeight:1.6,
-                      boxShadow:bubbleShadow,
-                      border:isMe?"none":`1px solid ${border}`,
-                      overflow:"hidden",
-                      maxWidth:"100%",
-                      userSelect:"none",
-                      cursor:isMe?"pointer":"default"
-                    }}>
-                      {img&&<img src={img} style={{maxWidth:220,borderRadius:10,display:"block"}} alt=""/>}
-                      {isAudio&&audioUrl&&(
-                        <audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>
-                      )}
-                      {!img&&!isAudio&&<span style={{wordBreak:"break-word"}}>{m.text}</span>}
+                      onClick={()=>{if(!isDeleted){setReactMenuId(id=>id===m.id?null:m.id);setMsgMenuId(null);}}}
+                      onContextMenu={e=>{e.preventDefault();if(!isDeleted){setMsgMenuId(id=>id===m.id?null:m.id);setReactMenuId(null);}}}
+                      onPointerDown={!isDeleted?(()=>{const t2=setTimeout(()=>{setMsgMenuId(m.id);setReactMenuId(null);},500);const cancel=()=>clearTimeout(t2);window.addEventListener("pointerup",cancel,{once:true});}):(()=>{})}
+                      style={{background:isDeleted?"transparent":bubbleBg,color:isMe?"white":text,padding:img||isAudio?"8px":"10px 14px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,boxShadow:isDeleted?"none":isMe?`0 2px 8px ${glow}`:"0 1px 4px rgba(0,0,0,0.08)",border:isDeleted?`1px dashed ${border}`:isMe?"none":`1px solid ${border}`,cursor:"pointer",maxWidth:"100%",overflow:"hidden",opacity:m._uploading?0.6:1}}>
+                      {m.quoted_message&&(<div style={{background:"rgba(0,0,0,0.15)",borderRadius:8,padding:"4px 8px",marginBottom:6,fontSize:11,borderRight:`3px solid ${isMe?"white":primary}`,opacity:0.8}}>{m.quoted_message.text||"📎 مرفق"}</div>)}
+                      {isDeleted?<span style={{color:muted,fontStyle:"italic",fontSize:13}}>🚫 تم حذف هذه الرسالة</span>:
+                        img?<div style={{position:"relative"}}><img src={img} style={{maxWidth:220,borderRadius:10,display:"block"}} alt=""/><a href={img} download target="_blank" style={{position:"absolute",bottom:6,left:6,background:"rgba(0,0,0,0.5)",borderRadius:8,padding:"4px 8px",color:"white",fontSize:11,textDecoration:"none"}}>⬇️ تحميل</a></div>:
+                        isAudio&&audioUrl?<audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>:
+                        <span style={{wordBreak:"break-word"}}>{m.text}</span>
+                      }
+                      {m.reaction_counts&&Object.keys(m.reaction_counts).length>0&&(<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>{Object.entries(m.reaction_counts).map(([r,c])=>(<span key={r} style={{background:"rgba(0,0,0,0.15)",borderRadius:50,padding:"1px 6px",fontSize:11}}>{r}{c>1&&` ${c}`}</span>))}</div>)}
                     </div>
                     <div style={{fontSize:10,color:muted,marginTop:3,display:"flex",alignItems:"center",gap:3,padding:"0 4px"}}>
-                      {t}
-                      {isMe&&<span style={{display:"flex"}}>{m.readBy?.length>1?Ic.checks("#22c55e",11):Ic.check(muted,10)}</span>}
+                      {t}{isMe&&<span style={{display:"flex"}}>{isRead?Ic.checks("#22c55e",11):Ic.check(muted,10)}</span>}
                     </div>
+                    {msgMenuId===m.id&&(
+                      <div style={{position:"absolute",bottom:"100%",left:isMe?"auto":0,right:isMe?0:"auto",background:darkMode?"rgba(21,31,51,0.98)":"white",borderRadius:14,padding:6,boxShadow:"0 8px 30px rgba(0,0,0,0.3)",border:`1px solid ${border}`,zIndex:20,minWidth:150,marginBottom:4}}>
+                        {[
+                          {icon:"↩️",label:"رد",action:()=>{setReplyTo({id:m.id,text:m.text||"📎",user:m.user});setMsgMenuId(null);}},
+                          {icon:"📋",label:"نسخ",action:()=>{navigator.clipboard?.writeText(m.text||"");setMsgMenuId(null);}},
+                          ...(isMe&&!isDeleted?[{icon:"🗑️",label:"حذف",color:"#ef4444",action:async()=>{setMsgMenuId(null);await streamAction("delete",{message_id:m.id,user_id:userId});setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true}:x));}}]:[]),
+                        ].map((item,i)=>(<button key={i} onClick={item.action} style={{width:"100%",background:"none",border:"none",cursor:"pointer",padding:"9px 14px",display:"flex",alignItems:"center",gap:10,color:item.color||text,fontSize:13,fontWeight:600,fontFamily:"'Tajawal',system-ui",borderRadius:10,textAlign:"right"}}><span>{item.icon}</span><span>{item.label}</span></button>))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
               {streamTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
               <div ref={msgEnd}/>
             </div>
-            {/* hidden inputs */}
-            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
-              const f=e.target.files?.[0]; if(!f)return;
-              if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}
-              const r=new FileReader();r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};r.readAsDataURL(f);e.target.value="";
-            }}/>
-            <input ref={docFileRef} type="file" accept=".pdf,.doc,.docx,.txt,.ppt,.xlsx" style={{display:"none"}} onChange={async e=>{
-              const f=e.target.files?.[0]; if(!f)return;
-              await sendStreamMessage(`📎 ${f.name}`);e.target.value="";
-            }}/>
-            {/* شريط التسجيل */}
-            {isRecording&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:14,marginBottom:6}}>
-              <div style={{width:9,height:9,borderRadius:5,background:"#ef4444",animation:"dot0 0.8s ease-in-out infinite"}}/>
-              <div style={{flex:1,fontSize:13,color:"#ef4444",fontWeight:700}}>🎙️ ارفع إصبعك للإرسال... {recordSecs}ث</div>
-            </div>}
-            {/* شريط الإرسال */}
+            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{const f=e.target.files?.[0];if(!f)return;if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}const r=new FileReader();r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};r.readAsDataURL(f);e.target.value="";}}/>
+            <input ref={docFileRef} type="file" accept=".pdf,.doc,.docx,.txt,.ppt,.xlsx" style={{display:"none"}} onChange={async e=>{const f=e.target.files?.[0];if(!f)return;await sendStreamMessage(`📎 ${f.name}`);e.target.value="";}}/>
+            {replyTo&&(<div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",background:`${primary}11`,borderRadius:10,marginBottom:6,border:`1px solid ${primary}33`}}><div style={{flex:1,fontSize:12,color:primary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>↩️ رد على: {replyTo.text}</div><button onClick={()=>setReplyTo(null)} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:16,padding:0}}>✕</button></div>)}
+            {isRecording&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:14,marginBottom:6}}><div style={{width:9,height:9,borderRadius:5,background:"#ef4444",animation:"dot0 0.8s ease-in-out infinite"}}/><div style={{flex:1,fontSize:13,color:"#ef4444",fontWeight:700}}>🎙️ ارفع إصبعك للإرسال... {recordSecs}ث</div></div>}
             <div style={{display:"flex",gap:6,paddingTop:8,borderTop:`1px solid ${border}`,alignItems:"center"}}>
-              <button onClick={()=>fileRef.current?.click()} title="صورة" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.image(muted,19)}</button>
-              <button onClick={()=>docFileRef.current?.click()} title="ملف" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.attach(muted,19)}</button>
-              <button
-                onPointerDown={async(e)=>{
-                  e.preventDefault();
-                  if(isRecording)return;
-                  try{
-                    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-                    const mr=new MediaRecorder(stream);
-                    mediaRecorderRef.current=mr; voiceChunksRef.current=[];
-                    mr.ondataavailable=e2=>voiceChunksRef.current.push(e2.data);
-                    mr.onstop=async()=>{
-                      stream.getTracks().forEach(t=>t.stop());
-                      setIsRecording(false); setRecordSecs(0);
-                      if(voiceChunksRef.current.length>0){
-                        // ✅ تحويل الصوت لـ base64 وإرساله كـ data URL
-                        const blob=new Blob(voiceChunksRef.current,{type:"audio/webm"});
-                        const reader=new FileReader();
-                        reader.onload=async(ev)=>{
-                          const audioData=ev.target.result; // base64 data URL
-                          // إضافة محلياً فوراً مع audio player
-                          const localMsg={
-                            id:"local_"+Date.now(),
-                            text:"",
-                            _audioData: audioData, // للعرض المحلي
-                            user:{id:streamClientRef.current?.userId},
-                            created_at:new Date().toISOString(),
-                            attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],
-                            readBy:[]
-                          };
-                          setStreamMessages(prev=>[...prev,localMsg]);
-                          // إرسال للسيرفر كـ attachment
-                          if(streamChannelRef.current && streamClientRef.current){
-                            const {id,type}=streamChannelRef.current;
-                            const c2=streamClientRef.current;
-                            const body={
-                              message:{
-                                text:"🎙️",
-                                user_id:c2.userId,
-                                attachments:[{type:"audio",asset_url:audioData,title:"رسالة صوتية"}]
-                              },
-                              user_id:c2.userId
-                            };
-                            const res=await streamPost(`/channels/${type}/${id}/message`,body,true);
-                            if(res?.message){
-                              setStreamMessages(prev=>prev.map(m=>m.id===localMsg.id?res.message:m));
-                            }
-                          }
-                          addXp(3,"صوتية"); setCoins(c=>c+1);
-                        };
-                        reader.readAsDataURL(blob);
-                      }
-                      voiceChunksRef.current=[];
-                    };
-                    mr.start(); setIsRecording(true); setRecordSecs(0);
-                    const iv=setInterval(()=>setRecordSecs(s=>{
-                      if(s>=59){clearInterval(iv);if(mediaRecorderRef.current?.state==="recording")mediaRecorderRef.current.stop();return 0;}
-                      return s+1;
-                    }),1000);
-                    mediaRecorderRef.current._interval=iv;
-                  }catch(e){alert("لا يمكن الوصول للميكروفون");}
-                }}
-                onPointerUp={()=>{
-                  if(mediaRecorderRef.current?.state==="recording"){
-                    if(mediaRecorderRef.current._interval) clearInterval(mediaRecorderRef.current._interval);
-                    mediaRecorderRef.current.stop();
-                  }
-                }}
-                onPointerLeave={()=>{
-                  if(mediaRecorderRef.current?.state==="recording"){
-                    if(mediaRecorderRef.current._interval) clearInterval(mediaRecorderRef.current._interval);
-                    // إلغاء إذا خرج الإصبع عن الزر
-                    voiceChunksRef.current=[];
-                    mediaRecorderRef.current.stop();
-                    setIsRecording(false); setRecordSecs(0);
-                  }
-                }}
-                title="اضغط مطولاً للتسجيل"
-                style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",transform:isRecording?"scale(1.1)":"scale(1)",userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
-              >{Ic.mic(isRecording?"white":muted,19)}</button>
-              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}}
-              } placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
-              <button onClick={async()=>{if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
+              <button onClick={()=>fileRef.current?.click()} style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.image(muted,19)}</button>
+              <button onClick={()=>docFileRef.current?.click()} style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.attach(muted,19)}</button>
+              <button onPointerDown={async(e)=>{e.preventDefault();if(isRecording)return;try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});const mr=new MediaRecorder(stream);mediaRecorderRef.current=mr;voiceChunksRef.current=[];mr.ondataavailable=e2=>voiceChunksRef.current.push(e2.data);mr.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());setIsRecording(false);setRecordSecs(0);if(voiceChunksRef.current.length>0){const blob=new Blob(voiceChunksRef.current,{type:"audio/webm"});const reader=new FileReader();reader.onload=async(ev)=>{const audioData=ev.target.result;const localMsg={id:"local_"+Date.now(),text:"",user:{id:streamClientRef.current?.userId},created_at:new Date().toISOString(),attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],readBy:[]};setStreamMessages(prev=>[...prev,localMsg]);try{const audioBlob=await fetch(audioData).then(r=>r.blob());const audioFile=new File([audioBlob],"voice.webm",{type:"audio/webm"});const uploadRes=await streamChannelRef.current?.sendFile(audioFile);const audioUrl=uploadRes?.file||audioData;const res=await streamChannelRef.current?.sendMessage({text:"🎙️",attachments:[{type:"audio",asset_url:audioUrl,title:"رسالة صوتية"}]});if(res?.message)setStreamMessages(prev=>prev.map(m=>m.id===localMsg.id?res.message:m));}catch(e){console.error("voice:",e);}addXp(3,"صوتية");setCoins(c=>c+1);};reader.readAsDataURL(blob);}voiceChunksRef.current=[];};mr.start();setIsRecording(true);setRecordSecs(0);const iv=setInterval(()=>setRecordSecs(s=>{if(s>=59){clearInterval(iv);if(mediaRecorderRef.current?.state==="recording")mediaRecorderRef.current.stop();return 0;}return s+1;}),1000);mediaRecorderRef.current._interval=iv;}catch(e){alert("لا يمكن الوصول للميكروفون");}}} onPointerUp={()=>{if(mediaRecorderRef.current?.state==="recording"){if(mediaRecorderRef.current._interval)clearInterval(mediaRecorderRef.current._interval);mediaRecorderRef.current.stop();}}} onPointerLeave={()=>{if(mediaRecorderRef.current?.state==="recording"){if(mediaRecorderRef.current._interval)clearInterval(mediaRecorderRef.current._interval);voiceChunksRef.current=[];mediaRecorderRef.current.stop();setIsRecording(false);setRecordSecs(0);}}} style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}>{Ic.mic(isRecording?"white":muted,19)}</button>
+              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=replyTo?await(async()=>{try{const r=await streamChannelRef.current?.sendMessage({text:txt,quoted_message_id:replyTo.id});if(r?.message){setStreamMessages(prev=>[...prev,r.message]);return true;}return false;}catch(e){return false;}})():await sendStreamMessage(txt);setReplyTo(null);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}}} placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
+              <button onClick={async()=>{if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();const ok=replyTo?await(async()=>{try{const r=await streamChannelRef.current?.sendMessage({text:txt,quoted_message_id:replyTo.id});if(r?.message){setStreamMessages(prev=>[...prev,r.message]);return true;}return false;}catch(e){return false;}})():await sendStreamMessage(txt);setReplyTo(null);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
         </div>}
@@ -3015,8 +2919,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         </div>}
       </div>
 
-      {/* BOTTOM NAV */}
-      <div style={{
+      {/* BOTTOM NAV — يظهر فقط في الرئيسية */}
+      {tab==="home"&&<div style={{
         position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
         width:"100%",maxWidth:480,
         background: darkMode ? "rgba(13,20,33,0.97)" : "rgba(255,255,255,0.98)",
