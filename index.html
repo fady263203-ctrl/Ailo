@@ -573,6 +573,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[msgMenuId,setMsgMenuId]=useState(null);
   const[reactMenuId,setReactMenuId]=useState(null);
   const[replyTo,setReplyTo]=useState(null);
+  const[chatDot,setChatDot]=useState(false);
   // ── ميزات الدردشة العشوائية ──
   const[showPartnerR,setShowPartnerR]=useState(false);
   const[msgMenuIdR,setMsgMenuIdR]=useState(null);
@@ -1945,7 +1946,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     );
   }
 
-
   // ── MAIN ──────────────────────────────────────────────────────────────────
   const TABS=[
     {id:"home",     label:"الرئيسية", icon:Ic.home},
@@ -1955,10 +1955,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     {id:"history",  label:"السجل",    icon:Ic.clock},
   ];
 
-  // شرط ذكي لإظهار/إخفاء الشريط السفلي
   const isInsideExercise = !storeTab && (exStep==="quiz"||exStep==="cooldown"||exStep==="result");
-  const showBottomNav = activeChat===null && !isInsideExercise
-    && tab!=="leaderboard" && tab!=="history";
+  const showBottomNav = activeChat===null && !isInsideExercise && tab!=="leaderboard" && tab!=="history";
 
   return(
     <div style={{
@@ -2568,7 +2566,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         {tab==="exercises"&&<div style={{animation:"slideIn 0.4s ease"}}>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
             <button onClick={()=>setStoreTab(false)} style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${!storeTab?primary:border}`,background:!storeTab?`${primary}22`:"transparent",color:!storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>📚 تدريبات</button>
-            <button onClick={()=>setStoreTab(true)}  style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${storeTab?primary:border}`,background:storeTab?`${primary}22`:"transparent",color:storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>المتجر</button>
+            <button onClick={()=>setStoreTab(true)}  style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${storeTab?primary:border}`,background:storeTab?`${primary}22`:"transparent",color:storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>المتجر</button>
           </div>
 
           {storeTab&&<div>
@@ -3107,7 +3105,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             <span style={{fontSize:9,fontWeight:tab===id?800:400,color:tab===id?primary:muted,fontFamily:"'Tajawal',system-ui",transition:"color 0.18s"}}>{label}</span>
           </button>
         ))}
-      </div>
+      </div>}
 
       {/* PROFILE MODAL */}
       {showProfile&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowProfile(false)}>
