@@ -992,7 +992,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // فتح قناة الدردشة المباشرة مع صديق
   const joinStreamChannel = async (myId, partnerId) => {
-    const supa = getSupa(); if(!supa) return;
+    const supa = getSupa();
+    if(!supa){ setActiveChat(null); return; }
     if(directChanRef.current){ try{supa.removeChannel(directChanRef.current);}catch(e){} directChanRef.current=null; }
     const cid = "direct_"+[myId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
 
@@ -1050,6 +1051,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     });
     ch.subscribe();
     directChanRef.current = ch;
+    console.log("✅ Direct channel ready:", cid);
   };
 
   // إرسال رسالة نصية أو صورة
@@ -2123,14 +2125,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               </button>
             : <button onClick={()=>setShowProfileView(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
           }
-          <div style={{
-            fontWeight:900,fontSize:20,letterSpacing:0.5,
-            background:`linear-gradient(135deg,${primary},${secondary})`,
-            WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
-            display:"flex",alignItems:"center",gap:6
-          }}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill={primary} stroke="none"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-            Ailo
+            <span style={{fontWeight:900,fontSize:20,letterSpacing:0.5,background:`linear-gradient(135deg,${primary},${secondary})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Ailo</span>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={()=>setDarkMode(d=>!d)} style={{
@@ -2326,7 +2323,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setPartner({av:req.from?.av||"🌍",name:req.from?.name||"مستخدم",country:"—",_uid:targetUserId});
                     setRoomId(rid); setCallType("text");
                     setStreamMessages([]);
-                    await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");
+                    await joinStreamChannel(userId,targetUserId);
                     setChatDot(true); setTimeout(()=>setChatDot(false),2000);
                     joinRoom(rid);
                     // ✅ حفظ المحادثة
@@ -2363,7 +2360,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setStreamMessages([]);
                   setCallType("text");
                   joinRoom(conv.rid);
-                  await joinStreamChannel(userId, conv.partnerId, conv.partnerName, conv.partnerAv);
+                  await joinStreamChannel(userId, conv.partnerId);
                   setChatDot(true); setTimeout(()=>setChatDot(false),2000);
                   // ✅ Read Receipt — علّم الرسائل كمقروءة
                   const cid=[userId,conv.partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
@@ -2429,7 +2426,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>}
 
           {/* شاشة محادثة الصديق */}
-          {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none",paddingTop:"env(safe-area-inset-top, 0px)"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
+          {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none",paddingTop:"max(env(safe-area-inset-top, 0px), 44px)"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
 
             {/* Header — مثل الصورة */}
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",background:darkMode?"rgba(13,20,33,0.95)":"rgba(255,255,255,0.95)",backdropFilter:"blur(20px)",borderBottom:`1px solid ${border}`,flexShrink:0}}>
@@ -3445,7 +3442,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   });
                   // ✅ Stream Chat — انضم للقناة وجلب الرسائل السابقة
                   setStreamMessages([]);
-                  await joinStreamChannel(userId, targetUserId, u.name||"مستخدم", u.avatar||"");
+                  await joinStreamChannel(userId, targetUserId);
                   // ✅ أعلم المستخدم الآخر عبر inbox الخاص به
                   const supa=getSupa();
                   if(supa && targetUserId){
@@ -3546,7 +3543,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setCallType("text");
                     setStreamMessages([]);
                     setTab("messages"); setActiveChat("friend");
-                    joinStreamChannel(userId, d.from?.userId||"", d.from?.name||"", d.from?.av||"");
+                    await joinStreamChannel(userId, d.from?.userId||"");
                   }
                 }} style={{width:70,height:70,borderRadius:35,background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 30px rgba(34,197,94,0.5)",transition:"transform 0.15s"}}
                   onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
