@@ -1019,6 +1019,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setStreamTyping(!!payload.on);
       if(payload.on) setTimeout(()=>setStreamTyping(false),3000);
     });
+    ch.on("broadcast",{event:"direct_reaction"},({payload})=>{
+      if(payload.from===myId) return;
+      setStreamMessages(prev=>prev.map(x=>
+        x.id===payload.msgId
+          ? {...x,_reactions:{...(x._reactions||{}),[payload.reaction]:((x._reactions||{})[payload.reaction]||0)+1}}
+          : x
+      ));
+    });
     ch.subscribe();
     directChanRef.current = ch;
   };
@@ -2402,39 +2410,55 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {/* شاشة محادثة الصديق */}
           {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none",paddingTop:"env(safe-area-inset-top, 0px)"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
 
-            {/* Header */}
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
-              <button onClick={()=>{setActiveChat(null);streamTypingStop();setReplyTo(null);setMsgMenuId(null);setReactMenuId(null);setChatDot(false);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
-              {/* الضغط على الصورة أو الاسم يفتح الملف */}
-              <button onClick={()=>setShowPartnerProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-                <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
-                  {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
-                </div>
-                <div style={{flex:1,minWidth:0,textAlign:"right"}}>
-                  <div style={{fontWeight:700,fontSize:14,color:text}}>{partner.name}</div>
-                  <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
-                    <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
-                    {streamTyping?"typing...":partner._uid&&onlineUsers[partner._uid]?"online":"offline"}
-                  </div>
+            {/* Header — مثل الصورة */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",background:darkMode?"rgba(13,20,33,0.95)":"rgba(255,255,255,0.95)",backdropFilter:"blur(20px)",borderBottom:`1px solid ${border}`,flexShrink:0}}>
+              {/* يسار: زر رجوع */}
+              <button onClick={()=>{setActiveChat(null);streamTypingStop();setReplyTo(null);setMsgMenuId(null);setReactMenuId(null);setChatDot(false);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",padding:"6px",flexShrink:0}}>{Ic.back(muted,20)}</button>
+
+              {/* وسط: اسم + حالة */}
+              <button onClick={()=>setShowPartnerProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",flexDirection:"column",alignItems:"center",flex:1}}>
+                <div style={{fontWeight:700,fontSize:15,color:text}}>{partner.name}</div>
+                <div style={{fontSize:11,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted,marginTop:2}}>
+                  <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8"}}/>
+                  {streamTyping?"typing...":partner._uid&&onlineUsers[partner._uid]?"online":"offline"}
                 </div>
               </button>
-              <button onClick={async()=>{
-                const targetId=partner._uid; if(!targetId) return;
-                setCallType("voice"); setCallStatus("outgoing"); setCallTime(0); setScreen("call");
-                addCallSystemMsg("🎙️","مكالمة صوتية","في انتظار الرد...");
-                joinRoom(roomId);
-                const supa=getSupa();
-                if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}
-              }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.phone(primary,16)}</button>
-              <button onClick={async()=>{
-                const targetId=partner._uid; if(!targetId) return;
-                setCallType("video"); setCallStatus("outgoing"); setCallTime(0); setScreen("call");
-                addCallSystemMsg("📹","مكالمة فيديو","في انتظار الرد...");
-                joinRoom(roomId);
-                const supa=getSupa();
-                if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}
-              }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.video(primary,16)}</button>
-              <button onClick={()=>setShowBlock(true)} style={{width:32,height:32,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.flag(muted,16)}</button>
+
+              {/* يمين: أزرار اتصال + صورة */}
+              <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+                {/* زر فيديو */}
+                <button onClick={async()=>{
+                  const targetId=partner._uid; if(!targetId) return;
+                  setCallType("video"); setCallStatus("outgoing"); setCallTime(0); setScreen("call");
+                  addCallSystemMsg("📹","Video call","Waiting for answer...");
+                  joinRoom(roomId);
+                  const supa=getSupa();
+                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
+                  setTimeout(()=>joinAgora(roomId,"video"),300);
+                }} style={{width:36,height:36,borderRadius:18,background:`${primary}22`,border:`1px solid ${primary}44`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {Ic.video(primary,17)}
+                </button>
+                {/* زر صوت */}
+                <button onClick={async()=>{
+                  const targetId=partner._uid; if(!targetId) return;
+                  setCallType("voice"); setCallStatus("outgoing"); setCallTime(0); setScreen("call");
+                  addCallSystemMsg("🎙️","Voice call","Waiting for answer...");
+                  joinRoom(roomId);
+                  const supa=getSupa();
+                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
+                  setTimeout(()=>joinAgora(roomId,"voice"),300);
+                }} style={{width:36,height:36,borderRadius:18,background:`${primary}22`,border:`1px solid ${primary}44`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {Ic.phone(primary,17)}
+                </button>
+                {/* ثلاث نقاط */}
+                <button onClick={()=>setShowBlock(true)} style={{width:36,height:36,borderRadius:18,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:muted,fontSize:18,fontWeight:700}}>⋮</button>
+                {/* صورة المستخدم */}
+                <button onClick={()=>setShowPartnerProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}>
+                  <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,boxShadow:`0 0 0 2px ${glow}`}}>
+                    {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:20,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
+                  </div>
+                </button>
+              </div>
             </div>
 
             {/* ملف الشريك */}
@@ -2483,9 +2507,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     {reactMenuId===m.id&&(
                       <div style={{position:"absolute",top:-44,left:isMe?"auto":0,right:isMe?0:"auto",background:darkMode?"rgba(21,31,51,0.98)":"white",borderRadius:50,padding:"6px 10px",display:"flex",gap:6,boxShadow:"0 4px 20px rgba(0,0,0,0.3)",border:`1px solid ${border}`,zIndex:10}}>
                         {REACTIONS.map(r=>(
-                          <button key={r} onClick={()=>{
+                          <button key={r} onClick={async()=>{
                             setReactMenuId(null);
+                            // إضافة محلياً فوراً
                             setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,_reactions:{...(x._reactions||{}),[r]:((x._reactions||{})[r]||0)+1}}:x));
+                            // إرسال للطرف الثاني عبر Broadcast
+                            try{
+                              if(directChanRef.current){
+                                await directChanRef.current.send({
+                                  type:"broadcast", event:"direct_reaction",
+                                  payload:{ msgId:m.id, reaction:r, from:userId }
+                                });
+                              }
+                            }catch(e){}
                           }} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"2px"}}>{r}</button>
                         ))}
                       </div>
@@ -2510,7 +2544,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                             <a href={img} download target="_blank" style={{position:"absolute",bottom:6,left:6,background:"rgba(0,0,0,0.55)",borderRadius:8,padding:"4px 8px",color:"white",fontSize:11,textDecoration:"none",display:"flex",alignItems:"center",gap:3}}>⬇️ تحميل</a>
                           </div>
                           :isAudio&&audioUrl
-                            ?<audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>
+                            ?<div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0"}}>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill={isMe?"white":primary} stroke="none"><path d="M12 2a3 3 0 013 3v6a3 3 0 01-6 0V5a3 3 0 013-3z"/><path d="M19 10v1a7 7 0 01-14 0v-1M12 18v4M8 22h8" fill="none" stroke={isMe?"white":primary} strokeWidth="2" strokeLinecap="round"/></svg>
+                              <audio controls src={audioUrl} style={{flex:1,height:32,maxWidth:180,accentColor:isMe?"white":primary}}/>
+                            </div>
                             :<span style={{wordBreak:"break-word"}}>{m.text}</span>
                       }
                       {/* التفاعلات */}
