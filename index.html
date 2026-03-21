@@ -921,44 +921,98 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){}
   };
 
-  // ── دردشة مباشرة عبر Supabase Broadcast ────────────────────────────────
+  // ── دردشة مباشرة عبر Supabase Database + Broadcast ────────────────────
+
+  // رفع ملف لـ Supabase Storage
+  const uploadToStorage = async (blob, fileName, mimeType) => {
+    try{
+      const token = localStorage.getItem("ailo_token") || SUPA_KEY;
+      const path = `messages/${Date.now()}_${fileName}`;
+      const res = await fetch(`${SUPA_URL}/storage/v1/object/ailo-media/${path}`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "apikey": SUPA_KEY,
+          "Content-Type": mimeType,
+          "x-upsert": "true"
+        },
+        body: blob
+      });
+      if(!res.ok) throw new Error("Upload failed");
+      return `${SUPA_URL}/storage/v1/object/public/ailo-media/${path}`;
+    }catch(e){ console.error("uploadToStorage:",e); return null; }
+  };
+
+  // حفظ رسالة في Database
+  const saveMessageToDB = async (msg) => {
+    try{
+      const token = localStorage.getItem("ailo_token") || SUPA_KEY;
+      await fetch(`${SUPA_URL}/rest/v1/messages`, {
+        method: "POST",
+        headers: {
+          "apikey": SUPA_KEY,
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal"
+        },
+        body: JSON.stringify(msg)
+      });
+    }catch(e){ console.error("saveMessageToDB:",e); }
+  };
+
+  // جلب رسائل غرفة من Database
+  const fetchMessages = async (roomId) => {
+    try{
+      const token = localStorage.getItem("ailo_token") || SUPA_KEY;
+      const res = await fetch(
+        `${SUPA_URL}/rest/v1/messages?room_id=eq.${roomId}&order=created_at.asc&limit=50`,
+        { headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${token}` } }
+      );
+      if(!res.ok) return [];
+      const rows = await res.json();
+      return rows.map(r=>({
+        id: r.id,
+        text: r.text||"",
+        user: { id: r.user_id },
+        created_at: r.created_at,
+        attachments: r.file_url
+          ? [{ type: r.type, image_url: r.file_url, asset_url: r.file_url }]
+          : [],
+        _replyTo: r.reply_to||null,
+        readBy: []
+      }));
+    }catch(e){ console.error("fetchMessages:",e); return []; }
+  };
 
   // فتح قناة الدردشة المباشرة مع صديق
-  const joinStreamChannel = (myId, partnerId) => {
+  const joinStreamChannel = async (myId, partnerId) => {
     const supa = getSupa(); if(!supa) return;
-    // قطع القناة القديمة إن وجدت
     if(directChanRef.current){ try{supa.removeChannel(directChanRef.current);}catch(e){} directChanRef.current=null; }
     const cid = "direct_"+[myId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+
+    // جلب الرسائل من Database
+    const dbMsgs = await fetchMessages(cid);
+    setStreamMessages(dbMsgs);
+
+    // الاشتراك في Broadcast للرسائل الفورية
     const ch = supa.channel(cid);
-    ch.on("broadcast",{event:"direct_msg"},({payload})=>{
-      if(payload.from===myId) return; // رسائلي تم إضافتها محلياً
-      // تحديد نوع المرفق بشكل صحيح
-      let attachments = [];
-      if(payload.imageData){
-        if(payload.text==="🎙️"){
-          attachments = [{type:"audio", asset_url:payload.imageData, image_url:payload.imageData}];
-        } else {
-          attachments = [{type:"image", image_url:payload.imageData}];
-        }
-      }
-      const msg = {
-        id: payload.id,
-        text: payload.text||"",
-        user: { id: payload.from },
-        created_at: payload.time||new Date().toISOString(),
-        attachments,
-        readBy: []
-      };
-      setStreamMessages(prev=>[...prev, msg]);
-      // تحديث آخر رسالة في القائمة
-      const txt = payload.text||(payload.imageData?"📷 صورة":"");
-      setConversations(prev=>prev.map(c=>
-        (c.partnerId===partnerId||c.rid===payload.rid)
-          ? {...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),unread:(c.unread||0)+1}
-          : c
-      ));
+    ch.on("broadcast",{event:"direct_msg"},async({payload})=>{
+      if(payload.from===myId) return;
+      // جلب الرسالة الجديدة من Database للحصول على البيانات الكاملة
+      const newMsgs = await fetchMessages(cid);
+      setStreamMessages(newMsgs);
+      const txt = payload.text||"";
+      setConversations(prev=>{
+        const updated=prev.map(c=>
+          (c.partnerId===partnerId||c.rid===payload.rid)
+            ? {...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),unread:(c.unread||0)+1}
+            : c
+        );
+        save("conversations",updated);
+        return updated;
+      });
       playNotifSound("msg");
-      addNotif("💬","رسالة جديدة",txt.length>40?txt.slice(0,40)+"…":txt,"msg");
+      addNotif("💬","New message",txt.length>40?txt.slice(0,40)+"…":txt,"msg");
     });
     ch.on("broadcast",{event:"direct_typing"},({payload})=>{
       if(payload.from===myId) return;
@@ -967,51 +1021,64 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     });
     ch.subscribe();
     directChanRef.current = ch;
-    // تحميل الرسائل المحفوظة محلياً
-    const saved = load("direct_msgs_"+[myId,partnerId].sort().join("_"),[]);
-    setStreamMessages(saved.slice(-50));
   };
 
-  // إرسال رسالة مباشرة
+  // إرسال رسالة نصية أو صورة
   const sendStreamMessage = async (text, imageData=null) => {
-    if(!directChanRef.current){
-      alert("جارٍ الاتصال بالخادم، انتظر ثانية وحاول مجدداً ⏳");
-      return false;
-    }
+    if(!directChanRef.current){ alert("Connecting... try again in a moment ⏳"); return false; }
     try{
       const msgId = "msg_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
       const timeStr = new Date().toISOString();
+      const partnerId = partner._uid||"";
+      const cid = "direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+
+      let fileUrl = null;
+      let msgType = "text";
+
+      // رفع الصورة لـ Storage إذا وجدت
+      if(imageData){
+        msgType = "image";
+        const blob = await fetch(imageData).then(r=>r.blob());
+        fileUrl = await uploadToStorage(blob, "photo.jpg", "image/jpeg");
+        if(!fileUrl){ alert("Failed to upload image"); return false; }
+      }
+
+      // عرض محلي فوري
       const localMsg = {
-        id: msgId,
-        text: text||"",
-        user: { id: userId },
+        id: msgId, text: text||"", user:{ id:userId },
         created_at: timeStr,
-        attachments: imageData?[{type:"image",image_url:imageData}]:[],
+        attachments: fileUrl?[{type:msgType,image_url:fileUrl,asset_url:fileUrl}]:[],
         readBy:[]
       };
-      // إضافة محلياً فوراً
       setStreamMessages(prev=>[...prev,localMsg]);
-      // حفظ في localStorage
-      const partnerId = partner._uid||"";
-      const key = "direct_msgs_"+[userId,partnerId].sort().join("_");
-      const saved = load(key,[]);
-      save(key,[...saved,localMsg].slice(-100));
-      // إرسال عبر Supabase Broadcast
+
+      // حفظ في Database
+      await saveMessageToDB({
+        id: msgId, room_id: cid, user_id: userId,
+        text: text||"", type: msgType, file_url: fileUrl,
+        reply_to: replyTo?.text||null, created_at: timeStr
+      });
+
+      // إشعار فوري للطرف الثاني
       await directChanRef.current.send({
         type:"broadcast", event:"direct_msg",
-        payload:{ id:msgId, text:text||"", imageData:imageData||null, from:userId, time:timeStr, rid:roomId }
+        payload:{ id:msgId, text:text||"", from:userId, rid:roomId }
       });
+
       // تحديث قائمة المحادثات
-      const txt = text||(imageData?"📷 صورة":"");
-      setConversations(prev=>prev.map(c=>
-        (c.partnerId===partnerId||c.rid===roomId)
-          ? {...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}
-          : c
-      ));
-      // إشعار Push للطرف الثاني
+      const txt = text||(fileUrl?"📷 Photo":"");
+      setConversations(prev=>{
+        const updated=prev.map(c=>
+          (c.partnerId===partnerId||c.rid===roomId)
+            ? {...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}
+            : c
+        );
+        save("conversations",updated);
+        return updated;
+      });
       if(partner._uid) sendPushNotif(partner._uid, profile.name, txt, "msg");
       return true;
-    }catch(e){ console.error("sendDirectMsg:",e); return false; }
+    }catch(e){ console.error("sendStreamMessage:",e); return false; }
   };
 
   // مؤشر الكتابة
@@ -1104,9 +1171,21 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             // الجلسة صالحة → استرجع كل البيانات
             const uid = data.user.id;
             setUserId(uid);
-            // ✅ استرجاع الـ shortId والبيانات المحفوظة
-            const sid = load("shortId","");
-            if(sid) setShortId(sid);
+            // ✅ استرجاع الـ shortId — من localStorage أولاً ثم Supabase
+            let sid = load("shortId","");
+            if(sid){
+              setShortId(sid);
+            } else {
+              try{
+                const r = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${uid}&select=short_id`,{headers:{"apikey":SUPA_KEY}});
+                const rows = await r.json();
+                if(rows?.[0]?.short_id){
+                  save("shortId", rows[0].short_id);
+                  setShortId(rows[0].short_id);
+                  sid = rows[0].short_id;
+                }
+              }catch(e){}
+            }
             const sp = load("profile",null);
             if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
             const sx = load("xp",0); if(sx>0) setTotalXp(sx);
@@ -1162,6 +1241,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const localStreamRef   = useRef(null);  // MediaStream المحلي
   const localVideoElRef  = useRef(null);  // عنصر فيديو محلي
   const remoteVideoElRef = useRef(null);  // عنصر فيديو بعيد
+  const remoteAudioRef   = useRef(null);  // عنصر صوت بعيد
 
   // STUN servers مجانية لإنشاء الاتصال P2P
   const RTC_CONFIG = {
@@ -1185,9 +1265,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         pcRef.current.close();
         pcRef.current = null;
       }
-      // تنظيف عناصر الفيديو
+      // تنظيف عناصر الفيديو والصوت
       if(localVideoElRef.current) localVideoElRef.current.srcObject = null;
       if(remoteVideoElRef.current) remoteVideoElRef.current.srcObject = null;
+      if(remoteAudioRef.current){ remoteAudioRef.current.srcObject = null; remoteAudioRef.current.pause(); }
     }catch(e){ console.error("leaveWebRTC:",e); }
   },[]);
 
@@ -1224,9 +1305,17 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
       // استقبال المسارات البعيدة
       pc.ontrack = (event) => {
-        if(remoteVideoElRef.current && event.streams[0]){
+        if(!event.streams[0]) return;
+        if(type==="video" && remoteVideoElRef.current){
+          // فيديو: الصوت والصورة معاً
           remoteVideoElRef.current.srcObject = event.streams[0];
           remoteVideoElRef.current.play().catch(()=>{});
+        } else {
+          // صوت فقط: استخدم audio element مخفي
+          if(remoteAudioRef.current){
+            remoteAudioRef.current.srcObject = event.streams[0];
+            remoteAudioRef.current.play().catch(e=>console.error("audio play:",e));
+          }
         }
       };
 
@@ -1435,10 +1524,23 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             save("shortId", OWNER_SHORT_ID);
             setShortId(OWNER_SHORT_ID);
           } else if(!existingShortId){
-            // مستخدم جديد — توليد ID عشوائي
-            const newShortId = genShortId();
-            save("shortId", newShortId);
-            setShortId(newShortId);
+            // تحقق من Supabase أولاً قبل توليد ID جديد
+            try{
+              const r = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${data.user?.id}&select=short_id`,{headers:{"apikey":SUPA_KEY}});
+              const rows = await r.json();
+              if(rows?.[0]?.short_id){
+                save("shortId", rows[0].short_id);
+                setShortId(rows[0].short_id);
+              } else {
+                const newShortId = genShortId();
+                save("shortId", newShortId);
+                setShortId(newShortId);
+              }
+            }catch(e){
+              const newShortId = genShortId();
+              save("shortId", newShortId);
+              setShortId(newShortId);
+            }
           } else {
             // مستخدم عائد — نفس الـ ID المحفوظ
             setShortId(existingShortId);
@@ -1526,7 +1628,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 50%,${glow} 0%,transparent 70%)`,pointerEvents:"none"}}/>
       {!matched?(<>
         <div style={{fontSize:72,animation:"spin 4s linear infinite",filter:`drop-shadow(0 0 20px ${primary})`}}><svg width="72" height="72" viewBox="0 0 24 24" fill="rgba(99,102,241,0.15)" stroke={primary} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-        <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>جاري البحث...</div>
+        <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Searching...</div>
         <div style={{...glass({width:"100%",textAlign:"center"})}}>
           <div style={{color:muted,fontSize:13,marginBottom:10}}>نبحث عن شريك لغوي</div>
           <div style={{fontWeight:700,fontSize:22,color:primary}}>{fmt(searchTime)}</div>
@@ -1535,7 +1637,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         <button style={btnP({background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={cancelSearch}>إلغاء</button>
       </>):(<>
         <div style={{fontSize:72}}>🎉</div>
-        <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>تم العثور على شريك!</div>
+        <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Partner found!</div>
         <div style={{...glass({width:"100%",textAlign:"center"})}}>
           <div style={{display:"flex",justifyContent:"center",marginBottom:12}}>
             <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",border:`3px solid ${primary}`,boxShadow:`0 0 0 3px ${glow}`}}>
@@ -1558,6 +1660,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   if(screen==="call") return(
     <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
+      {/* Remote audio — مخفي يشغّل الصوت في مكالمات الصوت */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{display:"none"}}/>
       {/* Remote video — WebRTC */}
       {callType==="video" && <video ref={remoteVideoElRef} autoPlay playsInline style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",background:"#111",zIndex:0}}/>}
       {/* Remote cam off overlay */}
@@ -1579,7 +1683,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {remoteCamOff && callType==="video" && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}><svg width="10" height="10" viewBox="0 0 24 24" fill="rgba(239,68,68,0.2)" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/><line x1="1" y1="1" x2="23" y2="23"/></svg><span style={{fontSize:10,color:"#ef4444"}}>أوقف الكاميرا</span></div>}
         </div>
         <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>
-          {callStatus==="outgoing" ? "جاري الاتصال..." : fmt(callTime)}
+          {callStatus==="outgoing" ? "Calling..." : fmt(callTime)}
         </div>
       </div>
       {/* Voice call partner display */}
@@ -1794,7 +1898,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   onClick={()=>{ if(!isDeleted){setReactMenuIdR(prev=>prev===m.id?null:m.id);setMsgMenuIdR(null);} }}
                   onContextMenu={e=>{ e.preventDefault(); if(!isDeleted){setMsgMenuIdR(prev=>prev===m.id?null:m.id);setReactMenuIdR(null);} }}
                   onPointerDown={()=>{ if(isDeleted) return; const t2=setTimeout(()=>{setMsgMenuIdR(m.id);setReactMenuIdR(null);},500); const cancel=()=>clearTimeout(t2); window.addEventListener("pointerup",cancel,{once:true}); }}
-                  style={{background:isDeleted?"transparent":bubbleBg,backdropFilter:"blur(10px)",color:isMe?"white":text,padding:m.isImage||m.isAudio?"6px":"10px 15px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,border:isDeleted?`1px dashed ${border}`:`1px solid ${border}`,boxShadow:isMe?`0 4px 14px ${glow}`:"0 2px 8px rgba(0,0,0,0.07)",overflow:"hidden",cursor:"pointer"}}>
+                  style={{background:isDeleted?"transparent":bubbleBg,backdropFilter:"blur(10px)",color:isMe?"white":text,padding:m.isImage||m.isAudio?"6px":"10px 15px",borderRadius:isMe?"18px 4px 18px 18px":"4px 18px 18px 18px",fontSize:14,lineHeight:1.6,border:isDeleted?`1px dashed ${border}`:`1px solid ${border}`,boxShadow:isMe?`0 4px 14px ${glow}`:"0 2px 8px rgba(0,0,0,0.07)",overflow:"hidden",cursor:"pointer"}}>
                   {/* اقتباس */}
                   {m._replyTo&&(
                     <div style={{background:"rgba(0,0,0,0.15)",borderRadius:8,padding:"4px 8px",marginBottom:6,fontSize:11,borderRight:`3px solid ${isMe?"white":primary}`,opacity:0.8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m._replyTo}</div>
@@ -1925,7 +2029,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               style={{width:38,height:38,background:isRecordingR?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecordingR?"#ef4444":border}`,borderRadius:isRecordingR?19:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
             >{Ic.mic(isRecordingR?"white":muted,18)}</button>
             <div style={{flex:1,position:"relative"}}>
-              <input value={chatInput} onChange={e=>setChatInput(e.target.value.slice(0,500))} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="Type a message..." style={{...inp,flex:1,padding:"10px 14px",borderRadius:50,width:"100%"}}/>
+              <textarea value={chatInput} onChange={e=>{const v=e.target.value.slice(0,500);setChatInput(v);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";try{if(roomRef.current)roomRef.current.send({type:"broadcast",event:"typing"});}catch(ex){}}} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}} placeholder="Type a message..." rows={1} style={{...inp,flex:1,padding:"10px 14px",borderRadius:20,width:"100%",resize:"none",overflow:"hidden",lineHeight:"1.4"}}/>
             </div>
             <button onClick={sendMsg} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
           </div>
@@ -1948,11 +2052,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── MAIN ──────────────────────────────────────────────────────────────────
   const TABS=[
-    {id:"home",     label:"الرئيسية", icon:Ic.home},
-    {id:"messages", label:"الرسائل",  icon:Ic.chat},
-    {id:"exercises",label:"تدريبات",  icon:Ic.star},
-    {id:"leaderboard",label:"الصدارة",icon:Ic.trophy},
-    {id:"history",  label:"السجل",    icon:Ic.clock},
+    {id:"home",     label:"Home",     icon:Ic.home},
+    {id:"messages", label:"Messages", icon:Ic.chat},
+    {id:"exercises",label:"Practice", icon:Ic.star},
+    {id:"leaderboard",label:"Leaderboard",icon:Ic.trophy},
+    {id:"history",  label:"History",  icon:Ic.clock},
   ];
 
   const isInsideExercise = !storeTab && (exStep==="quiz"||exStep==="cooldown"||exStep==="result");
@@ -1984,7 +2088,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           : "0 1px 0 rgba(0,0,0,0.06)"
       }}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-          <button onClick={()=>setShowProfileView(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
+          {tab!=="home"
+            ? <button onClick={()=>setTab("home")} style={{background:"none",border:"none",cursor:"pointer",padding:"6px",display:"flex",alignItems:"center",gap:4,color:muted}}>
+                {Ic.back(muted,20)}
+              </button>
+            : <button onClick={()=>setShowProfileView(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
+          }
           <div style={{
             fontWeight:900,fontSize:20,letterSpacing:0.5,
             background:`linear-gradient(135deg,${primary},${secondary})`,
@@ -2252,7 +2361,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       <span style={{fontSize:10,color:muted,flexShrink:0}}>{conv.time}</span>
                     </div>
                     <div style={{color:conv.unread>0?text:muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:conv.unread>0?600:400}}>
-                      {conv.lastMsg||"ابدأ المحادثة..."}
+                      {conv.lastMsg||"Start chatting..."}
                     </div>
                   </div>
                   {/* Unread badge */}
@@ -2262,7 +2371,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               : <div style={{textAlign:"center",padding:"32px 0",color:muted}}>
                   <div style={{fontSize:48,marginBottom:12,opacity:0.4}}>💬</div>
                   <div style={{fontSize:13,marginBottom:16}}>لا توجد محادثات بعد</div>
-                  <button onClick={()=>{setSearchQuery("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:12,padding:"10px 20px"})}>ابحث عن صديق</button>
+                  <button onClick={()=>{setSearchQuery("");setSearchResult(null);setSearchError("");setShowUserSearch(true);}} style={btnP({fontSize:12,padding:"10px 20px"})}>Find a friend</button>
                 </div>
             }
           </>}
@@ -2285,13 +2394,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             </div>
             <div style={{display:"flex",gap:8,paddingTop:8,borderTop:`1px solid ${border}`}}>
               {botTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
-              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()&&!botTyping){const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}}} placeholder="اكتب رسالة..." style={{...inp,flex:1}}/>
+              <input value={botInput} onChange={e=>setBotInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&botInput.trim()&&!botTyping){const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}}} placeholder="Type a message..." style={{...inp,flex:1}}/>
               <button onClick={()=>{if(!botInput.trim()||botTyping)return;const msg=botInput;setBotMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:now()}]);setBotInput("");sendToGemini(msg);}} style={{width:44,height:44,borderRadius:22,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
 
           {/* شاشة محادثة الصديق */}
-          {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
+          {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none",paddingTop:"env(safe-area-inset-top, 0px)"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
 
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
@@ -2305,7 +2414,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   <div style={{fontWeight:700,fontSize:14,color:text}}>{partner.name}</div>
                   <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
                     <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
-                    {streamTyping?"يكتب الآن...":partner._uid&&onlineUsers[partner._uid]?"متصل":"غير متصل"}
+                    {streamTyping?"typing...":partner._uid&&onlineUsers[partner._uid]?"online":"offline"}
                   </div>
                 </div>
               </button>
@@ -2342,14 +2451,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       {partner._uid&&onlineUsers[partner._uid]?"متصل الآن":"غير متصل"}
                     </div>
                   </div>
-                  <button onClick={()=>setShowPartnerProfile(false)} style={btnP({width:"100%"})}>إغلاق</button>
+                  <button onClick={()=>setShowPartnerProfile(false)} style={btnP({width:"100%"})}>Close</button>
                 </div>
               </div>
             )}
 
             {/* الرسائل */}
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
-              {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
+              {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>No messages yet — say hello 👋</div>}
               {streamMessages.map(m=>{
                 if(m._isSystem) return(
                   <div key={m.id} style={{alignSelf:"center",maxWidth:"88%",margin:"6px 0"}}>
@@ -2386,7 +2495,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       onClick={()=>{ if(!isDeleted){setReactMenuId(prev=>prev===m.id?null:m.id);setMsgMenuId(null);} }}
                       onContextMenu={e=>{ e.preventDefault(); if(!isDeleted){setMsgMenuId(id=>id===m.id?null:m.id);setReactMenuId(null);} }}
                       onPointerDown={()=>{ if(isDeleted) return; const t2=setTimeout(()=>{setMsgMenuId(m.id);setReactMenuId(null);},500); const cancel=()=>clearTimeout(t2); window.addEventListener("pointerup",cancel,{once:true}); }}
-                      style={{background:isDeleted?"transparent":bubbleBg,color:isMe?"white":text,padding:img||isAudio?"8px":"10px 14px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,boxShadow:isDeleted?"none":isMe?`0 2px 8px ${glow}`:"0 1px 4px rgba(0,0,0,0.08)",border:isDeleted?`1px dashed ${border}`:isMe?"none":`1px solid ${border}`,overflow:"hidden",maxWidth:"100%",cursor:"pointer",opacity:m._uploading?0.6:1}}>
+                      style={{background:isDeleted?"transparent":bubbleBg,color:isMe?"white":text,padding:img||isAudio?"8px":"10px 14px",borderRadius:isMe?"18px 4px 18px 18px":"4px 18px 18px 18px",fontSize:14,lineHeight:1.6,boxShadow:isDeleted?"none":isMe?`0 2px 8px ${glow}`:"0 1px 4px rgba(0,0,0,0.08)",border:isDeleted?`1px dashed ${border}`:isMe?"none":`1px solid ${border}`,overflow:"hidden",maxWidth:"100%",cursor:"pointer",opacity:m._uploading?0.6:1}}>
                       {/* اقتباس رد */}
                       {m._replyTo&&(
                         <div style={{background:"rgba(0,0,0,0.15)",borderRadius:8,padding:"4px 8px",marginBottom:6,fontSize:11,borderRight:`3px solid ${isMe?"white":primary}`,opacity:0.8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
@@ -2450,7 +2559,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             {/* hidden inputs */}
             <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
               const f=e.target.files?.[0]; if(!f)return;
-              if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}
+              if(f.size>5*1024*1024){alert("File too large (max 5MB)");return;}
               const r=new FileReader();r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};r.readAsDataURL(f);e.target.value="";
             }}/>
             <input ref={docFileRef} type="file" accept=".pdf,.doc,.docx,.txt" style={{display:"none"}} onChange={async e=>{
@@ -2484,11 +2593,26 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                         const reader=new FileReader();
                         reader.onload=async(ev)=>{
                           const audioData=ev.target.result;
-                          const localMsg={id:"local_"+Date.now(),text:"🎙️",user:{id:userId},created_at:new Date().toISOString(),attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],readBy:[]};
+                          const msgId="msg_"+Date.now();
+                          const timeStr=new Date().toISOString();
+                          const partnerId=partner._uid||"";
+                          const cid="direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+                          // عرض محلي فوري بالصوت الحقيقي
+                          const localMsg={id:msgId,text:"🎙️",user:{id:userId},created_at:timeStr,attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],readBy:[]};
                           setStreamMessages(prev=>[...prev,localMsg]);
-                          if(directChanRef.current){
-                            await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:localMsg.id,text:"🎙️",imageData:audioData,from:userId,time:localMsg.created_at,rid:roomId}});
-                          }
+                          // رفع الصوت لـ Storage
+                          try{
+                            const audioBlob=await fetch(audioData).then(r=>r.blob());
+                            const fileUrl=await uploadToStorage(audioBlob,"voice.webm","audio/webm");
+                            if(fileUrl){
+                              // حفظ في Database
+                              await saveMessageToDB({id:msgId,room_id:cid,user_id:userId,text:"🎙️",type:"audio",file_url:fileUrl,created_at:timeStr});
+                              // تحديث الرسالة المحلية بالـ URL
+                              setStreamMessages(prev=>prev.map(m=>m.id===msgId?{...m,attachments:[{type:"audio",image_url:fileUrl,asset_url:fileUrl}]}:m));
+                              // إشعار فوري
+                              if(directChanRef.current) await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:msgId,text:"🎙️ Voice message",from:userId,rid:roomId}});
+                            }
+                          }catch(err){console.error("voice upload:",err);}
                           addXp(3,"صوتية"); setCoins(c=>c+1);
                         };
                         reader.readAsDataURL(blob);
@@ -2498,46 +2622,33 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     mr.start(); setIsRecording(true); setRecordSecs(0);
                     const iv=setInterval(()=>setRecordSecs(s=>{if(s>=59){clearInterval(iv);if(mediaRecorderRef.current?.state==="recording")mediaRecorderRef.current.stop();return 0;}return s+1;}),1000);
                     mediaRecorderRef.current._interval=iv;
-                  }catch(e){alert("لا يمكن الوصول للميكروفون");}
+                  }catch(e){alert("Cannot access microphone");}
                 }}
                 onPointerUp={()=>{ if(mediaRecorderRef.current?.state==="recording"){if(mediaRecorderRef.current._interval)clearInterval(mediaRecorderRef.current._interval);mediaRecorderRef.current.stop();} }}
                 onPointerLeave={()=>{ if(mediaRecorderRef.current?.state==="recording"){if(mediaRecorderRef.current._interval)clearInterval(mediaRecorderRef.current._interval);voiceChunksRef.current=[];mediaRecorderRef.current.stop();setIsRecording(false);setRecordSecs(0);} }}
                 style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
               >{Ic.mic(isRecording?"white":muted,19)}</button>
-              <input
+              <textarea
                 value={chatInput}
-                onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}}
+                rows={1}
+                onChange={e=>{const v=e.target.value.slice(0,500);setChatInput(v);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";streamTypingStart();}}
                 onKeyDown={async e=>{
-                  if(e.key==="Enter"&&chatInput.trim()){
+                  if(e.key==="Enter"&&!e.shiftKey&&chatInput.trim()){e.preventDefault();
                     const txt=chatInput; setChatInput(""); streamTypingStop();
-                    const msgToSend = replyTo ? {text:txt,_replyTo:replyTo.text} : {text:txt};
                     setReplyTo(null);
-                    // إضافة محلية فورية مع الرد
-                    const localMsg = {id:"local_"+Date.now(),text:txt,_replyTo:replyTo?.text,user:{id:userId},created_at:new Date().toISOString(),attachments:[],readBy:[]};
-                    setStreamMessages(prev=>[...prev,localMsg]);
-                    if(directChanRef.current){
-                      await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:localMsg.id,text:txt,_replyTo:replyTo?.text,imageData:null,from:userId,time:localMsg.created_at,rid:roomId}});
-                    }
-                    setConversations(prev=>prev.map(c=>(c.partnerId===partner._uid||c.rid===roomId)?{...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}:c));
-                    if(partner._uid) sendPushNotif(partner._uid,profile.name,txt,"msg");
-                    addXp(5,"رسالة"); setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;}); updateQuest("msgs"); setCoins(c=>c+1);
+                    const ok=await sendStreamMessage(txt,null);
+                    if(ok){ addXp(5,"رسالة"); setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;}); updateQuest("msgs"); setCoins(c=>c+1); }
                   }
                 }}
-                placeholder="اكتب رسالة..."
-                style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}
-              />
+                placeholder="Type a message..."
+                style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:20,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui",resize:"none",overflow:"hidden",lineHeight:"1.4"}}
+              ></textarea>
               <button onClick={async()=>{
                 if(!chatInput.trim()) return;
                 const txt=chatInput; setChatInput(""); streamTypingStop();
-                const localMsg = {id:"local_"+Date.now(),text:txt,_replyTo:replyTo?.text,user:{id:userId},created_at:new Date().toISOString(),attachments:[],readBy:[]};
                 setReplyTo(null);
-                setStreamMessages(prev=>[...prev,localMsg]);
-                if(directChanRef.current){
-                  await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:localMsg.id,text:txt,_replyTo:localMsg._replyTo,imageData:null,from:userId,time:localMsg.created_at,rid:roomId}});
-                }
-                setConversations(prev=>prev.map(c=>(c.partnerId===partner._uid||c.rid===roomId)?{...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}:c));
-                if(partner._uid) sendPushNotif(partner._uid,profile.name,txt,"msg");
-                addXp(5,"رسالة"); setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;}); updateQuest("msgs"); setCoins(c=>c+1);
+                const ok=await sendStreamMessage(txt,null);
+                if(ok){ addXp(5,"رسالة"); setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;}); updateQuest("msgs"); setCoins(c=>c+1); }
               }} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
@@ -3224,7 +3335,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       {showUserSearch&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowUserSearch(false)}>
           <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary,display:"flex",alignItems:"center",gap:8}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:30,height:30,borderRadius:15,background:"#6366f133",border:"1px solid #6366f144"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="#6366f122" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>ابحث عن صديق</div>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary,display:"flex",alignItems:"center",gap:8}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:30,height:30,borderRadius:15,background:"#6366f133",border:"1px solid #6366f144"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="#6366f122" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Find a friend</div>
             <div style={{color:muted,fontSize:12,marginBottom:14}}>ابحث بـ <strong style={{color:primary}}>ID المستخدم القصير</strong> — مثال: AIL-F أو AIL-K9X2P</div>
             {/* My ID card */}
             <div style={{background:`${primary}11`,border:`1px solid ${primary}33`,borderRadius:14,padding:"10px 16px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -3296,7 +3407,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   دردشة</button>
               </div>
             ))}
-            <button onClick={()=>setShowUserSearch(false)} style={{width:"100%",padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إغلاق</button>
+            <button onClick={()=>setShowUserSearch(false)} style={{width:"100%",padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>Close</button>
           </div>
         </div>
       )}
@@ -3406,7 +3517,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>{setShowProfileView(false);setShowProfile(true);}} style={btnP({flex:1,fontSize:13})}>✏️ تعديل</button>
-              <button onClick={()=>setShowProfileView(false)} style={{flex:1,padding:"13px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إغلاق</button>
+              <button onClick={()=>setShowProfileView(false)} style={{flex:1,padding:"13px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>Close</button>
             </div>
           </div>
         </div>
