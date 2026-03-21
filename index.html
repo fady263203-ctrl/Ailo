@@ -188,7 +188,6 @@ function Ailo(){
   const setAccentKey=(v)=>{ setAccentKeyRaw(v); save("accent",v); };
     const SUPA_URL="https://tsdpznjarcvmpcrmmbdu.supabase.co";
   const SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
-  const STREAM_API_KEY="xmjcva8g2rgv"; // API Key only — Secret is in Supabase Edge Function
 
   const[darkMode,setDarkModeRaw]=useState(()=>load("dark",true));
   const setDarkMode=(v)=>{ const nv=typeof v==="function"?v(darkMode):v; setDarkModeRaw(nv); save("dark",nv); };
@@ -565,12 +564,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const lobbyRef=useRef(null);
   const roomRef=useRef(null);
   const inboxRef=useRef(null);
-  // Stream Chat refs
-  const streamClientRef=useRef(null);
-  const streamChannelRef=useRef(null);
-  const[streamReady,setStreamReady]=useState(false);
+  // Direct Chat refs (Supabase Broadcast)
+  const directChanRef=useRef(null); // channel الدردشة المباشرة
   const[streamMessages,setStreamMessages]=useState([]);
   const[streamTyping,setStreamTyping]=useState(false);
+  // ── ميزات الدردشة ──
+  const[showPartnerProfile,setShowPartnerProfile]=useState(false);
+  const[msgMenuId,setMsgMenuId]=useState(null);
+  const[reactMenuId,setReactMenuId]=useState(null);
+  const[replyTo,setReplyTo]=useState(null);
+  const[chatDot,setChatDot]=useState(false);
   // Online/offline presence
   const[onlineUsers,setOnlineUsers]=useState({});
   const presenceRef=useRef(null);
@@ -905,242 +908,121 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){}
   };
 
-  // ── Stream Chat — REST API مباشرة (بدون SDK) ─────────────────────────────
+  // ── دردشة مباشرة عبر Supabase Broadcast ────────────────────────────────
 
-  const initStream = async (uid, name, avatar) => {
-    if(!uid) return;
-    try{
-      let userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
-
-      // ✅ تحديث تلقائي للـ token إذا انتهت صلاحيته
-      const tryRefresh = async () => {
-        const supa = getSupa();
-        if(!supa) return userToken;
-        try{
-          const { data } = await supa.auth.refreshSession();
-          if(data?.session?.access_token){
-            localStorage.setItem("ailo_token", data.session.access_token);
-            return data.session.access_token;
-          }
-        }catch(e){}
-        return userToken;
+  // فتح قناة الدردشة المباشرة مع صديق
+  const joinStreamChannel = (myId, partnerId) => {
+    const supa = getSupa(); if(!supa) return;
+    // قطع القناة القديمة إن وجدت
+    if(directChanRef.current){ try{supa.removeChannel(directChanRef.current);}catch(e){} directChanRef.current=null; }
+    const cid = "direct_"+[myId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+    const ch = supa.channel(cid);
+    ch.on("broadcast",{event:"direct_msg"},({payload})=>{
+      if(payload.from===myId) return; // رسائلي تم إضافتها محلياً
+      const msg = {
+        id: payload.id,
+        text: payload.text||"",
+        user: { id: payload.from },
+        created_at: payload.time||new Date().toISOString(),
+        attachments: payload.imageData ? [{type:"image",image_url:payload.imageData}] : [],
+        readBy: []
       };
-
-      const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "apikey":SUPA_KEY,
-          "Authorization":`Bearer ${userToken}`
-        },
-        body: JSON.stringify({ user_id: uid, name, avatar })
-      });
-      const data = await res.json();
-
-      // إذا انتهت الصلاحية — جدّد التوكن وأعد المحاولة
-      if(data.error || !data.token){
-        userToken = await tryRefresh();
-        const res2 = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
-          method:"POST",
-          headers:{
-            "Content-Type":"application/json",
-            "apikey":SUPA_KEY,
-            "Authorization":`Bearer ${userToken}`
-          },
-          body: JSON.stringify({ user_id: uid, name, avatar })
-        });
-        const data2 = await res2.json();
-        if(data2.error || !data2.token){ console.error("Stream token error:", data2); return; }
-        streamClientRef.current = { token: data2.token, serverToken: data2.server_token, userId: uid, apiKey: data2.api_key || STREAM_API_KEY };
-        setStreamReady(true);
-        return;
-      }
-
-      streamClientRef.current = {
-        token: data.token,
-        serverToken: data.server_token,
-        userId: uid,
-        apiKey: data.api_key || STREAM_API_KEY
-      };
-      setStreamReady(true);
-      console.log("Stream ready for:", uid);
-    }catch(e){ console.error("Stream init error:", e); }
+      setStreamMessages(prev=>[...prev, msg]);
+      // تحديث آخر رسالة في القائمة
+      const txt = payload.text||(payload.imageData?"📷 صورة":"");
+      setConversations(prev=>prev.map(c=>
+        (c.partnerId===partnerId||c.rid===payload.rid)
+          ? {...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}),unread:(c.unread||0)+1}
+          : c
+      ));
+      playNotifSound("msg");
+      addNotif("💬","رسالة جديدة",txt.length>40?txt.slice(0,40)+"…":txt,"msg");
+    });
+    ch.on("broadcast",{event:"direct_typing"},({payload})=>{
+      if(payload.from===myId) return;
+      setStreamTyping(!!payload.on);
+      if(payload.on) setTimeout(()=>setStreamTyping(false),3000);
+    });
+    ch.subscribe();
+    directChanRef.current = ch;
+    // تحميل الرسائل المحفوظة محلياً
+    const saved = load("direct_msgs_"+[myId,partnerId].sort().join("_"),[]);
+    setStreamMessages(saved.slice(-50));
   };
 
-  const streamGet = async (path, params={}) => {
-    const c = streamClientRef.current; if(!c) return null;
-    try{
-      const qs = new URLSearchParams({api_key: c.apiKey, ...params}).toString();
-      const res = await fetch(`https://chat.stream-io-api.com${path}?${qs}`, {
-        method: "GET",
-        headers:{ "Stream-Auth-Type":"jwt", "Authorization": c.token, "Content-Type":"application/json" }
-      });
-      return await res.json();
-    }catch(e){ return null; }
-  };
-
-  const streamPost = async (path, body, useServerToken=false) => {
-    const c = streamClientRef.current; if(!c) return null;
-    try{
-      const tok = useServerToken ? (c.serverToken||c.token) : c.token;
-      const res = await fetch(`https://chat.stream-io-api.com${path}?api_key=${c.apiKey}`, {
-        method:"POST",
-        headers:{ "Stream-Auth-Type":"jwt", "Authorization": tok, "Content-Type":"application/json" },
-        body: JSON.stringify(body)
-      });
-      return await res.json();
-    }catch(e){ return null; }
-  };
-
-  const joinStreamChannel = async (myId, partnerId, partnerName, partnerAvatar) => {
-    // انتظر حتى يجهز Stream (max 5 ثوانٍ)
-    if(!streamClientRef.current){
-      let waited=0;
-      while(!streamClientRef.current && waited<5000){
-        await new Promise(r=>setTimeout(r,300));
-        waited+=300;
-      }
-      if(!streamClientRef.current){ console.warn("Stream not ready"); return; }
-    }
-    try{
-      const cid = [myId, partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
-      streamChannelRef.current = { id: cid, type: "messaging" };
-
-      // ✅ أنشئ القناة server-side (عبر Edge Function) مع كلا المستخدمين كأعضاء
-      const userToken = localStorage.getItem("ailo_token") || SUPA_KEY;
-      const setupRes = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-token`, {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "apikey":SUPA_KEY,
-          "Authorization":`Bearer ${userToken}`
-        },
-        body: JSON.stringify({ user_id: myId, partner_id: partnerId })
-      });
-      const setupData = await setupRes.json();
-      if(setupData.server_token){
-        // حدّث الـ server token
-        streamClientRef.current.serverToken = setupData.server_token;
-      }
-
-      // جلب الرسائل السابقة بـ server token
-      const data = await streamPost(`/channels/messaging/${cid}/query`,{
-        data: { created_by_id: myId, members: [myId, partnerId] },
-        messages:{ limit:50 }, state:true, watch:false
-      }, true);
-      if(data?.messages) setStreamMessages(data.messages);
-
-      // Polling للرسائل الجديدة كل 2 ثانية
-      if(streamChannelRef.current._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
-      let lastMsgId = data?.messages?.[data.messages.length-1]?.id || "";
-      streamChannelRef.current._pollInterval = setInterval(async()=>{
-        if(!streamChannelRef.current) return;
-        const fresh = await streamPost(`/channels/messaging/${cid}/query`,{
-          messages:{ limit:50 },
-          watch: false
-        }, true); // server token for reliable access
-        if(fresh?.messages && Array.isArray(fresh.messages)){
-          const newLastId = fresh.messages[fresh.messages.length-1]?.id || "";
-          if(newLastId && newLastId !== lastMsgId){
-            lastMsgId = newLastId;
-            setStreamMessages(prev => {
-              const pendingLocals = prev.filter(m => m.id.toString().startsWith("local_"));
-              return [...fresh.messages, ...pendingLocals];
-            });
-          }
-        }
-      }, 2000);
-
-      console.log("Stream channel ready:", cid);
-    }catch(e){ console.error("Stream channel:", e); }
-  };
-
+  // إرسال رسالة مباشرة
   const sendStreamMessage = async (text, imageData=null) => {
-    if(!streamChannelRef.current || !streamClientRef.current) {
+    if(!directChanRef.current){
       alert("جارٍ الاتصال بالخادم، انتظر ثانية وحاول مجدداً ⏳");
       return false;
     }
     try{
-      const { id, type } = streamChannelRef.current;
-      const c = streamClientRef.current;
+      const msgId = "msg_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
+      const timeStr = new Date().toISOString();
       const localMsg = {
-        id: "local_"+Date.now(),
+        id: msgId,
         text: text||"",
-        user: { id: c.userId },
-        created_at: new Date().toISOString(),
-        attachments: imageData ? [{ type:"image", image_url: imageData }] : [],
-        readBy: []
+        user: { id: userId },
+        created_at: timeStr,
+        attachments: imageData?[{type:"image",image_url:imageData}]:[],
+        readBy:[]
       };
-      setStreamMessages(prev => [...prev, localMsg]);
-      // user_id في جذر الطلب وداخل message معاً
-      const body = imageData
-        ? { message:{ text:"", user_id: c.userId, attachments:[{ type:"image", image_url: imageData }] }, user_id: c.userId }
-        : { message:{ text, user_id: c.userId }, user_id: c.userId };
-      const res = await streamPost(`/channels/${type}/${id}/message`, body, true);
-      if(res?.message){
-        setStreamMessages(prev => prev.map(m => m.id===localMsg.id ? res.message : m));
-        // ✅ تحديث آخر رسالة في قائمة المحادثات
-        if(text) setConversations(prev=>prev.map(c=>
-          c.rid===roomId ? {...c, lastMsg:text, time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})} : c
-        ));
-        // ✅ إشعار Push للطرف الثاني
-        if(partner._uid){
-          streamAction("notify",{
-            target_user_id: partner._uid,
-            title: profile.name,
-            body: text || "📷 صورة"
-          });
-        }
-        return true;
-      }
-      return false;
-    }catch(e){ return false; }
+      // إضافة محلياً فوراً
+      setStreamMessages(prev=>[...prev,localMsg]);
+      // حفظ في localStorage
+      const partnerId = partner._uid||"";
+      const key = "direct_msgs_"+[userId,partnerId].sort().join("_");
+      const saved = load(key,[]);
+      save(key,[...saved,localMsg].slice(-100));
+      // إرسال عبر Supabase Broadcast
+      await directChanRef.current.send({
+        type:"broadcast", event:"direct_msg",
+        payload:{ id:msgId, text:text||"", imageData:imageData||null, from:userId, time:timeStr, rid:roomId }
+      });
+      // تحديث قائمة المحادثات
+      const txt = text||(imageData?"📷 صورة":"");
+      setConversations(prev=>prev.map(c=>
+        (c.partnerId===partnerId||c.rid===roomId)
+          ? {...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}
+          : c
+      ));
+      // إشعار Push للطرف الثاني
+      if(partner._uid) sendPushNotif(partner._uid, profile.name, txt, "msg");
+      return true;
+    }catch(e){ console.error("sendDirectMsg:",e); return false; }
   };
 
+  // مؤشر الكتابة
   const streamTypingStart = () => {
-    try{ if(roomRef.current) roomRef.current.send({type:"broadcast",event:"stream_typing",payload:{on:true}}); }catch(e){}
+    try{ if(directChanRef.current) directChanRef.current.send({type:"broadcast",event:"direct_typing",payload:{on:true,from:userId}}); }catch(e){}
   };
   const streamTypingStop = () => {
-    try{ if(roomRef.current) roomRef.current.send({type:"broadcast",event:"stream_typing",payload:{on:false}}); }catch(e){}
+    try{ if(directChanRef.current) directChanRef.current.send({type:"broadcast",event:"direct_typing",payload:{on:false,from:userId}}); }catch(e){}
   };
 
-  // ✅ رسالة نظام داخل المحادثة (مكالمات)
+  // رسالة نظام داخل المحادثة (مكالمات)
   const addCallSystemMsg = (icon, label, sub="") => {
     const msg = {
       id: "sys_"+Date.now(),
-      _isSystem: true,
-      _icon: icon,
-      _label: label,
-      _sub: sub,
-      user: { id: "system" },
+      _isSystem:true, _icon:icon, _label:label, _sub:sub,
+      user:{ id:"system" },
       created_at: new Date().toISOString(),
-      text: "", attachments: [], readBy: []
+      text:"", attachments:[], readBy:[]
     };
-    setStreamMessages(prev => [...prev, msg]);
+    setStreamMessages(prev=>[...prev,msg]);
   };
 
-  const disconnectStream = async () => {
+  // قطع الاتصال
+  const disconnectStream = () => {
     try{
-      if(streamChannelRef.current?._pollInterval) clearInterval(streamChannelRef.current._pollInterval);
-      streamChannelRef.current = null;
-      streamClientRef.current  = null;
-      setStreamReady(false);
+      const supa = getSupa();
+      if(directChanRef.current && supa){ try{supa.removeChannel(directChanRef.current);}catch(e){} directChanRef.current=null; }
       setStreamMessages([]);
+      setStreamTyping(false);
     }catch(e){}
   };
 
-  // ── ailo-stream-action: read / notify / delete ────────────────────────────
-  const streamAction = async (action, params={}) => {
-    try{
-      const token = localStorage.getItem("ailo_token") || SUPA_KEY;
-      const res = await fetch(`${SUPA_URL}/functions/v1/ailo-stream-action`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ action, ...params })
-      });
-      return await res.json();
-    }catch(e){ return null; }
-  };
+
   useEffect(()=>{
     if(!userId) return;
     const supa=getSupa(); if(!supa) return;
@@ -1185,7 +1067,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   useEffect(()=>{
     const restoreSession = async () => {
       const token = localStorage.getItem("ailo_token");
-      if(token && !streamClientRef.current){
+      if(token){
         const supa = getSupa();
         if(supa){
           try{
@@ -1207,7 +1089,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
             const sx = load("xp",0); if(sx>0) setTotalXp(sx);
             const sc = load("coins",0); if(sc>0) setCoins(sc);
-            initStream(uid, sp?.name||profile.name, sp?.avatar||profile.avatar);
+            // Direct chat uses Supabase — no init needed
           }catch(e){ console.error("Session check error:", e); }
         }
       }
@@ -1225,7 +1107,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           localStorage.setItem("ailo_token", data.session.access_token);
           console.log("Token refreshed automatically");
           // أعد تهيئة Stream بالتوكن الجديد
-          if(userId) initStream(userId, profile.name, profile.avatar);
+          // Direct chat uses Supabase — no init needed
         }
       }catch(e){ console.warn("Auto refresh failed:", e); }
     }, 23 * 60 * 60 * 1000); // 23 ساعة
@@ -1555,7 +1437,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
           // ✅ تهيئة Stream Chat
           const av = load("profile",{})?.avatar || "";
-          initStream(newUid, userName, av);
+          // Direct chat uses Supabase — no init needed
 
           // ✅ نشر تلقائي في جدول leaderboard عند تسجيل الدخول حتى يظهر في البحث
           const finalShortId = load("shortId","") || (existingShortId||"");
@@ -1970,7 +1852,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         ? "linear-gradient(160deg,#0d1421 0%,#0f1f35 50%,#0a0f1a 100%)"
         : "linear-gradient(160deg,#f8fafc 0%,#f0f4ff 50%,#f5f5f5 100%)",
       minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",
-      maxWidth:480,margin:"0 auto",paddingBottom:72,position:"relative",overflow:"hidden"
+      maxWidth:480,margin:"0 auto",paddingBottom:tab==="home"?72:0,position:"relative",overflow:"hidden"
     }}>
       {/* Space atmosphere */}
       <div style={{position:"fixed",top:-120,right:-80,width:320,height:320,borderRadius:"50%",background:`radial-gradient(circle,${primary}20 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
@@ -2030,7 +1912,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <div style={{flex:1}}><XPBar pct={lvl.pct} primary={primary} accent={accent}/></div>
           <span style={{fontSize:10,color:muted,flexShrink:0}}>{lvl.current}/{lvl.needed}</span>
           <button onClick={()=>setShowCoinsInfo(true)} style={{background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:50,padding:"2px 8px",display:"flex",alignItems:"center",gap:3,flexShrink:0,cursor:"pointer"}}><span style={{fontSize:12}}>🪙</span><span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>{coins}</span></button>
-          <div style={{background:"rgba(239,68,68,0.15)",borderRadius:50,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#ef4444",flexShrink:0}} style={{display:"flex",alignItems:"center",gap:3}}><span style={{color:"#ef4444",fontSize:13}}>🔥</span><span>{streak}</span></div>
+          <div style={{background:"rgba(239,68,68,0.15)",borderRadius:50,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#ef4444",flexShrink:0,display:"flex",alignItems:"center",gap:3}}><span style={{color:"#ef4444",fontSize:13}}>🔥</span><span>{streak}</span></div>
         </div>
       </div>
 
@@ -2110,7 +1992,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           ))}
 
           <div style={{...glass({marginTop:12})}}>
-            <div style={{fontWeight:800,fontSize:13,marginBottom:12,color:muted}} style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f472b633",border:"1px solid #f472b644"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f472b622" stroke="#f472b6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></span>شاراتي</div>
+            <div style={{fontWeight:800,fontSize:13,marginBottom:12,color:muted,display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f472b633",border:"1px solid #f472b644"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f472b622" stroke="#f472b6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></span>شاراتي</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{BADGE_DEFS.map((b,i)=>{
               const earned=load("badges_earned",[]).includes(b.key)||b.cond({...stats,streak});
               return(<div key={i} style={{textAlign:"center",padding:"11px 6px",background:earned?`${primary}18`:"rgba(128,128,128,0.08)",borderRadius:14,border:`1px solid ${earned?primary:border}`,opacity:earned?1:0.4,boxShadow:earned?`0 0 14px ${glow}`:undefined}}>
@@ -2195,6 +2077,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setRoomId(rid); setCallType("text");
                     setStreamMessages([]);
                     await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");
+                    setChatDot(true); setTimeout(()=>setChatDot(false),2000);
                     joinRoom(rid);
                     // ✅ حفظ المحادثة
                     saveConversation({
@@ -2231,9 +2114,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setCallType("text");
                   joinRoom(conv.rid);
                   await joinStreamChannel(userId, conv.partnerId, conv.partnerName, conv.partnerAv);
+                  setChatDot(true); setTimeout(()=>setChatDot(false),2000);
                   // ✅ Read Receipt — علّم الرسائل كمقروءة
                   const cid=[userId,conv.partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
-                  streamAction("read",{channel_id:cid, user_id:userId});
+                  // read receipt — handled locally
                   setActiveChat("friend");
                   // مسح الرسائل غير المقروءة
                   saveConversation({...conv,unread:0});
@@ -2295,45 +2179,69 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>}
 
           {/* شاشة محادثة الصديق */}
-          {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)"}}>
+          {activeChat==="friend"&&<div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 200px)",userSelect:"none",WebkitUserSelect:"none"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
+
+            {/* نقطة بيضاء صغيرة — تظهر فقط عند فتح المحادثة */}
+            {chatDot&&<div style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",width:8,height:8,borderRadius:4,background:"white",boxShadow:"0 0 8px rgba(255,255,255,0.8)",zIndex:999,pointerEvents:"none",animation:"fadeIn 0.3s ease"}}/>}
+
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${border}`}}>
-              <button onClick={()=>{setActiveChat(null);streamTypingStop();}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
-              <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
-                {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
-              </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontWeight:700,fontSize:14}}>{partner.name}</div>
-                <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
-                  <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
-                  {streamTyping?"يكتب الآن...":partner._uid&&onlineUsers[partner._uid]?"متصل":"غير متصل"}
+              <button onClick={()=>{setActiveChat(null);streamTypingStop();setReplyTo(null);setMsgMenuId(null);setReactMenuId(null);setChatDot(false);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,display:"flex",alignItems:"center",fontFamily:"'Tajawal',system-ui",fontSize:13,flexShrink:0}}>{Ic.back(muted,16)}</button>
+              {/* الضغط على الصورة أو الاسم يفتح الملف */}
+              <button onClick={()=>setShowPartnerProfile(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+                <div style={{width:36,height:36,borderRadius:18,overflow:"hidden",border:`2px solid ${primary}`,flexShrink:0}}>
+                  {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:22,lineHeight:"36px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
                 </div>
-              </div>
+                <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                  <div style={{fontWeight:700,fontSize:14,color:text}}>{partner.name}</div>
+                  <div style={{fontSize:10,display:"flex",alignItems:"center",gap:4,color:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":muted}}>
+                    <div style={{width:6,height:6,borderRadius:3,background:streamTyping?"#22c55e":partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8",flexShrink:0}}/>
+                    {streamTyping?"يكتب الآن...":partner._uid&&onlineUsers[partner._uid]?"متصل":"غير متصل"}
+                  </div>
+                </div>
+              </button>
               <button onClick={async()=>{
-                setCallType("voice");setCallStatus("outgoing");setCallTime(0);setScreen("call");
-                addCallSystemMsg("🎙️","مكالمة صوتية صادرة","جاري الاتصال...");
-                joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
+                const targetId=partner._uid; if(!targetId) return;
+                setCallType("voice"); setCallStatus("outgoing"); setCallTime(0); setScreen("call");
+                addCallSystemMsg("🎙️","مكالمة صوتية","في انتظار الرد...");
+                joinRoom(roomId);
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
-                if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة صوتية من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}}
-                setTimeout(()=>joinAgora(roomId,"voice"),300);
+                if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ مكالمة من ${profile.name}`,"اضغط للرد","call",{rid:roomId,callType:"voice"});}
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.phone(primary,16)}</button>
               <button onClick={async()=>{
-                setCallType("video");setCallStatus("outgoing");setCallTime(0);setScreen("call");
-                addCallSystemMsg("📹","مكالمة فيديو صادرة","جاري الاتصال...");
-                joinRoom(roomId); // ✅ اشترك في الغرفة لاستقبال call_end و call_accept
+                const targetId=partner._uid; if(!targetId) return;
+                setCallType("video"); setCallStatus("outgoing"); setCallTime(0); setScreen("call");
+                addCallSystemMsg("📹","مكالمة فيديو","في انتظار الرد...");
+                joinRoom(roomId);
                 const supa=getSupa();
-                if(supa&&roomId){const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
-                if(targetId){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}}
-                setTimeout(()=>joinAgora(roomId,"video"),300);
+                if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 مكالمة فيديو من ${profile.name}`,"اضغط للرد","video",{rid:roomId,callType:"video"});}
               }} style={{width:32,height:32,borderRadius:9,background:`${primary}18`,border:`1px solid ${border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.video(primary,16)}</button>
               <button onClick={()=>setShowBlock(true)} style={{width:32,height:32,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.flag(muted,16)}</button>
             </div>
-            {/* Messages */}
+
+            {/* ملف الشريك */}
+            {showPartnerProfile&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowPartnerProfile(false)}>
+                <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:24})}} onClick={e=>e.stopPropagation()}>
+                  <div style={{textAlign:"center",marginBottom:16}}>
+                    <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 0 4px ${glow}`}}>
+                      {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:52,lineHeight:"80px",display:"block"}}>{partner.av||"🌍"}</span>}
+                    </div>
+                    <div style={{fontWeight:900,fontSize:20}}>{partner.name}</div>
+                    <div style={{color:muted,fontSize:12,marginTop:6,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                      <div style={{width:8,height:8,borderRadius:4,background:partner._uid&&onlineUsers[partner._uid]?"#22c55e":"#94a3b8"}}/>
+                      {partner._uid&&onlineUsers[partner._uid]?"متصل الآن":"غير متصل"}
+                    </div>
+                  </div>
+                  <button onClick={()=>setShowPartnerProfile(false)} style={btnP({width:"100%"})}>إغلاق</button>
+                </div>
+              </div>
+            )}
+
+            {/* الرسائل */}
             <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:9,paddingBottom:8}}>
               {streamMessages.length===0&&<div style={{textAlign:"center",color:muted,fontSize:12,padding:"20px 0"}}>لا توجد رسائل — ابدأ المحادثة 👋</div>}
               {streamMessages.map(m=>{
-                // ── رسالة نظام (مكالمة) — Telegram style ──
                 if(m._isSystem) return(
                   <div key={m.id} style={{alignSelf:"center",maxWidth:"88%",margin:"6px 0"}}>
                     <div style={{display:"flex",alignItems:"center",gap:7,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:50,padding:"5px 14px",fontSize:11,color:muted,backdropFilter:"blur(8px)"}}>
@@ -2343,85 +2251,117 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     </div>
                   </div>
                 );
-                const isMe=m.user?.id===userId;
-                const img=m.attachments?.[0]?.image_url;
-                const isAudio=m.attachments?.[0]?.type==="audio";
-                const audioUrl=m.attachments?.[0]?.asset_url||m.attachments?.[0]?.image_url;
-                const t=m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):"";
-                // Telegram-style bubbles
-                const bubbleBg = isMe
-                  ? `linear-gradient(135deg,${primary},${secondary})`
-                  : darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,1)";
-                const bubbleShadow = isMe
-                  ? `0 2px 8px ${glow}`
-                  : darkMode ? "0 1px 4px rgba(0,0,0,0.3)" : "0 1px 4px rgba(0,0,0,0.08)";
+                const isMe = m.user?.id===userId;
+                const isDeleted = m._deleted;
+                const img = m.attachments?.[0]?.image_url;
+                const isAudio = m.attachments?.[0]?.type==="audio";
+                const audioUrl = m.attachments?.[0]?.asset_url||m.attachments?.[0]?.image_url;
+                const t = m.created_at?new Date(m.created_at).toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"}):"";
+                const bubbleBg = isMe?`linear-gradient(135deg,${primary},${secondary})`:darkMode?"rgba(255,255,255,0.08)":"rgba(255,255,255,1)";
+                const REACTIONS = ["❤️","😂","😮","😢","👍","🔥"];
                 return(
-                  <div key={m.id} className="msg-bubble" style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%",display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
+                  <div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"78%",display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start",position:"relative"}}>
+                    {/* شريط التفاعل — ضغطة واحدة */}
+                    {reactMenuId===m.id&&(
+                      <div style={{position:"absolute",top:-44,left:isMe?"auto":0,right:isMe?0:"auto",background:darkMode?"rgba(21,31,51,0.98)":"white",borderRadius:50,padding:"6px 10px",display:"flex",gap:6,boxShadow:"0 4px 20px rgba(0,0,0,0.3)",border:`1px solid ${border}`,zIndex:10}}>
+                        {REACTIONS.map(r=>(
+                          <button key={r} onClick={()=>{
+                            setReactMenuId(null);
+                            setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,_reactions:{...(x._reactions||{}),[r]:((x._reactions||{})[r]||0)+1}}:x));
+                          }} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"2px"}}>{r}</button>
+                        ))}
+                      </div>
+                    )}
+                    {/* الفقاعة */}
                     <div
-                      onContextMenu={e=>{e.preventDefault();}}
-                      onPointerDown={isMe?(()=>{
-                        const t=setTimeout(async()=>{
-                          if(window.confirm("حذف هذه الرسالة؟")){
-                            await streamAction("delete",{message_id:m.id, user_id:userId});
-                            setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,text:"🚫 تم حذف هذه الرسالة",_deleted:true}:x));
-                          }
-                        },600);
-                        const cancel=()=>clearTimeout(t);
-                        window.addEventListener("pointerup",cancel,{once:true});
-                      }):undefined}
-                      style={{
-                      background:bubbleBg,
-                      color:isMe?"white":text,
-                      padding:img||isAudio?"8px":"10px 14px",
-                      borderRadius:isMe?"18px 4px 18px 18px":"4px 18px 18px 18px",
-                      fontSize:14,
-                      lineHeight:1.6,
-                      boxShadow:bubbleShadow,
-                      border:isMe?"none":`1px solid ${border}`,
-                      overflow:"hidden",
-                      maxWidth:"100%",
-                      userSelect:"none",
-                      cursor:isMe?"pointer":"default"
-                    }}>
-                      {img&&<img src={img} style={{maxWidth:220,borderRadius:10,display:"block"}} alt=""/>}
-                      {isAudio&&audioUrl&&(
-                        <audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>
+                      onClick={()=>{ if(!isDeleted){setReactMenuId(id=>id===m.id?null:m.id);setMsgMenuId(null);} }}
+                      onContextMenu={e=>{ e.preventDefault(); if(!isDeleted){setMsgMenuId(id=>id===m.id?null:m.id);setReactMenuId(null);} }}
+                      onPointerDown={()=>{ if(isDeleted) return; const t2=setTimeout(()=>{setMsgMenuId(m.id);setReactMenuId(null);},500); const cancel=()=>clearTimeout(t2); window.addEventListener("pointerup",cancel,{once:true}); }}
+                      style={{background:isDeleted?"transparent":bubbleBg,color:isMe?"white":text,padding:img||isAudio?"8px":"10px 14px",borderRadius:isMe?"18px 18px 4px 18px":"18px 18px 18px 4px",fontSize:14,lineHeight:1.6,boxShadow:isDeleted?"none":isMe?`0 2px 8px ${glow}`:"0 1px 4px rgba(0,0,0,0.08)",border:isDeleted?`1px dashed ${border}`:isMe?"none":`1px solid ${border}`,overflow:"hidden",maxWidth:"100%",cursor:"pointer",opacity:m._uploading?0.6:1}}>
+                      {/* اقتباس رد */}
+                      {m._replyTo&&(
+                        <div style={{background:"rgba(0,0,0,0.15)",borderRadius:8,padding:"4px 8px",marginBottom:6,fontSize:11,borderRight:`3px solid ${isMe?"white":primary}`,opacity:0.8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {m._replyTo}
+                        </div>
                       )}
-                      {!img&&!isAudio&&<span style={{wordBreak:"break-word"}}>{m.text}</span>}
+                      {isDeleted
+                        ?<span style={{color:muted,fontStyle:"italic",fontSize:13}}>🚫 تم حذف هذه الرسالة</span>
+                        :img
+                          ?<div style={{position:"relative"}}>
+                            <img src={img} style={{maxWidth:220,borderRadius:10,display:"block"}} alt=""/>
+                            <a href={img} download target="_blank" style={{position:"absolute",bottom:6,left:6,background:"rgba(0,0,0,0.55)",borderRadius:8,padding:"4px 8px",color:"white",fontSize:11,textDecoration:"none",display:"flex",alignItems:"center",gap:3}}>⬇️ تحميل</a>
+                          </div>
+                          :isAudio&&audioUrl
+                            ?<audio controls src={audioUrl} style={{maxWidth:220,height:34,accentColor:isMe?"white":primary}}/>
+                            :<span style={{wordBreak:"break-word"}}>{m.text}</span>
+                      }
+                      {/* التفاعلات */}
+                      {m._reactions&&Object.keys(m._reactions).length>0&&(
+                        <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>
+                          {Object.entries(m._reactions).map(([r,c])=>(
+                            <span key={r} style={{background:"rgba(0,0,0,0.15)",borderRadius:50,padding:"1px 6px",fontSize:11}}>{r}{c>1&&` ${c}`}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                    {/* الوقت */}
                     <div style={{fontSize:10,color:muted,marginTop:3,display:"flex",alignItems:"center",gap:3,padding:"0 4px"}}>
                       {t}
                       {isMe&&<span style={{display:"flex"}}>{m.readBy?.length>1?Ic.checks("#22c55e",11):Ic.check(muted,10)}</span>}
                     </div>
+                    {/* قائمة الضغط المطوّل */}
+                    {msgMenuId===m.id&&(
+                      <div style={{position:"absolute",bottom:"100%",left:isMe?"auto":0,right:isMe?0:"auto",background:darkMode?"rgba(21,31,51,0.98)":"white",borderRadius:14,padding:6,boxShadow:"0 8px 30px rgba(0,0,0,0.3)",border:`1px solid ${border}`,zIndex:20,minWidth:150,marginBottom:4}} onClick={e=>e.stopPropagation()}>
+                        {[
+                          {icon:"↩️",label:"رد",action:()=>{ setReplyTo({id:m.id,text:m.text||"📎"}); setMsgMenuId(null); }},
+                          {icon:"📋",label:"نسخ",action:()=>{ navigator.clipboard?.writeText(m.text||""); setMsgMenuId(null); }},
+                          ...(isMe&&!isDeleted?[{icon:"🗑️",label:"حذف",color:"#ef4444",action:()=>{ setMsgMenuId(null); setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true}:x)); }}]:[]),
+                        ].map((item,i)=>(
+                          <button key={i} onClick={item.action} style={{width:"100%",background:"none",border:"none",cursor:"pointer",padding:"9px 14px",display:"flex",alignItems:"center",gap:10,color:item.color||text,fontSize:13,fontWeight:600,fontFamily:"'Tajawal',system-ui",borderRadius:10,textAlign:"right"}}>
+                            <span>{item.icon}</span><span>{item.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
               {streamTyping&&<div style={{alignSelf:"flex-start",background:card,padding:"10px 14px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
               <div ref={msgEnd}/>
             </div>
+
+            {/* شريط الرد على رسالة */}
+            {replyTo&&(
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",background:`${primary}11`,borderRadius:10,marginBottom:6,border:`1px solid ${primary}33`}}>
+                <div style={{flex:1,fontSize:12,color:primary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>↩️ رد على: {replyTo.text}</div>
+                <button onClick={()=>setReplyTo(null)} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:16,padding:0}}>✕</button>
+              </div>
+            )}
+
             {/* hidden inputs */}
             <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{
               const f=e.target.files?.[0]; if(!f)return;
               if(f.size>5*1024*1024){alert("الحجم أكبر من 5MB");return;}
               const r=new FileReader();r.onload=async ev=>{await sendStreamMessage(null,ev.target.result);addXp(3,"صورة");setCoins(c=>c+1);};r.readAsDataURL(f);e.target.value="";
             }}/>
-            <input ref={docFileRef} type="file" accept=".pdf,.doc,.docx,.txt,.ppt,.xlsx" style={{display:"none"}} onChange={async e=>{
+            <input ref={docFileRef} type="file" accept=".pdf,.doc,.docx,.txt" style={{display:"none"}} onChange={async e=>{
               const f=e.target.files?.[0]; if(!f)return;
               await sendStreamMessage(`📎 ${f.name}`);e.target.value="";
             }}/>
+
             {/* شريط التسجيل */}
             {isRecording&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:14,marginBottom:6}}>
               <div style={{width:9,height:9,borderRadius:5,background:"#ef4444",animation:"dot0 0.8s ease-in-out infinite"}}/>
               <div style={{flex:1,fontSize:13,color:"#ef4444",fontWeight:700}}>🎙️ ارفع إصبعك للإرسال... {recordSecs}ث</div>
             </div>}
+
             {/* شريط الإرسال */}
             <div style={{display:"flex",gap:6,paddingTop:8,borderTop:`1px solid ${border}`,alignItems:"center"}}>
-              <button onClick={()=>fileRef.current?.click()} title="صورة" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.image(muted,19)}</button>
-              <button onClick={()=>docFileRef.current?.click()} title="ملف" style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.attach(muted,19)}</button>
+              <button onClick={()=>fileRef.current?.click()} style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.image(muted,19)}</button>
+              <button onClick={()=>docFileRef.current?.click()} style={{width:33,height:33,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{Ic.attach(muted,19)}</button>
               <button
                 onPointerDown={async(e)=>{
-                  e.preventDefault();
-                  if(isRecording)return;
+                  e.preventDefault(); if(isRecording) return;
                   try{
                     const stream=await navigator.mediaDevices.getUserMedia({audio:true});
                     const mr=new MediaRecorder(stream);
@@ -2431,38 +2371,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       stream.getTracks().forEach(t=>t.stop());
                       setIsRecording(false); setRecordSecs(0);
                       if(voiceChunksRef.current.length>0){
-                        // ✅ تحويل الصوت لـ base64 وإرساله كـ data URL
                         const blob=new Blob(voiceChunksRef.current,{type:"audio/webm"});
                         const reader=new FileReader();
                         reader.onload=async(ev)=>{
-                          const audioData=ev.target.result; // base64 data URL
-                          // إضافة محلياً فوراً مع audio player
-                          const localMsg={
-                            id:"local_"+Date.now(),
-                            text:"",
-                            _audioData: audioData, // للعرض المحلي
-                            user:{id:streamClientRef.current?.userId},
-                            created_at:new Date().toISOString(),
-                            attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],
-                            readBy:[]
-                          };
+                          const audioData=ev.target.result;
+                          const localMsg={id:"local_"+Date.now(),text:"🎙️",user:{id:userId},created_at:new Date().toISOString(),attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],readBy:[]};
                           setStreamMessages(prev=>[...prev,localMsg]);
-                          // إرسال للسيرفر كـ attachment
-                          if(streamChannelRef.current && streamClientRef.current){
-                            const {id,type}=streamChannelRef.current;
-                            const c2=streamClientRef.current;
-                            const body={
-                              message:{
-                                text:"🎙️",
-                                user_id:c2.userId,
-                                attachments:[{type:"audio",asset_url:audioData,title:"رسالة صوتية"}]
-                              },
-                              user_id:c2.userId
-                            };
-                            const res=await streamPost(`/channels/${type}/${id}/message`,body,true);
-                            if(res?.message){
-                              setStreamMessages(prev=>prev.map(m=>m.id===localMsg.id?res.message:m));
-                            }
+                          if(directChanRef.current){
+                            await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:localMsg.id,text:"🎙️",imageData:audioData,from:userId,time:localMsg.created_at,rid:roomId}});
                           }
                           addXp(3,"صوتية"); setCoins(c=>c+1);
                         };
@@ -2471,34 +2387,49 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       voiceChunksRef.current=[];
                     };
                     mr.start(); setIsRecording(true); setRecordSecs(0);
-                    const iv=setInterval(()=>setRecordSecs(s=>{
-                      if(s>=59){clearInterval(iv);if(mediaRecorderRef.current?.state==="recording")mediaRecorderRef.current.stop();return 0;}
-                      return s+1;
-                    }),1000);
+                    const iv=setInterval(()=>setRecordSecs(s=>{if(s>=59){clearInterval(iv);if(mediaRecorderRef.current?.state==="recording")mediaRecorderRef.current.stop();return 0;}return s+1;}),1000);
                     mediaRecorderRef.current._interval=iv;
                   }catch(e){alert("لا يمكن الوصول للميكروفون");}
                 }}
-                onPointerUp={()=>{
-                  if(mediaRecorderRef.current?.state==="recording"){
-                    if(mediaRecorderRef.current._interval) clearInterval(mediaRecorderRef.current._interval);
-                    mediaRecorderRef.current.stop();
-                  }
-                }}
-                onPointerLeave={()=>{
-                  if(mediaRecorderRef.current?.state==="recording"){
-                    if(mediaRecorderRef.current._interval) clearInterval(mediaRecorderRef.current._interval);
-                    // إلغاء إذا خرج الإصبع عن الزر
-                    voiceChunksRef.current=[];
-                    mediaRecorderRef.current.stop();
-                    setIsRecording(false); setRecordSecs(0);
-                  }
-                }}
-                title="اضغط مطولاً للتسجيل"
-                style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s",transform:isRecording?"scale(1.1)":"scale(1)",userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
+                onPointerUp={()=>{ if(mediaRecorderRef.current?.state==="recording"){if(mediaRecorderRef.current._interval)clearInterval(mediaRecorderRef.current._interval);mediaRecorderRef.current.stop();} }}
+                onPointerLeave={()=>{ if(mediaRecorderRef.current?.state==="recording"){if(mediaRecorderRef.current._interval)clearInterval(mediaRecorderRef.current._interval);voiceChunksRef.current=[];mediaRecorderRef.current.stop();setIsRecording(false);setRecordSecs(0);} }}
+                style={{width:40,height:40,background:isRecording?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecording?"#ef4444":border}`,borderRadius:isRecording?20:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
               >{Ic.mic(isRecording?"white":muted,19)}</button>
-              <input value={chatInput} onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}} onKeyDown={async e=>{if(e.key==="Enter"&&chatInput.trim()){const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}}
-              } placeholder="اكتب رسالة..." style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}/>
-              <button onClick={async()=>{if(!chatInput.trim())return;const txt=chatInput;setChatInput("");streamTypingStop();const ok=await sendStreamMessage(txt);if(ok){addXp(5,"رسالة");setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});updateQuest("msgs");setCoins(c=>c+1);}}} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
+              <input
+                value={chatInput}
+                onChange={e=>{setChatInput(e.target.value.slice(0,500));streamTypingStart();}}
+                onKeyDown={async e=>{
+                  if(e.key==="Enter"&&chatInput.trim()){
+                    const txt=chatInput; setChatInput(""); streamTypingStop();
+                    const msgToSend = replyTo ? {text:txt,_replyTo:replyTo.text} : {text:txt};
+                    setReplyTo(null);
+                    // إضافة محلية فورية مع الرد
+                    const localMsg = {id:"local_"+Date.now(),text:txt,_replyTo:replyTo?.text,user:{id:userId},created_at:new Date().toISOString(),attachments:[],readBy:[]};
+                    setStreamMessages(prev=>[...prev,localMsg]);
+                    if(directChanRef.current){
+                      await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:localMsg.id,text:txt,_replyTo:replyTo?.text,imageData:null,from:userId,time:localMsg.created_at,rid:roomId}});
+                    }
+                    setConversations(prev=>prev.map(c=>(c.partnerId===partner._uid||c.rid===roomId)?{...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}:c));
+                    if(partner._uid) sendPushNotif(partner._uid,profile.name,txt,"msg");
+                    addXp(5,"رسالة"); setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;}); updateQuest("msgs"); setCoins(c=>c+1);
+                  }
+                }}
+                placeholder="اكتب رسالة..."
+                style={{background:"rgba(128,128,128,0.1)",border:`1px solid ${border}`,borderRadius:50,padding:"11px 16px",color:text,fontSize:14,outline:"none",flex:1,fontFamily:"'Tajawal',system-ui"}}
+              />
+              <button onClick={async()=>{
+                if(!chatInput.trim()) return;
+                const txt=chatInput; setChatInput(""); streamTypingStop();
+                const localMsg = {id:"local_"+Date.now(),text:txt,_replyTo:replyTo?.text,user:{id:userId},created_at:new Date().toISOString(),attachments:[],readBy:[]};
+                setReplyTo(null);
+                setStreamMessages(prev=>[...prev,localMsg]);
+                if(directChanRef.current){
+                  await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:localMsg.id,text:txt,_replyTo:localMsg._replyTo,imageData:null,from:userId,time:localMsg.created_at,rid:roomId}});
+                }
+                setConversations(prev=>prev.map(c=>(c.partnerId===partner._uid||c.rid===roomId)?{...c,lastMsg:txt,time:new Date().toLocaleTimeString("ar",{hour:"2-digit",minute:"2-digit"})}:c));
+                if(partner._uid) sendPushNotif(partner._uid,profile.name,txt,"msg");
+                addXp(5,"رسالة"); setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;}); updateQuest("msgs"); setCoins(c=>c+1);
+              }} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
             </div>
           </div>}
         </div>}
@@ -2531,7 +2462,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
           {storeTab&&<div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <div style={{fontWeight:800,fontSize:14,color:muted}} style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f59e0b33",border:"1px solid #f59e0b44"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f59e0b22" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></span>المتجر</div>
+              <div style={{fontWeight:800,fontSize:14,color:muted,display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f59e0b33",border:"1px solid #f59e0b44"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f59e0b22" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></span>المتجر</div>
               <button onClick={()=>setShowCoinsInfo(true)} style={{background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:50,padding:"4px 12px",fontSize:11,cursor:"pointer",color:"#f59e0b",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",gap:4,fontWeight:700}}>
                 🪙 {coins} — كيف أربح؟
               </button>
@@ -2822,7 +2753,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                           width:80,height:80,borderRadius:40,border:"none",cursor:speechOn?"not-allowed":"pointer",
                           background:speechOn?`linear-gradient(135deg,#ef4444,#dc2626)`:`linear-gradient(135deg,${primary},${secondary})`,
                           display:"inline-flex",alignItems:"center",justifyContent:"center",
-                          boxShadow:speechOn?`0 0 0 12px rgba(239,68,68,0.15),0 0 0 24px rgba(239,68,68,0.07)`:`0 8px 24px ${glo}`,
+                          boxShadow:speechOn?`0 0 0 12px rgba(239,68,68,0.15),0 0 0 24px rgba(239,68,68,0.07)`:`0 8px 24px ${glow}`,
                           transition:"all 0.3s",
                           animation:speechOn?"none":"none"
                         }}>
@@ -3016,7 +2947,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           })()}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>{[["🥇","ذهبي","#f59e0b"],["🥈","فضي","#94a3b8"],["🥉","برونزي","#cd7f32"]].map(([ic,n,c])=>(<div key={n} style={{...glass({textAlign:"center",padding:"12px 6px",border:`1px solid ${c}33`})}}>  <div style={{fontSize:26}}>{ic}</div><div style={{fontSize:11,color:c,fontWeight:700,marginTop:3}}>{n}</div></div>))}</div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div style={{fontWeight:800,fontSize:14,color:muted}} style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f59e0b33",border:"1px solid #f59e0b44"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f59e0b22" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/></svg></span>الصدارة الحقيقية</div>
+            <div style={{fontWeight:800,fontSize:14,color:muted,display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#f59e0b33",border:"1px solid #f59e0b44"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#f59e0b22" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/></svg></span>الصدارة الحقيقية</div>
             <button onClick={fetchLB} style={{background:`${primary}22`,border:`1px solid ${border}`,borderRadius:50,padding:"4px 12px",fontSize:11,cursor:"pointer",color:primary,fontFamily:"'Tajawal',system-ui"}}>{lbLoading?"جاري...":"تحديث 🔄"}</button>
           </div>
           {lbData.length===0&&<div style={{...glass({textAlign:"center",padding:24,color:muted,marginBottom:14})}}>لا يوجد بيانات بعد<br/>اضغط "نشر نتيجتي" لتظهر في الصدارة 🚀</div>}
@@ -3026,12 +2957,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{u.name}{isMe?" (أنت)":""}</div><div style={{color:tierC[tier],fontSize:11,fontWeight:700}}>{(u.xp||0).toLocaleString()} XP</div></div>
           </div>);})}
           
-          <div style={{...glass({marginBottom:14})}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}} style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#06b6d433",border:"1px solid #06b6d444"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#06b6d422" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></span>تجميد السلسلة</div><div style={{color:muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div></div><button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);save("streakFrozen",true);}}} disabled={coins<50||streakFrozen} style={btnP({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>{streakFrozen?"✅ مفعّل":"50 🪙"}</button></div></div>
+          <div style={{...glass({marginBottom:14})}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:13,background:"#06b6d433",border:"1px solid #06b6d444"}}><svg width="13" height="13" viewBox="0 0 24 24" fill="#06b6d422" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></span>تجميد السلسلة</div><div style={{color:muted,fontSize:11,marginTop:2}}>احمِ سلسلتك ليوم واحد</div></div><button onClick={()=>{if(coins>=50){setCoins(c=>c-50);setStreakFrozen(true);save("streakFrozen",true);}}} disabled={coins<50||streakFrozen} style={btnP({padding:"10px 18px",fontSize:12,opacity:coins<50?0.5:1,background:streakFrozen?`linear-gradient(135deg,#22c55e,#16a34a)`:undefined})}>{streakFrozen?"✅ مفعّل":"50 🪙"}</button></div></div>
         </div>}
       </div>
 
-      {/* BOTTOM NAV */}
-      <div style={{
+      {/* BOTTOM NAV — يظهر فقط في الرئيسية */}
+      {tab==="home"&&<div style={{
         position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
         width:"100%",maxWidth:480,
         background: darkMode ? "rgba(13,20,33,0.97)" : "rgba(255,255,255,0.98)",
@@ -3094,7 +3025,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       {/* SETTINGS MODAL */}
       {showSettings&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",zIndex:100,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowSettings(false)}>
         <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
-          <div style={{fontWeight:900,fontSize:17,marginBottom:18,textAlign:"center",background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:30,height:30,borderRadius:15,background:`${primary}22`,border:`1px solid ${primary}44`}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span>الإعدادات</div>
+          <div style={{fontWeight:900,fontSize:17,marginBottom:18,textAlign:"center",background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:30,height:30,borderRadius:15,background:`${primary}22`,border:`1px solid ${primary}44`}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span>الإعدادات</div>
 
           {/* DARK/LIGHT TOGGLE */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:`1px solid ${border}`,marginBottom:16}}>
@@ -3184,7 +3115,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       {showUserSearch&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowUserSearch(false)}>
           <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary}} style={{display:"flex",alignItems:"center",gap:8}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:30,height:30,borderRadius:15,background:"#6366f133",border:"1px solid #6366f144"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="#6366f122" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>ابحث عن صديق</div>
+            <div style={{fontWeight:900,fontSize:17,marginBottom:6,color:primary,display:"flex",alignItems:"center",gap:8}}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:30,height:30,borderRadius:15,background:"#6366f133",border:"1px solid #6366f144"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="#6366f122" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>ابحث عن صديق</div>
             <div style={{color:muted,fontSize:12,marginBottom:14}}>ابحث بـ <strong style={{color:primary}}>ID المستخدم القصير</strong> — مثال: AIL-F أو AIL-K9X2P</div>
             {/* My ID card */}
             <div style={{background:`${primary}11`,border:`1px solid ${primary}33`,borderRadius:14,padding:"10px 16px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -3261,52 +3192,57 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         </div>
       )}
 
-      {/* ── INCOMING CALL / CHAT MODAL ───────────────────────── */}
+      {/* ── INCOMING CALL / CHAT MODAL — فاخر ───────────────── */}
       {showIncoming&&incomingData&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-          <div style={{...glass({width:"100%",maxWidth:360,textAlign:"center",padding:32,borderRadius:28})}}>
-            {/* أيقونة النوع */}
-            <div style={{fontSize:48,marginBottom:12}}>
-              {incomingData.callType==="video"?"📹":incomingData.callType==="voice"?"🎙️":"💬"}
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(20px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{width:"100%",maxWidth:340,textAlign:"center",animation:"popIn 0.3s cubic-bezier(0.34,1.56,0.64,1)"}}>
+            {/* نوع المكالمة */}
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",marginBottom:20,fontWeight:600,letterSpacing:1}}>
+              {incomingData.callType==="video"?"مكالمة فيديو واردة":incomingData.callType==="voice"?"مكالمة صوتية واردة":"طلب محادثة"}
             </div>
-            {/* صورة المتصل */}
-            <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 0 6px ${glo}`}}>
-              {incomingData.from?.av?.startsWith("http")
-                ?<img src={incomingData.from.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
-                :<span style={{fontSize:52,lineHeight:"80px",display:"block"}}>{incomingData.from?.av||"🌍"}</span>}
+            {/* صورة المتصل مع حلقات نبض */}
+            <div style={{position:"relative",width:120,height:120,margin:"0 auto 16px"}}>
+              <div style={{position:"absolute",inset:-12,borderRadius:"50%",border:`2px solid ${primary}44`,animation:"dot0 1.8s ease-in-out infinite"}}/>
+              <div style={{position:"absolute",inset:-24,borderRadius:"50%",border:`2px solid ${primary}22`,animation:"dot0 1.8s ease-in-out infinite",animationDelay:"0.4s"}}/>
+              <div style={{position:"absolute",inset:-36,borderRadius:"50%",border:`1px solid ${primary}11`,animation:"dot0 1.8s ease-in-out infinite",animationDelay:"0.8s"}}/>
+              <div style={{width:120,height:120,borderRadius:60,overflow:"hidden",border:`3px solid ${primary}`,boxShadow:`0 0 0 4px ${glow},0 20px 60px rgba(0,0,0,0.5)`}}>
+                {incomingData.from?.av?.startsWith("http")
+                  ?<img src={incomingData.from.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                  :<span style={{fontSize:72,lineHeight:"120px",display:"block"}}>{incomingData.from?.av||"🌍"}</span>}
+              </div>
             </div>
-            <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>{incomingData.from?.name||"مستخدم"}</div>
-            <div style={{color:muted,fontSize:13,marginBottom:24}}>
-              {incomingData.callType==="video"?"مكالمة فيديو واردة 📹":incomingData.callType==="voice"?"مكالمة صوتية واردة 🎙️":"يريد محادثتك 💬"}
+            <div style={{fontWeight:900,fontSize:22,color:"white",marginBottom:6}}>{incomingData.from?.name||"مستخدم"}</div>
+            {/* نقاط رنين */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:40}}>
+              {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:4,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
             </div>
-            {/* أزرار القبول والرفض */}
-            <div style={{display:"flex",gap:14,justifyContent:"center"}}>
+            {/* أزرار */}
+            <div style={{display:"flex",gap:32,justifyContent:"center",alignItems:"flex-end"}}>
               {/* رفض */}
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
                 <button onClick={async()=>{
                   const d=incomingData;
                   setShowIncoming(false); setIncomingData(null);
-                  // أعلم المتصل بالرفض عبر inbox
                   if(d.callType!=="text" && d.from?.userId){
                     const supa=getSupa();
                     if(supa){
                       try{
                         const ib=supa.channel("inbox_"+d.from.userId);
                         await ib.subscribe();
-                        await ib.send({type:"broadcast",event:"call_rejected",payload:{
-                          from:{name:profile.name,av:profile.avatar}
-                        }});
+                        await ib.send({type:"broadcast",event:"call_rejected",payload:{from:{name:profile.name,av:profile.avatar}}});
                         supa.removeChannel(ib);
                       }catch(e){}
                     }
                   }
-                }} style={{width:64,height:64,borderRadius:32,background:"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 18px rgba(239,68,68,0.4)",fontSize:26}}>
-                  {incomingData.callType==="text"?"✕":"📵"}
+                }} style={{width:70,height:70,borderRadius:35,background:"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 30px rgba(239,68,68,0.5)",transition:"transform 0.15s"}}
+                  onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
+                  onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07M14.29 9.9a16 16 0 00-6.29-6.29M1 1l22 22"/></svg>
                 </button>
-                <span style={{fontSize:11,color:muted}}>{incomingData.callType==="text"?"تجاهل":"رفض"}</span>
+                <span style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontWeight:600}}>رفض</span>
               </div>
               {/* قبول */}
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
                 <button onClick={()=>{
                   const d=incomingData;
                   setShowIncoming(false); setIncomingData(null);
@@ -3319,27 +3255,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setCallStatus("connected");
                     setCallTime(0);
                     setScreen("call");
-                    const agoraRid = d.rid.replace(/[^a-zA-Z0-9_]/g,"").slice(0,64);
                     setTimeout(async()=>{
-                      await joinAgora(agoraRid, d.callType);
-                      // أعلم المتصل أننا قبلنا
-                      if(roomRef.current){
-                        try{ roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}}); }catch(e){}
-                      }
+                      await joinAgora(d.rid, d.callType);
+                      if(roomRef.current) try{roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}});}catch(e){}
                     },400);
                   } else {
                     setCallType("text");
                     setStreamMessages([]);
-                    // ✅ فتح شاشة Stream الجديدة
                     setTab("messages"); setActiveChat("friend");
-                    // ✅ انضم لقناة Stream مع المرسل
-                    const partnerUid = d.from?.userId||"";
-                    joinStreamChannel(userId, partnerUid, d.from?.name||"مستخدم", d.from?.av||"");
+                    joinStreamChannel(userId, d.from?.userId||"", d.from?.name||"", d.from?.av||"");
                   }
-                }} style={{width:64,height:64,borderRadius:32,background:`linear-gradient(135deg,#22c55e,#16a34a)`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 18px rgba(34,197,94,0.4)",fontSize:26}}>
-                  {incomingData.callType==="text"?"💬":"📞"}
+                }} style={{width:70,height:70,borderRadius:35,background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 30px rgba(34,197,94,0.5)",transition:"transform 0.15s"}}
+                  onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
+                  onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
                 </button>
-                <span style={{fontSize:11,color:muted}}>{incomingData.callType==="text"?"فتح":"قبول"}</span>
+                <span style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontWeight:600}}>قبول</span>
               </div>
             </div>
           </div>
