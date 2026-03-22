@@ -2,14 +2,8 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
-<title>Ailo — Learn Languages</title>
-<link rel="manifest" href="manifest.json">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Ailo">
-<meta name="theme-color" content="#0d1421">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Ailo — تعلم اللغات</title>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -22,7 +16,8 @@
     await OneSignal.init({
       appId: "0f14f7db-8b55-42ec-b0db-f8cf41229ac2",
       notifyButton: { enable: false },
-
+      serviceWorkerParam: { scope: "/Ailo/" },
+      serviceWorkerPath: "/Ailo/OneSignalSDKWorker.js",
       promptOptions: {
         slidedown: {
           prompts: [{
@@ -47,8 +42,47 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{min-height:100vh;overflow-x:hidden}
-body{background:#f0f2f5;font-family:'Tajawal',system-ui}
+body{background:radial-gradient(circle at top,#0f172a,#020617);font-family:'Tajawal',system-ui;color:#e2e8f0}
 #root{max-width:480px;margin:0 auto;min-height:100vh}
+
+/* Cyber HUD header */
+.cyber-header{padding:15px;text-align:center;background:rgba(0,0,0,0.4);backdrop-filter:blur(10px);border-bottom:1px solid rgba(0,255,255,0.2);}
+
+/* Cyber chat bubbles */
+.msg-user{background:linear-gradient(135deg,#6C5CE7,#4f46e5);margin-left:auto;color:white}
+.msg-bot{background:linear-gradient(135deg,#00F5FF,#0ea5e9);color:black}
+
+/* Cyber input */
+.cyber-input{background:#020617;border:1px solid rgba(0,255,255,0.3);color:white;border-radius:12px;padding:10px}
+.cyber-input:focus{outline:none;border-color:rgba(0,255,255,0.8);box-shadow:0 0 10px rgba(0,255,255,0.2)}
+
+/* Cyber button */
+.cyber-btn{background:linear-gradient(135deg,#00F5FF,#6C5CE7);color:white;border:none;border-radius:12px;cursor:pointer;font-family:'Tajawal',system-ui;transition:all 0.2s}
+.cyber-btn:active{transform:scale(0.95)}
+
+/* Ailo character */
+#ailo-char{position:fixed;bottom:20px;right:20px;width:100px;z-index:999;animation:ailoFloat 3s ease-in-out infinite;pointer-events:none}
+@keyframes ailoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+
+/* Ailo horns */
+.ailo-horn{position:absolute;width:10px;height:30px;background:#00F5FF;top:-20px;border-radius:10px;animation:hornGlow 1.5s ease-in-out infinite}
+.ailo-horn.left{left:20px}.ailo-horn.right{right:20px}
+.ailo-horn.good{background:#22c55e;box-shadow:0 0 10px #22c55e}
+.ailo-horn.weak{background:orange;box-shadow:0 0 10px orange}
+.ailo-horn.bad{background:red;box-shadow:0 0 10px red}
+@keyframes hornGlow{0%,100%{opacity:1}50%{opacity:0.6;box-shadow:0 0 15px currentColor}}
+
+/* Ailo message bubble */
+#ailo-msg{position:fixed;bottom:130px;right:20px;background:rgba(108,92,231,0.95);backdrop-filter:blur(10px);padding:12px 16px;border-radius:12px;font-size:13px;font-family:'Tajawal',system-ui;color:white;z-index:1000;border:1px solid rgba(0,255,255,0.3);max-width:200px;box-shadow:0 4px 20px rgba(108,92,231,0.5);display:none;animation:ailoMsgIn 0.3s ease}
+@keyframes ailoMsgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Cyber call screen */
+.cyber-call-pulse{animation:cyberPulse 1.5s ease-in-out infinite}
+@keyframes cyberPulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(0,245,255,0.4)}50%{opacity:0.7;box-shadow:0 0 0 20px rgba(0,245,255,0)}}
+
+/* Cyber glow effects */
+.cyber-glow-cyan{text-shadow:0 0 10px rgba(0,245,255,0.8)}
+.cyber-glow-purple{text-shadow:0 0 10px rgba(108,92,231,0.8)}
 
 /* Scrollbar */
 ::-webkit-scrollbar{width:2px}
@@ -82,6 +116,47 @@ input,select,button,textarea{font-family:'Tajawal',system-ui}
 </head>
 <body>
 <div id="root"></div>
+
+<!-- ══ AILO CHARACTER ══ -->
+<div id="ailo-char">
+  <div class="ailo-horn left good" id="ailo-horn-left"></div>
+  <div class="ailo-horn right good" id="ailo-horn-right"></div>
+  <img src="https://i.imgur.com/6R0r9Qp.png" width="100%" alt="Ailo" style="filter:drop-shadow(0 0 12px rgba(0,245,255,0.6))">
+</div>
+<div id="ailo-msg"></div>
+
+<script>
+// ══ AILO ENGINE ══
+let _ailoTimer;
+function ailoSpeak(msg, mood="normal"){
+  const box = document.getElementById("ailo-msg");
+  if(!box) return;
+  box.innerText = msg;
+  box.style.display = "block";
+  clearTimeout(_ailoTimer);
+  _ailoTimer = setTimeout(()=>{ box.style.display="none"; }, 3200);
+}
+function ailoSignal(type){
+  const horns = document.querySelectorAll(".ailo-horn");
+  horns.forEach(h=>{
+    h.classList.remove("good","weak","bad");
+    h.classList.add(type);
+  });
+}
+// مخفي على شاشات معينة
+function ailoHide(hide){
+  const el = document.getElementById("ailo-char");
+  const msg = document.getElementById("ailo-msg");
+  if(el) el.style.display = hide?"none":"block";
+  if(msg && hide) msg.style.display = "none";
+}
+// إظهار رسالة ترحيب بعد التحميل
+setTimeout(()=>{
+  ailoSpeak("أنا آيلو — دليلك الذكي 🦌");
+  ailoSignal("good");
+}, 1500);
+</script>
+
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
 
@@ -95,14 +170,14 @@ const LIGHT = {
   muted:"#8a8a8a",
   input:"rgba(0,0,0,0.04)"
 };
-// ── Dark: أزرق باهت غامق من الفضاء
+// ── Dark: Cyber Space — inspired by Ailo Cyber PRO
 const DARK = {
-  bg:"#0d1421",
-  card:"rgba(21,31,51,0.95)",
-  border:"rgba(255,255,255,0.07)",
-  text:"#e8eaf0",
+  bg:"#020617",
+  card:"rgba(15,23,42,0.96)",
+  border:"rgba(0,245,255,0.15)",
+  text:"#e2e8f0",
   muted:"#7a8499",
-  input:"rgba(255,255,255,0.05)"
+  input:"rgba(0,245,255,0.05)"
 };
 const ACCENTS = {
   gray:    { primary:"#6366f1", secondary:"#818cf8", accent:"#a5b4fc", glow:"rgba(99,102,241,0.25)" },
@@ -263,6 +338,7 @@ function Ailo(){
 
   const sendToGemini=async(userMsg)=>{
     setBotTyping(true);
+    if(typeof ailoSpeak==="function"){ ailoSpeak("أفكر... 🤖"); ailoSignal("weak"); }
     try{
       // ── ذاكرة بسيطة: اسم المستخدم + آخر 5 رسائل ──
       const userName = profile.name || "مستخدم";
@@ -287,9 +363,11 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
       if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
       const reply=data.reply||data.candidates?.[0]?.content?.parts?.[0]?.text||"حاول مرة أخرى 😊";
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
+      if(typeof ailoSpeak==="function"){ ailoSpeak("تحليل كامل ✔"); ailoSignal("good"); }
     }catch(e){
       console.error("Ailo chat error:",e.message);
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:"عذراً، حدث خطأ 😕 حاول مرة أخرى",time:now()}]);
+      if(typeof ailoSpeak==="function"){ ailoSpeak("مشكلة في الاتصال 😕"); ailoSignal("bad"); }
     }
     setBotTyping(false);
   };
@@ -619,14 +697,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── Design Utilities ──
   const glass=(extra={})=>({
-    background: darkMode ? "rgba(21,31,51,0.92)" : "rgba(255,255,255,0.97)",
+    background: darkMode ? "rgba(15,23,42,0.92)" : "rgba(255,255,255,0.97)",
     backdropFilter:"blur(24px)",
     WebkitBackdropFilter:"blur(24px)",
-    border:`1px solid ${border}`,
+    border: darkMode ? `1px solid rgba(0,245,255,0.18)` : `1px solid ${border}`,
     borderRadius:20,
     padding:16,
     boxShadow: darkMode
-      ? "0 4px 24px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.05)"
+      ? "0 4px 24px rgba(0,0,0,0.5),0 0 30px rgba(0,245,255,0.04),inset 0 1px 0 rgba(0,245,255,0.08)"
       : "0 2px 16px rgba(0,0,0,0.06),inset 0 1px 0 rgba(255,255,255,0.9)",
     ...extra
   });
@@ -643,7 +721,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     transition:"border-color 0.2s, box-shadow 0.2s"
   };
   const btnP=(extra={})=>({
-    background:`linear-gradient(135deg,${primary},${secondary})`,
+    background:`linear-gradient(135deg,#00F5FF,${primary},#6C5CE7)`,
     color:"white",
     border:"none",
     borderRadius:14,
@@ -652,7 +730,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     cursor:"pointer",
     fontSize:14,
     fontFamily:"'Tajawal',system-ui",
-    boxShadow:`0 4px 20px ${glow},0 1px 0 rgba(255,255,255,0.15) inset`,
+    boxShadow:`0 4px 20px rgba(0,245,255,0.25),0 1px 0 rgba(255,255,255,0.15) inset`,
     transition:"all 0.18s cubic-bezier(0.4,0,0.2,1)",
     transform:"translateY(0)",
     ...extra
@@ -769,6 +847,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         setRoomId(rid);
         setMatched(true);
         addNotif("🎉","تم العثور على شريك!",`${otherData.name||"مستخدم"} جاهز للمحادثة معك`,"match");
+        if(typeof ailoSpeak==="function"){ ailoSpeak("🎉 تم العثور على شريك!"); ailoSignal("good"); }
       }
     });
     ch.subscribe(async(status)=>{
@@ -991,8 +1070,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // فتح قناة الدردشة المباشرة مع صديق
   const joinStreamChannel = async (myId, partnerId) => {
-    const supa = getSupa();
-    if(!supa){ setActiveChat(null); return; }
+    const supa = getSupa(); if(!supa) return;
     if(directChanRef.current){ try{supa.removeChannel(directChanRef.current);}catch(e){} directChanRef.current=null; }
     const cid = "direct_"+[myId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
 
@@ -1004,25 +1082,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     const ch = supa.channel(cid);
     ch.on("broadcast",{event:"direct_msg"},async({payload})=>{
       if(payload.from===myId) return;
+      // جلب الرسالة الجديدة من Database للحصول على البيانات الكاملة
+      const newMsgs = await fetchMessages(cid);
+      setStreamMessages(newMsgs);
       const txt = payload.text||"";
-
-      // رسالة صوتية فورية — نضيفها مباشرة بدون DB
-      if(payload.isAudio && payload.audioData){
-        const audioMsg = {
-          id: payload.id||"msg_"+Date.now(),
-          text: "🎙️",
-          user: { id: payload.from },
-          created_at: payload.time||new Date().toISOString(),
-          attachments: [{type:"audio", image_url:payload.audioData, asset_url:payload.audioData}],
-          readBy: []
-        };
-        setStreamMessages(prev=>[...prev, audioMsg]);
-      } else {
-        // رسالة عادية — نجلب من DB للحصول على البيانات الكاملة
-        const newMsgs = await fetchMessages(cid);
-        setStreamMessages(newMsgs);
-      }
-
       setConversations(prev=>{
         const updated=prev.map(c=>
           (c.partnerId===partnerId||c.rid===payload.rid)
@@ -1050,7 +1113,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     });
     ch.subscribe();
     directChanRef.current = ch;
-    console.log("✅ Direct channel ready:", cid);
   };
 
   // إرسال رسالة نصية أو صورة
@@ -1469,25 +1531,33 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     @keyframes popIn{0%{transform:scale(0.85);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
     @keyframes glow{0%,100%{opacity:0.6}50%{opacity:1}}
+    @keyframes cyberScan{0%{background-position:0% 0%}100%{background-position:0% 100%}}
+    @keyframes cyberBorderPulse{0%,100%{border-color:rgba(0,245,255,0.2)}50%{border-color:rgba(0,245,255,0.7)}}
+    @keyframes neonFlicker{0%,100%{opacity:1}92%{opacity:1}93%{opacity:0.7}96%{opacity:1}97%{opacity:0.8}}
     *{-webkit-tap-highlight-color:transparent}
-    select option{background:#1a1040;color:white}
+    select option{background:#0f172a;color:#e2e8f0}
+    .cyber-card{border:1px solid rgba(0,245,255,0.2);box-shadow:0 0 20px rgba(0,245,255,0.05),inset 0 1px 0 rgba(0,245,255,0.08)}
+    .cyber-card:hover{border-color:rgba(0,245,255,0.4)}
+    .cyber-title{background:linear-gradient(135deg,#00F5FF,#6C5CE7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
   `;
 
   // ── SPLASH ────────────────────────────────────────────────────────────────
   if(appScreen==="splash") return(
-    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f0c29 0%,#302b63 60%,#1a0a2e 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,fontFamily:"'Tajawal',system-ui",overflow:"hidden",position:"relative"}}>
-      <div style={{position:"absolute",top:-150,right:-150,width:400,height:400,borderRadius:"50%",background:"rgba(99,102,241,0.2)",filter:"blur(100px)"}}/>
-      <div style={{position:"absolute",bottom:-150,left:-150,width:400,height:400,borderRadius:"50%",background:"rgba(168,85,247,0.15)",filter:"blur(100px)"}}/>
+    <div style={{minHeight:"100vh",background:"radial-gradient(circle at top,#0f172a,#020617)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,fontFamily:"'Tajawal',system-ui",overflow:"hidden",position:"relative"}}>
+      {/* Cyber grid overlay */}
+      <div style={{position:"absolute",inset:0,backgroundImage:"linear-gradient(rgba(0,245,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,0.03) 1px,transparent 1px)",backgroundSize:"40px 40px",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",top:-150,right:-150,width:400,height:400,borderRadius:"50%",background:"rgba(0,245,255,0.08)",filter:"blur(100px)"}}/>
+      <div style={{position:"absolute",bottom:-150,left:-150,width:400,height:400,borderRadius:"50%",background:"rgba(108,92,231,0.1)",filter:"blur(100px)"}}/>
       <div style={{textAlign:"center",animation:"slideIn 0.8s ease",zIndex:1}}>
-        <div style={{fontSize:90,marginBottom:16,filter:"drop-shadow(0 0 40px rgba(99,102,241,0.8))",animation:"floatY 3s ease-in-out infinite"}}>🌍</div>
-        <div style={{fontWeight:900,fontSize:52,background:"linear-gradient(135deg,#818cf8,#c084fc,#f472b6)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3,marginBottom:10}}>Ailo</div>
-        <div style={{fontSize:26,fontWeight:700,color:"white",marginBottom:8}}>تعلّم &amp; دردش</div>
+        <div style={{fontSize:90,marginBottom:16,filter:"drop-shadow(0 0 40px rgba(0,245,255,0.7))",animation:"floatY 3s ease-in-out infinite"}}>🦌</div>
+        <div style={{fontWeight:900,fontSize:52,background:"linear-gradient(135deg,#00F5FF,#6C5CE7,#f472b6)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3,marginBottom:10,animation:"neonFlicker 4s infinite"}}>Ailo</div>
+        <div style={{fontSize:18,fontWeight:700,color:"rgba(0,245,255,0.8)",marginBottom:8,letterSpacing:2,textTransform:"uppercase"}}>Cyber PRO</div>
         <div style={{color:"rgba(255,255,255,0.45)",fontSize:14,marginBottom:50,lineHeight:1.9}}>تواصل مع الناس حول العالم<br/>وتعلّم لغات جديدة بكل سهولة</div>
-        <button onClick={()=>setAppScreen("login")} style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)",color:"white",border:"none",borderRadius:50,padding:"16px 52px",fontWeight:800,fontSize:18,cursor:"pointer",fontFamily:"'Tajawal',system-ui",boxShadow:"0 8px 30px rgba(99,102,241,0.5)",letterSpacing:0.5}}>
+        <button onClick={()=>setAppScreen("login")} style={{background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",color:"white",border:"none",borderRadius:50,padding:"16px 52px",fontWeight:800,fontSize:18,cursor:"pointer",fontFamily:"'Tajawal',system-ui",boxShadow:"0 8px 30px rgba(0,245,255,0.4),0 0 40px rgba(108,92,231,0.3)",letterSpacing:0.5,transition:"all 0.2s"}}>
           Get Started →
         </button>
-        <div style={{marginTop:28,color:"rgba(255,255,255,0.3)",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-          {Ic.shield("rgba(34,197,94,0.6)",12)}<span>بياناتك محمية ومشفرة بالكامل</span>
+        <div style={{marginTop:28,color:"rgba(0,245,255,0.4)",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          {Ic.shield("rgba(0,245,255,0.5)",12)}<span>بياناتك محمية ومشفرة بالكامل</span>
         </div>
       </div>
       <style>{CSS}</style>
@@ -1497,7 +1567,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ── LOGIN / REGISTER ──────────────────────────────────────────────────────
   if(appScreen==="login"||appScreen==="register"){
     const isReg=appScreen==="register";
-    const aInp={background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:14,padding:"14px 18px",color:"white",fontSize:15,outline:"none",width:"100%",fontFamily:"'Tajawal',system-ui"};
+    const aInp={background:"rgba(0,245,255,0.05)",border:"1px solid rgba(0,245,255,0.2)",borderRadius:14,padding:"14px 18px",color:"#e2e8f0",fontSize:15,outline:"none",width:"100%",fontFamily:"'Tajawal',system-ui",transition:"border-color 0.2s,box-shadow 0.2s"};
     const SUPA_URL = "https://tsdpznjarcvmpcrmmbdu.supabase.co";
     const SUPA_KEY = "sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
 
@@ -1620,29 +1690,31 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       }
     };
     return(
-      <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f0c29 0%,#302b63 60%,#1a0a2e 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
-        <div style={{position:"absolute",top:-120,right:-120,width:350,height:350,borderRadius:"50%",background:"rgba(99,102,241,0.2)",filter:"blur(80px)"}}/>
-        <div style={{position:"absolute",bottom:-120,left:-120,width:300,height:300,borderRadius:"50%",background:"rgba(168,85,247,0.15)",filter:"blur(80px)"}}/>
+      <div style={{minHeight:"100vh",background:"radial-gradient(circle at top,#0f172a,#020617)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
+        {/* Cyber grid */}
+        <div style={{position:"absolute",inset:0,backgroundImage:"linear-gradient(rgba(0,245,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,0.03) 1px,transparent 1px)",backgroundSize:"40px 40px",pointerEvents:"none"}}/>
+        <div style={{position:"absolute",top:-120,right:-120,width:350,height:350,borderRadius:"50%",background:"rgba(0,245,255,0.06)",filter:"blur(80px)"}}/>
+        <div style={{position:"absolute",bottom:-120,left:-120,width:300,height:300,borderRadius:"50%",background:"rgba(108,92,231,0.08)",filter:"blur(80px)"}}/>
         <div style={{width:"100%",maxWidth:400,animation:"slideIn 0.5s ease",zIndex:1}}>
-          <button onClick={()=>setAppScreen(isReg?"login":"splash")} style={{background:"none",border:"none",color:"rgba(255,255,255,0.45)",cursor:"pointer",fontSize:13,marginBottom:24,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui"}}>
-            {Ic.back("rgba(255,255,255,0.45)",16)} رجوع
+          <button onClick={()=>setAppScreen(isReg?"login":"splash")} style={{background:"none",border:"none",color:"rgba(0,245,255,0.5)",cursor:"pointer",fontSize:13,marginBottom:24,display:"flex",alignItems:"center",gap:4,fontFamily:"'Tajawal',system-ui"}}>
+            {Ic.back("rgba(0,245,255,0.5)",16)} رجوع
           </button>
           <div style={{textAlign:"center",marginBottom:28}}>
-            <div style={{fontWeight:900,fontSize:28,background:"linear-gradient(135deg,#818cf8,#c084fc)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{isReg?"إنشاء حساب جديد":"تسجيل الدخول"}</div>
-            <div style={{color:"rgba(255,255,255,0.35)",fontSize:13,marginTop:5}}>{isReg?"انضم إلى مجتمع Ailo اليوم":"مرحباً بعودتك!"}</div>
+            <div style={{fontWeight:900,fontSize:28,background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{isReg?"إنشاء حساب جديد":"تسجيل الدخول"}</div>
+            <div style={{color:"rgba(0,245,255,0.4)",fontSize:13,marginTop:5}}>{isReg?"انضم إلى مجتمع Ailo اليوم":"مرحباً بعودتك!"}</div>
           </div>
-          <div style={{background:"rgba(255,255,255,0.07)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:24,padding:24,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
-            {isReg&&<div style={{marginBottom:14}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>الاسم الكامل</div><input value={authForm.name} onChange={e=>setAuthForm(f=>({...f,name:e.target.value}))} placeholder="اسمك هنا" style={aInp}/></div>}
-            <div style={{marginBottom:14}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>البريد الإلكتروني</div><input value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} placeholder="example@email.com" type="email" style={aInp}/></div>
-            <div style={{marginBottom:isReg?14:22}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>كلمة المرور</div><input value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} placeholder={isReg?"6 أحرف على الأقل":"••••••••"} type="password" style={aInp} onKeyDown={e=>e.key==="Enter"&&handle()}/></div>
-            {isReg&&<div style={{marginBottom:22}}><div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginBottom:6}}>لغتي الأم</div><select value={authForm.lang} onChange={e=>setAuthForm(f=>({...f,lang:e.target.value}))} style={{...aInp,appearance:"none"}}>{["Arabic","English","French","Spanish","German","Chinese","Japanese","Turkish"].map(l=><option key={l} value={l} style={{background:"#302b63"}}>{l}</option>)}</select></div>}
+          <div style={{background:"rgba(15,23,42,0.9)",backdropFilter:"blur(20px)",border:"1px solid rgba(0,245,255,0.2)",borderRadius:24,padding:24,boxShadow:"0 20px 60px rgba(0,0,0,0.5),0 0 30px rgba(0,245,255,0.05)"}}>
+            {isReg&&<div style={{marginBottom:14}}><div style={{color:"rgba(0,245,255,0.5)",fontSize:12,marginBottom:6}}>الاسم الكامل</div><input value={authForm.name} onChange={e=>setAuthForm(f=>({...f,name:e.target.value}))} placeholder="اسمك هنا" style={aInp}/></div>}
+            <div style={{marginBottom:14}}><div style={{color:"rgba(0,245,255,0.5)",fontSize:12,marginBottom:6}}>البريد الإلكتروني</div><input value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} placeholder="example@email.com" type="email" style={aInp}/></div>
+            <div style={{marginBottom:isReg?14:22}}><div style={{color:"rgba(0,245,255,0.5)",fontSize:12,marginBottom:6}}>كلمة المرور</div><input value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} placeholder={isReg?"6 أحرف على الأقل":"••••••••"} type="password" style={aInp} onKeyDown={e=>e.key==="Enter"&&handle()}/></div>
+            {isReg&&<div style={{marginBottom:22}}><div style={{color:"rgba(0,245,255,0.5)",fontSize:12,marginBottom:6}}>لغتي الأم</div><select value={authForm.lang} onChange={e=>setAuthForm(f=>({...f,lang:e.target.value}))} style={{...aInp,appearance:"none"}}>{["Arabic","English","French","Spanish","German","Chinese","Japanese","Turkish"].map(l=><option key={l} value={l} style={{background:"#0f172a"}}>{l}</option>)}</select></div>}
             {authError&&<div style={{background:authError.startsWith("✅")?"rgba(34,197,94,0.15)":"rgba(239,68,68,0.15)",border:`1px solid ${authError.startsWith("✅")?"rgba(34,197,94,0.4)":"rgba(239,68,68,0.4)"}`,borderRadius:10,padding:"10px 14px",color:authError.startsWith("✅")?"#86efac":"#fca5a5",fontSize:13,marginBottom:14,textAlign:"center"}}>{authError}</div>}
-            <button onClick={handle} disabled={authLoading} style={{width:"100%",padding:15,borderRadius:14,border:"none",background:"linear-gradient(135deg,#6366f1,#8b5cf6)",color:"white",fontWeight:800,fontSize:16,cursor:authLoading?"not-allowed":"pointer",fontFamily:"'Tajawal',system-ui",boxShadow:"0 4px 20px rgba(99,102,241,0.5)",display:"flex",alignItems:"center",justifyContent:"center",gap:10,opacity:authLoading?0.7:1}}>
+            <button onClick={handle} disabled={authLoading} style={{width:"100%",padding:15,borderRadius:14,border:"none",background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",color:"white",fontWeight:800,fontSize:16,cursor:authLoading?"not-allowed":"pointer",fontFamily:"'Tajawal',system-ui",boxShadow:"0 4px 20px rgba(0,245,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",gap:10,opacity:authLoading?0.7:1}}>
               {authLoading?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span><span>جاري التحقق...</span></>:isReg?"إنشاء الحساب ✓":"تسجيل الدخول →"}
             </button>
             <div style={{textAlign:"center",marginTop:16}}>
-              <button onClick={()=>{setAppScreen(isReg?"login":"register");setAuthError("");}} style={{background:"none",border:"none",color:"rgba(255,255,255,0.4)",fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>
-                {isReg?"لديك حساب؟ ":"ليس لديك حساب؟ "}<span style={{color:"#818cf8",fontWeight:700}}>{isReg?"تسجيل الدخول":"إنشاء حساب"}</span>
+              <button onClick={()=>{setAppScreen(isReg?"login":"register");setAuthError("");}} style={{background:"none",border:"none",color:"rgba(0,245,255,0.4)",fontSize:13,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>
+                {isReg?"لديك حساب؟ ":"ليس لديك حساب؟ "}<span style={{color:"#00F5FF",fontWeight:700}}>{isReg?"تسجيل الدخول":"إنشاء حساب"}</span>
               </button>
             </div>
           </div>
@@ -1654,28 +1726,30 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── MATCHING ──────────────────────────────────────────────────────────────
   if(screen==="matching") return(
-    <div style={{background:bg,minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24,padding:32,position:"relative",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 50%,${glow} 0%,transparent 70%)`,pointerEvents:"none"}}/>
+    <div style={{background:"radial-gradient(circle at top,#0f172a,#020617)",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'Tajawal',system-ui",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24,padding:32,position:"relative",overflow:"hidden"}}>
+      {/* Cyber grid */}
+      <div style={{position:"absolute",inset:0,backgroundImage:"linear-gradient(rgba(0,245,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,0.03) 1px,transparent 1px)",backgroundSize:"40px 40px",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 50%,rgba(0,245,255,0.06) 0%,transparent 70%)`,pointerEvents:"none"}}/>
       {!matched?(<>
-        <div style={{fontSize:72,animation:"spin 4s linear infinite",filter:`drop-shadow(0 0 20px ${primary})`}}><svg width="72" height="72" viewBox="0 0 24 24" fill="rgba(99,102,241,0.15)" stroke={primary} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-        <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Searching...</div>
+        <div style={{fontSize:72,animation:"spin 4s linear infinite",filter:"drop-shadow(0 0 20px rgba(0,245,255,0.7))"}}><svg width="72" height="72" viewBox="0 0 24 24" fill="rgba(0,245,255,0.1)" stroke="#00F5FF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+        <div style={{fontWeight:800,fontSize:24,background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Searching...</div>
         <div style={{...glass({width:"100%",textAlign:"center"})}}>
-          <div style={{color:muted,fontSize:13,marginBottom:10}}>نبحث عن شريك لغوي</div>
-          <div style={{fontWeight:700,fontSize:22,color:primary}}>{fmt(searchTime)}</div>
-          <div style={{display:"flex",justifyContent:"center",gap:8,marginTop:12}}>{[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:primary,animationName:"dot"+i,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>
+          <div style={{color:"rgba(0,245,255,0.6)",fontSize:13,marginBottom:10}}>نبحث عن شريك لغوي</div>
+          <div style={{fontWeight:700,fontSize:22,color:"#00F5FF"}}>{fmt(searchTime)}</div>
+          <div style={{display:"flex",justifyContent:"center",gap:8,marginTop:12}}>{[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:"#00F5FF",animationName:"dot"+i,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>
         </div>
         <button style={btnP({background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={cancelSearch}>إلغاء</button>
       </>):(<>
-        <div style={{fontSize:72}}>🎉</div>
-        <div style={{fontWeight:800,fontSize:24,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Partner found!</div>
+        <div style={{fontSize:72,filter:"drop-shadow(0 0 20px rgba(0,245,255,0.5))"}}>🎉</div>
+        <div style={{fontWeight:800,fontSize:24,background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Partner found!</div>
         <div style={{...glass({width:"100%",textAlign:"center"})}}>
           <div style={{display:"flex",justifyContent:"center",marginBottom:12}}>
-            <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",border:`3px solid ${primary}`,boxShadow:`0 0 0 3px ${glow}`}}>
+            <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",border:"3px solid #00F5FF",boxShadow:"0 0 0 3px rgba(0,245,255,0.2),0 0 20px rgba(0,245,255,0.3)"}}>
               {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="" onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="block";}}/>:<span style={{fontSize:56,lineHeight:"80px",display:"block",textAlign:"center"}}>{partner.av||"🌍"}</span>}
             </div>
           </div>
-          <div style={{fontWeight:800,fontSize:20}}>{partner.name}</div>
-          <div style={{color:muted,fontSize:12,marginTop:4}}>🌍 {partner.country}</div>
+          <div style={{fontWeight:800,fontSize:20,color:"#e2e8f0"}}>{partner.name}</div>
+          <div style={{color:"rgba(0,245,255,0.6)",fontSize:12,marginTop:4}}>🌍 {partner.country}</div>
         </div>
         <div style={{display:"flex",gap:12,width:"100%"}}>
           <button style={btnP({flex:1,background:"linear-gradient(135deg,#ef4444,#dc2626)"})} onClick={cancelSearch}>رفض ✕</button>
@@ -1688,8 +1762,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── CALL ──────────────────────────────────────────────────────────────────
   if(screen==="call") return(
-    <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
+    <div style={{background:"radial-gradient(circle at top,#0f172a,#020617)",minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
+      {/* Cyber grid */}
+      <div style={{position:"absolute",inset:0,backgroundImage:"linear-gradient(rgba(0,245,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,0.025) 1px,transparent 1px)",backgroundSize:"40px 40px",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",inset:0,background:"radial-gradient(ellipse at 50% 30%,rgba(0,245,255,0.06) 0%,transparent 70%)",pointerEvents:"none"}}/>
       {/* Remote audio — مخفي يشغّل الصوت في مكالمات الصوت */}
       <audio ref={remoteAudioRef} autoPlay playsInline style={{display:"none"}}/>
       {/* Remote video — WebRTC */}
@@ -1712,7 +1788,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {remoteMicOff && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}>{Ic.micOff("#ef4444",12)}<span style={{fontSize:10,color:"#ef4444"}}>كتم الصوت</span></div>}
           {remoteCamOff && callType==="video" && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}><svg width="10" height="10" viewBox="0 0 24 24" fill="rgba(239,68,68,0.2)" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/><line x1="1" y1="1" x2="23" y2="23"/></svg><span style={{fontSize:10,color:"#ef4444"}}>أوقف الكاميرا</span></div>}
         </div>
-        <div style={{color:primary,fontWeight:800,fontSize:18,letterSpacing:2}}>
+        <div style={{color:"#00F5FF",fontWeight:800,fontSize:18,letterSpacing:2,textShadow:"0 0 10px rgba(0,245,255,0.5)"}}>
           {callStatus==="outgoing" ? "Calling..." : fmt(callTime)}
         </div>
       </div>
@@ -2090,31 +2166,34 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   ];
 
   const isInsideExercise = !storeTab && (exStep==="quiz"||exStep==="cooldown"||exStep==="result");
-  const showBottomNav = activeChat===null && !isInsideExercise;
+  const showBottomNav = activeChat===null && !isInsideExercise && tab!=="leaderboard" && tab!=="history";
 
   return(
     <div style={{
       background: darkMode
-        ? "linear-gradient(160deg,#0d1421 0%,#0f1f35 50%,#0a0f1a 100%)"
+        ? "radial-gradient(circle at top,#0f172a,#020617)"
         : "linear-gradient(160deg,#f8fafc 0%,#f0f4ff 50%,#f5f5f5 100%)",
       minHeight:"100vh",color:text,fontFamily:"'Tajawal',system-ui",
       maxWidth:480,margin:"0 auto",paddingBottom:showBottomNav?72:0,position:"relative",overflow:"hidden"
     }}>
-      {/* Space atmosphere */}
-      <div style={{position:"fixed",top:-120,right:-80,width:320,height:320,borderRadius:"50%",background:`radial-gradient(circle,${primary}20 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
-      <div style={{position:"fixed",bottom:-80,left:-80,width:260,height:260,borderRadius:"50%",background:`radial-gradient(circle,${accent}15 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
-      {darkMode&&<div style={{position:"fixed",top:"30%",left:"60%",width:2,height:2,borderRadius:"50%",background:"white",boxShadow:"0 0 6px 1px rgba(255,255,255,0.8)",pointerEvents:"none",zIndex:0}}/>}
+      {/* Cyber grid overlay */}
+      {darkMode&&<div style={{position:"fixed",inset:0,backgroundImage:"linear-gradient(rgba(0,245,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,0.025) 1px,transparent 1px)",backgroundSize:"40px 40px",pointerEvents:"none",zIndex:0}}/>}
+      {/* Cyber glow orbs */}
+      <div style={{position:"fixed",top:-120,right:-80,width:320,height:320,borderRadius:"50%",background:`radial-gradient(circle,rgba(0,245,255,0.08) 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
+      <div style={{position:"fixed",bottom:-80,left:-80,width:260,height:260,borderRadius:"50%",background:`radial-gradient(circle,rgba(108,92,231,0.1) 0%,transparent 70%)`,pointerEvents:"none",zIndex:0}}/>
+      {darkMode&&<div style={{position:"fixed",top:"30%",left:"60%",width:2,height:2,borderRadius:"50%",background:"rgba(0,245,255,0.8)",boxShadow:"0 0 6px 2px rgba(0,245,255,0.5)",pointerEvents:"none",zIndex:0}}/>}
+      {darkMode&&<div style={{position:"fixed",top:"60%",left:"20%",width:1,height:1,borderRadius:"50%",background:"rgba(108,92,231,0.8)",boxShadow:"0 0 4px 2px rgba(108,92,231,0.4)",pointerEvents:"none",zIndex:0}}/>}
 
-      {xpPopup&&<div style={{position:"fixed",top:88,left:"50%",transform:"translateX(-50%)",background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",padding:"7px 18px",borderRadius:50,fontWeight:700,fontSize:13,zIndex:500,animation:"fadeUp 0.4s ease",pointerEvents:"none",boxShadow:`0 4px 18px ${glow}`,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>{Ic.zap("white",13)} +{xpPopup.amt} XP · {xpPopup.label}</div>}
+      {xpPopup&&<div style={{position:"fixed",top:88,left:"50%",transform:"translateX(-50%)",background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",color:"white",padding:"7px 18px",borderRadius:50,fontWeight:700,fontSize:13,zIndex:500,animation:"fadeUp 0.4s ease",pointerEvents:"none",boxShadow:"0 4px 18px rgba(0,245,255,0.4)",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>{Ic.zap("white",13)} +{xpPopup.amt} XP · {xpPopup.label}</div>}
 
       {/* HEADER */}
       <div style={{
-        background: darkMode ? "rgba(13,20,33,0.97)" : "rgba(255,255,255,0.98)",
+        background: darkMode ? "rgba(2,6,23,0.97)" : "rgba(255,255,255,0.98)",
         backdropFilter:"blur(30px)",WebkitBackdropFilter:"blur(30px)",
-        borderBottom:`1px solid ${border}`,
+        borderBottom: darkMode ? "1px solid rgba(0,245,255,0.15)" : `1px solid ${border}`,
         padding:"12px 16px",position:"sticky",top:0,zIndex:50,
         boxShadow: darkMode
-          ? "0 1px 0 rgba(255,255,255,0.05)"
+          ? "0 1px 0 rgba(0,245,255,0.06),0 4px 20px rgba(0,0,0,0.4)"
           : "0 1px 0 rgba(0,0,0,0.06)"
       }}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -2124,9 +2203,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               </button>
             : <button onClick={()=>setShowProfileView(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Av src={profile.avatar} size={40}/></button>
           }
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill={primary} stroke="none"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-            <span style={{fontWeight:900,fontSize:20,letterSpacing:0.5,background:`linear-gradient(135deg,${primary},${secondary})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Ailo</span>
+          <div style={{
+            fontWeight:900,fontSize:20,letterSpacing:0.5,
+            background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",
+            WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",
+            display:"flex",alignItems:"center",gap:6
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="#00F5FF" stroke="none"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            Ailo
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={()=>setDarkMode(d=>!d)} style={{
@@ -2154,7 +2238,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div style={{background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",borderRadius:50,padding:"2px 10px",fontSize:11,fontWeight:800,flexShrink:0,boxShadow:`0 2px 10px ${glow}`}}>Lv.{lvl.level}</div>
+          <div style={{background:"linear-gradient(135deg,#00F5FF,#6C5CE7)",color:"white",borderRadius:50,padding:"2px 10px",fontSize:11,fontWeight:800,flexShrink:0,boxShadow:"0 2px 10px rgba(0,245,255,0.3)"}}>Lv.{lvl.level}</div>
           <div style={{flex:1}}><XPBar pct={lvl.pct} primary={primary} accent={accent}/></div>
           <span style={{fontSize:10,color:muted,flexShrink:0}}>{lvl.current}/{lvl.needed}</span>
           <button onClick={()=>setShowCoinsInfo(true)} style={{background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:50,padding:"2px 8px",display:"flex",alignItems:"center",gap:3,flexShrink:0,cursor:"pointer"}}><span style={{fontSize:12}}>🪙</span><span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>{coins}</span></button>
@@ -2322,7 +2406,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setPartner({av:req.from?.av||"🌍",name:req.from?.name||"مستخدم",country:"—",_uid:targetUserId});
                     setRoomId(rid); setCallType("text");
                     setStreamMessages([]);
-                    await joinStreamChannel(userId,targetUserId);
+                    await joinStreamChannel(userId,targetUserId,req.from?.name||"",req.from?.av||"");
                     setChatDot(true); setTimeout(()=>setChatDot(false),2000);
                     joinRoom(rid);
                     // ✅ حفظ المحادثة
@@ -2359,7 +2443,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setStreamMessages([]);
                   setCallType("text");
                   joinRoom(conv.rid);
-                  await joinStreamChannel(userId, conv.partnerId);
+                  await joinStreamChannel(userId, conv.partnerId, conv.partnerName, conv.partnerAv);
                   setChatDot(true); setTimeout(()=>setChatDot(false),2000);
                   // ✅ Read Receipt — علّم الرسائل كمقروءة
                   const cid=[userId,conv.partnerId].sort().join("_").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,60);
@@ -2425,7 +2509,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>}
 
           {/* شاشة محادثة الصديق */}
-          {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none",paddingTop:"max(env(safe-area-inset-top, 0px), 44px)"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
+          {activeChat==="friend"&&<div style={{position:"fixed",inset:0,background:bg,zIndex:60,display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",left:0,right:0,userSelect:"none",WebkitUserSelect:"none",paddingTop:"env(safe-area-inset-top, 0px)"}} onClick={()=>{setMsgMenuId(null);setReactMenuId(null);}}>
 
             {/* Header — مثل الصورة */}
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",background:darkMode?"rgba(13,20,33,0.95)":"rgba(255,255,255,0.95)",backdropFilter:"blur(20px)",borderBottom:`1px solid ${border}`,flexShrink:0}}>
@@ -2651,28 +2735,23 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                           const timeStr=new Date().toISOString();
                           const partnerId=partner._uid||"";
                           const cid="direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
-                          // 1. عرض محلي فوري بالصوت الحقيقي
+                          // عرض محلي فوري بالصوت الحقيقي
                           const localMsg={id:msgId,text:"🎙️",user:{id:userId},created_at:timeStr,attachments:[{type:"audio",image_url:audioData,asset_url:audioData}],readBy:[]};
                           setStreamMessages(prev=>[...prev,localMsg]);
-                          // 2. إرسال base64 فوري للطرف الثاني (مثل العشوائية)
-                          if(directChanRef.current){
-                            try{
-                              await directChanRef.current.send({
-                                type:"broadcast", event:"direct_msg",
-                                payload:{id:msgId,text:"🎙️",audioData,isAudio:true,from:userId,time:timeStr,rid:roomId}
-                              });
-                            }catch(e){ console.error("voice broadcast:",e); }
-                          }
-                          addXp(3,"صوتية"); setCoins(c=>c+1);
-                          // 3. في الخلفية: رفع لـ Storage + حفظ DB
+                          // رفع الصوت لـ Storage
                           try{
                             const audioBlob=await fetch(audioData).then(r=>r.blob());
                             const fileUrl=await uploadToStorage(audioBlob,"voice.webm","audio/webm");
                             if(fileUrl){
+                              // حفظ في Database
                               await saveMessageToDB({id:msgId,room_id:cid,user_id:userId,text:"🎙️",type:"audio",file_url:fileUrl,created_at:timeStr});
+                              // تحديث الرسالة المحلية بالـ URL
                               setStreamMessages(prev=>prev.map(m=>m.id===msgId?{...m,attachments:[{type:"audio",image_url:fileUrl,asset_url:fileUrl}]}:m));
+                              // إشعار فوري
+                              if(directChanRef.current) await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:msgId,text:"🎙️ Voice message",from:userId,rid:roomId}});
                             }
-                          }catch(err){ console.error("voice storage:",err); }
+                          }catch(err){console.error("voice upload:",err);}
+                          addXp(3,"صوتية"); setCoins(c=>c+1);
                         };
                         reader.readAsDataURL(blob);
                       }
@@ -3244,12 +3323,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       {showBottomNav&&<div style={{
         position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
         width:"100%",maxWidth:480,
-        background: darkMode ? "rgba(13,20,33,0.97)" : "rgba(255,255,255,0.98)",
+        background: darkMode ? "rgba(2,6,23,0.97)" : "rgba(255,255,255,0.98)",
         backdropFilter:"blur(30px)",WebkitBackdropFilter:"blur(30px)",
-        borderTop:`1px solid ${border}`,
+        borderTop: darkMode ? "1px solid rgba(0,245,255,0.12)" : `1px solid ${border}`,
         display:"flex",zIndex:50,
         paddingBottom:"env(safe-area-inset-bottom)",
-        boxShadow: darkMode ? "0 -1px 0 rgba(255,255,255,0.05)" : "0 -1px 0 rgba(0,0,0,0.05)"
+        boxShadow: darkMode ? "0 -4px 20px rgba(0,0,0,0.5),0 -1px 0 rgba(0,245,255,0.06)" : "0 -1px 0 rgba(0,0,0,0.05)"
       }}>
         {TABS.map(({id,label,icon})=>(
           <button key={id} onClick={()=>setTab(id)} style={{
@@ -3257,22 +3336,22 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,
             position:"relative",transition:"color 0.18s"
           }}>
-            {/* top indicator */}
+            {/* top indicator — cyber cyan */}
             {tab===id&&<div style={{
               position:"absolute",top:0,left:"22%",right:"22%",height:2.5,
-              background:`linear-gradient(90deg,${primary},${secondary})`,
-              borderRadius:"0 0 3px 3px",boxShadow:`0 0 10px ${glow}`
+              background:"linear-gradient(90deg,#00F5FF,#6C5CE7)",
+              borderRadius:"0 0 3px 3px",boxShadow:"0 0 10px rgba(0,245,255,0.6)"
             }}/>}
             {/* icon with background pill */}
             <div style={{
               padding:"4px 12px",borderRadius:12,
-              background:tab===id?`${primary}15`:"transparent",
+              background:tab===id?"rgba(0,245,255,0.1)":"transparent",
               transform:tab===id?"scale(1.1)":"scale(1)",
               transition:"all 0.18s cubic-bezier(0.34,1.56,0.64,1)"
             }}>
-              {icon(tab===id?primary:muted, 20)}
+              {icon(tab===id?"#00F5FF":muted, 20)}
             </div>
-            <span style={{fontSize:9,fontWeight:tab===id?800:400,color:tab===id?primary:muted,fontFamily:"'Tajawal',system-ui",transition:"color 0.18s"}}>{label}</span>
+            <span style={{fontSize:9,fontWeight:tab===id?800:400,color:tab===id?"#00F5FF":muted,fontFamily:"'Tajawal',system-ui",transition:"color 0.18s"}}>{label}</span>
           </button>
         ))}
       </div>}
@@ -3441,7 +3520,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   });
                   // ✅ Stream Chat — انضم للقناة وجلب الرسائل السابقة
                   setStreamMessages([]);
-                  await joinStreamChannel(userId, targetUserId);
+                  await joinStreamChannel(userId, targetUserId, u.name||"مستخدم", u.avatar||"");
                   // ✅ أعلم المستخدم الآخر عبر inbox الخاص به
                   const supa=getSupa();
                   if(supa && targetUserId){
@@ -3542,7 +3621,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setCallType("text");
                     setStreamMessages([]);
                     setTab("messages"); setActiveChat("friend");
-                    await joinStreamChannel(userId, d.from?.userId||"");
+                    joinStreamChannel(userId, d.from?.userId||"", d.from?.name||"", d.from?.av||"");
                   }
                 }} style={{width:70,height:70,borderRadius:35,background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 30px rgba(34,197,94,0.5)",transition:"transform 0.15s"}}
                   onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
