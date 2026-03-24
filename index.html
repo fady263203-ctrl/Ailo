@@ -16,30 +16,31 @@
 <script>
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
-    await OneSignal.init({
-      appId: "0f14f7db-8b55-42ec-b0db-f8cf41229ac2",
-      notifyButton: { enable: false },
-      serviceWorkerParam: { scope: "/Ailo/" },
-      serviceWorkerPath: "/Ailo/OneSignalSDKWorker.js",
-      promptOptions: {
-        slidedown: {
-          prompts: [{
-            type: "push",
-            autoPrompt: true,
-            text: {
-              actionMessage: "اسمح لـ Ailo بإرسال إشعارات المكالمات والرسائل",
-              acceptButton: "اسمح",
-              cancelButton: "لاحقاً"
-            },
-            delay: { pageViews: 1, timeDelay: 5 }
-          }]
+    try{
+      await OneSignal.init({
+        appId: "0f14f7db-8b55-42ec-b0db-f8cf41229ac2",
+        notifyButton: { enable: false },
+        serviceWorkerParam: { scope: "/Ailo/" },
+        serviceWorkerPath: "/Ailo/OneSignalSDKWorker.js",
+        promptOptions: {
+          slidedown: {
+            prompts: [{
+              type: "push",
+              autoPrompt: true,
+              text: {
+                actionMessage: "اسمح لـ Ailo بإرسال إشعارات المكالمات والرسائل",
+                acceptButton: "اسمح",
+                cancelButton: "لاحقاً"
+              },
+              delay: { pageViews: 1, timeDelay: 5 }
+            }]
+          }
         }
-      }
-    });
-    // طلب الإذن بعد 5 ثوانٍ
-    setTimeout(()=>{
-      OneSignal.Slidedown?.promptPush?.();
-    }, 5000);
+      });
+      setTimeout(()=>{
+        try{ OneSignal.Slidedown?.promptPush?.(); }catch(_){}
+      }, 5000);
+    }catch(e){ console.warn("OneSignal init skipped:", e.message); }
   });
 </script>
 <style>
@@ -217,6 +218,16 @@ const ACCENTS = {
   sakura:  { primary:"#ec4899", secondary:"#f9a8d4", accent:"#fbcfe8", glow:"rgba(236,72,153,0.25)" },
   violet:  { primary:"#8b5cf6", secondary:"#c4b5fd", accent:"#ddd6fe", glow:"rgba(139,92,246,0.25)" },
 };
+// ── Supabase Singleton ── منع إنشاء أكثر من client واحد
+const _SUPA_URL="https://tsdpznjarcvmpcrmmbdu.supabase.co";
+const _SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
+let _supaClient=null;
+const getSupa=()=>{
+  if(!window.supabase) return null;
+  if(!_supaClient) _supaClient=window.supabase.createClient(_SUPA_URL,_SUPA_KEY);
+  return _supaClient;
+};
+
 const xpForLevel = (l) => l===1?100:xpForLevel(l-1)+l*100;
 const getLvl = (xp) => { let l=1,acc=0; while(acc+xpForLevel(l)<=xp){acc+=xpForLevel(l);l++;} return{level:l,current:xp-acc,needed:xpForLevel(l),pct:Math.round(((xp-acc)/xpForLevel(l))*100)}; };
 const SEEDS=["Aisha","Sara","Fatima","Layla","Nour","Hana","Rania","Dina","Maya","Lena","Sofia","Emma","Olivia","Ava","Isabella","Mia","Charlotte","Amelia","Harper","Evelyn","Luna","Chloe","Penelope","Grace","Zoe","Natalie","Hannah","Lily","Eleanor","Aria","Scarlett","Victoria","Aurora","Claire","Aaliyah","Savannah","Audrey","Brooklyn","Bella","Skylar","Leah","Zara","Nadia","Yasmin","Mariam","Heba","Rana","Samar","Noura","Reem"];
@@ -287,6 +298,155 @@ function WeekChart({data,primary}){
   return(<div style={{display:"flex",alignItems:"flex-end",gap:6,height:60}}>{["أح","إث","ث","أر","خ","ج","س"].map((d,i)=>(<div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><div style={{width:"100%",height:50,display:"flex",alignItems:"flex-end"}}><div style={{width:"100%",height:`${(data[i]/max)*100}%`,background:i===6?`linear-gradient(180deg,${primary},${primary}88)`:`${primary}44`,borderRadius:"3px 3px 0 0",transition:"height 1s ease",minHeight:3}}/></div><span style={{fontSize:9,opacity:0.5}}>{d}</span></div>))}</div>);
 }
 
+// ── WordLink Game Component ── مكوّن مستقل لحل React Hooks Error #310
+function WordLinkGame({g, userId, partner, darkMode, muted, SUPA_URL, SUPA_KEY, setActiveGame, sendGameEvent}){
+  const[inputVal,setInputVal]=React.useState("");
+  const current=g.currentIdx;
+  const [wordA,wordB]=[g.chain[current],g.chain[current+1]];
+  const myScore=g.scores[userId]||0;
+  const partnerScore=g.scores[partner._uid||"p2"]||0;
+  const isMyTurn=g.turn===userId;
+  const submitLink=async()=>{
+    if(!inputVal.trim()||g.turn!==userId) return;
+    const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+      body:JSON.stringify({message:`Is "${inputVal}" a logical connection between the words "${wordA}" and "${wordB}"? Reply only: YES or NO`})});
+    const data=await res.json();
+    const valid=(data.reply||"").trim().toUpperCase().startsWith("Y");
+    const nextIdx=current+1;
+    const done=nextIdx>=g.chain.length-1;
+    const updated={...g,
+      connections:[...g.connections.slice(0,current),inputVal,...g.connections.slice(current+1)],
+      currentIdx:done?current:nextIdx,
+      turn:g.turn===userId?(partner._uid||"p2"):userId,
+      scores:{...g.scores,[userId]:myScore+(valid?1:0)},
+      status:done?"finished":"playing"};
+    setActiveGame(updated); sendGameEvent(updated);
+    setInputVal("");
+  };
+  return(
+    <div style={{margin:"8px 12px",background:darkMode?"rgba(245,158,11,0.05)":"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:20,padding:"14px",fontFamily:"'Tajawal',system-ui"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:16}}>🔗</span>
+          <span style={{fontWeight:800,fontSize:13,color:"#f59e0b"}}>توصيل المفاهيم</span>
+        </div>
+        <div style={{fontSize:11,color:muted}}>أنت: {myScore} | صديقك: {partnerScore}</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:4,overflowX:"auto",padding:"4px 0",marginBottom:10}}>
+        {g.chain.map((w,i)=>(
+          <React.Fragment key={i}>
+            <div style={{flexShrink:0,padding:"5px 10px",borderRadius:10,fontSize:12,fontWeight:700,
+              background:i===current||i===current+1?"rgba(245,158,11,0.25)":"rgba(255,255,255,0.07)",
+              color:i===current||i===current+1?"#f59e0b":muted,border:`1px solid ${i===current||i===current+1?"rgba(245,158,11,0.4)":"transparent"}`}}>
+              {w}
+            </div>
+            {i<g.chain.length-1&&<div style={{flexShrink:0,fontSize:11,color:g.connections[i]?"#4ade80":muted,padding:"2px 4px"}}>
+              {g.connections[i]?`→ ${g.connections[i]} →`:"→ ? →"}
+            </div>}
+          </React.Fragment>
+        ))}
+      </div>
+      {g.status==="playing"&&(
+        isMyTurn
+          ? <><div style={{fontSize:12,color:"#f59e0b",marginBottom:6,fontWeight:600}}>ما الرابط بين "{wordA}" و "{wordB}"؟</div>
+            <div style={{display:"flex",gap:6}}>
+              <input value={inputVal} onChange={e=>setInputVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submitLink()} placeholder="اكتب الرابط..." style={{flex:1,padding:"8px 12px",borderRadius:10,background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.05)",border:`1px solid rgba(245,158,11,0.3)`,color:darkMode?"white":"#1e293b",fontSize:12,outline:"none",fontFamily:"'Tajawal',system-ui"}}/>
+              <button onClick={submitLink} style={{padding:"8px 14px",borderRadius:10,background:"rgba(245,158,11,0.2)",border:"1px solid rgba(245,158,11,0.4)",color:"#f59e0b",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إرسال</button>
+            </div></>
+          : <div style={{textAlign:"center",fontSize:12,color:muted}}>⏳ دور صديقك — يوصل "{wordA}" و "{wordB}"</div>
+      )}
+      {g.status==="finished"&&<div style={{textAlign:"center",fontSize:13,color:"#4ade80",fontWeight:800}}>🏆 انتهت اللعبة! نتيجتك: {myScore}</div>}
+    </div>
+  );
+}
+
+// ── XO Game Component ── مكوّن مستقل لحل React Hooks Error #310
+function XOGame({g, userId, partner, darkMode, muted, aiValidateXOSentence, setActiveGame, sendGameEvent, setStreamMessages}){
+  const[pendingInput,setPendingInput]=React.useState("");
+  const[selectedIdx,setSelectedIdx]=React.useState(null);
+  const mySymbol=g.xPlayer===userId?"X":"O";
+  const isMyTurnXO=g.turn===userId;
+  const claimCell=(idx)=>{
+    if(!isMyTurnXO||g.grid[idx].owner||g.validating||g.winner) return;
+    setSelectedIdx(idx);
+  };
+  const submitSentence=async()=>{
+    if(!pendingInput.trim()||selectedIdx===null) return;
+    const cell=g.grid[selectedIdx];
+    const validating={...g,validating:true};
+    setActiveGame(validating); sendGameEvent(validating);
+    const result=await aiValidateXOSentence(cell.word,pendingInput);
+    if(result.valid){
+      const newGrid=g.grid.map((c,i)=>i===selectedIdx?{...c,owner:mySymbol}:c);
+      const wins=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+      const winner=wins.find(l=>l.every(i=>newGrid[i].owner===mySymbol))?mySymbol:null;
+      const draw=!winner&&newGrid.every(c=>c.owner);
+      const updated={...g,grid:newGrid,turn:g.turn===userId?(partner._uid||"p2"):userId,validating:false,winner:winner||(draw?"draw":null),status:winner||draw?"finished":"playing"};
+      setActiveGame(updated); sendGameEvent(updated);
+      setStreamMessages(p=>[...p,{id:Date.now(),_isSystem:true,_icon:"✅",_label:`جملة صحيحة! ${mySymbol} يحجز المربع`}]);
+      if(winner) setStreamMessages(p=>[...p,{id:Date.now()+1,_isSystem:true,_icon:"🏆",_label:`${mySymbol===g.xPlayer?"أنت":"صديقك"} فاز باللعبة!`}]);
+    } else {
+      const updated={...g,validating:false};
+      setActiveGame(updated); sendGameEvent(updated);
+      setStreamMessages(p=>[...p,{id:Date.now(),_isAiloSuggestion:true,text:`❌ الجملة غير صحيحة: ${result.reason||""}\n\nحاول مرة أخرى باستخدام "${cell.word}" في جملة مفيدة.`}]);
+    }
+    setPendingInput(""); setSelectedIdx(null);
+  };
+  return(
+    <div style={{margin:"8px 12px",background:darkMode?"rgba(99,102,241,0.06)":"rgba(99,102,241,0.04)",border:"1px solid rgba(99,102,241,0.2)",borderRadius:20,padding:"14px",fontFamily:"'Tajawal',system-ui"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:16}}>⭕</span>
+          <span style={{fontWeight:800,fontSize:13,color:"#6366f1"}}>إكس أو لغوي</span>
+        </div>
+        <div style={{fontSize:11,background:isMyTurnXO?"rgba(99,102,241,0.2)":"rgba(255,255,255,0.06)",color:isMyTurnXO?"#818cf8":muted,padding:"3px 10px",borderRadius:50,fontWeight:600}}>
+          {g.winner?"انتهت":isMyTurnXO?`دورك ${mySymbol}`:"دور صديقك"}
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+        {g.grid.map((cell,i)=>(
+          <button key={i} onClick={()=>claimCell(i)}
+            disabled={!!cell.owner||!isMyTurnXO||g.validating||!!g.winner}
+            style={{aspectRatio:"1",borderRadius:12,border:`2px solid ${
+              cell.owner==="X"?"rgba(99,102,241,0.6)":cell.owner==="O"?"rgba(244,63,94,0.6)":
+              selectedIdx===i?"rgba(99,102,241,0.8)":"rgba(255,255,255,0.1)"}`,
+              background:cell.owner==="X"?"rgba(99,102,241,0.15)":cell.owner==="O"?"rgba(244,63,94,0.15)":
+              selectedIdx===i?"rgba(99,102,241,0.1)":darkMode?"rgba(255,255,255,0.04)":"rgba(0,0,0,0.03)",
+              cursor:cell.owner||!isMyTurnXO||g.winner?"default":"pointer",
+              display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
+              transition:"all 0.15s",padding:4}}>
+            {cell.owner
+              ? <><div style={{fontSize:18,fontWeight:900,color:cell.owner==="X"?"#818cf8":"#f43f5e"}}>{cell.owner}</div>
+                <div style={{fontSize:9,color:muted,fontWeight:600}}>{cell.word}</div></>
+              : <><div style={{fontSize:16}}>{cell.emoji}</div>
+                <div style={{fontSize:10,fontWeight:700,color:darkMode?"rgba(255,255,255,0.7)":"#374151"}}>{cell.word}</div></>
+            }
+          </button>
+        ))}
+      </div>
+      {selectedIdx!==null&&isMyTurnXO&&!g.winner&&(
+        <div style={{background:darkMode?"rgba(99,102,241,0.1)":"rgba(99,102,241,0.06)",border:"1px solid rgba(99,102,241,0.3)",borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+          <div style={{fontSize:11,color:"#818cf8",fontWeight:700,marginBottom:6}}>
+            كوّن جملة بـ "{g.grid[selectedIdx]?.word}" لتحجز المربع:
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <input value={pendingInput} onChange={e=>setPendingInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submitSentence()} placeholder={`I love my ${g.grid[selectedIdx]?.word}...`}
+              style={{flex:1,padding:"8px 12px",borderRadius:8,background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.05)",border:"1px solid rgba(99,102,241,0.35)",color:darkMode?"white":"#1e293b",fontSize:12,outline:"none",fontFamily:"'Tajawal',system-ui"}}/>
+            <button onClick={submitSentence} disabled={g.validating} style={{padding:"8px 12px",borderRadius:8,background:"linear-gradient(135deg,#6C3CE1,#4A90D9)",border:"none",color:"white",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",gap:4}}>
+              {g.validating?<div style={{width:12,height:12,borderRadius:6,border:"2px solid rgba(255,255,255,0.4)",borderTopColor:"white",animation:"spin 0.7s linear infinite"}}/>:"✓"}
+            </button>
+          </div>
+        </div>
+      )}
+      {g.winner&&g.winner!=="draw"&&<div style={{textAlign:"center",fontSize:14,fontWeight:800,color:g.winner===mySymbol?"#4ade80":"#ef4444"}}>
+        {g.winner===mySymbol?"🏆 فزت!":"😔 فاز صديقك!"}
+      </div>}
+      {g.winner==="draw"&&<div style={{textAlign:"center",fontSize:13,fontWeight:800,color:"#f59e0b"}}>🤝 تعادل!</div>}
+      {g.validating&&<div style={{textAlign:"center",fontSize:11,color:"#818cf8",marginTop:6}}>🤖 AI يتحقق من الجملة...</div>}
+    </div>
+  );
+}
+
 function Ailo(){
   // ── load saved state from localStorage ──
   const load=(k,def)=>{ try{ const v=localStorage.getItem("ailo_"+k); return v!==null?JSON.parse(v):def; }catch(e){return def;} };
@@ -294,8 +454,8 @@ function Ailo(){
 
   const[accentKey,setAccentKeyRaw]=useState(()=>load("accent","gray"));
   const setAccentKey=(v)=>{ setAccentKeyRaw(v); save("accent",v); };
-    const SUPA_URL="https://tsdpznjarcvmpcrmmbdu.supabase.co";
-  const SUPA_KEY="sb_publishable_-Hb5OB0cceinDu7_Lyq5iQ_ChlUcR8I";
+  const SUPA_URL=_SUPA_URL;
+  const SUPA_KEY=_SUPA_KEY;
 
   const[darkMode,setDarkModeRaw]=useState(()=>load("dark",true));
   const setDarkMode=(v)=>{ const nv=typeof v==="function"?v(darkMode):v; setDarkModeRaw(nv); save("dark",nv); };
@@ -926,8 +1086,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ✅ طلبات الدردشة الواردة — تظهر في قائمة الرسائل
   const[chatRequests,setChatRequests]=useState(()=>load("chat_requests",[]));
 
-  const getSupa=()=>window.supabase?.createClient(SUPA_URL,SUPA_KEY);
-
   // theme computed
   const mode=darkMode?DARK:LIGHT;
   const ac=ACCENTS[accentKey];
@@ -1246,10 +1404,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ✅ إرسال Push Notification حقيقي عبر Supabase → OneSignal
   const sendPushNotif = async (targetUserId, title, body, type, data={}) => {
     if(!targetUserId) return;
+    const token = localStorage.getItem("ailo_token"); if(!token) return;
     try{
       await fetch(`${SUPA_URL}/functions/v1/ailo-notify`, {
         method: "POST",
-        headers: { "Content-Type":"application/json", "apikey": SUPA_KEY },
+        headers: { "Content-Type":"application/json", "apikey": SUPA_KEY, "Authorization":`Bearer ${token}` },
         body: JSON.stringify({ target_user_id: targetUserId, title, body, type, data })
       });
     }catch(e){}
@@ -1260,7 +1419,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // رفع ملف لـ Supabase Storage
   const uploadToStorage = async (blob, fileName, mimeType) => {
     try{
-      const token = localStorage.getItem("ailo_token") || SUPA_KEY;
+      const token = localStorage.getItem("ailo_token");
+      if(!token){ console.warn("uploadToStorage: no auth token"); return null; }
       const path = `messages/${Date.now()}_${fileName}`;
       const res = await fetch(`${SUPA_URL}/storage/v1/object/ailo-media/${path}`, {
         method: "POST",
@@ -1846,7 +2006,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   if(appScreen==="login"||appScreen==="register"){
     const isReg=appScreen==="register";
     const aInp={
-      background:"rgba(255,255,255,0.07)",
       border:"1.5px solid rgba(255,255,255,0.12)",
       borderRadius:14,padding:"14px 18px",
       color:"white",fontSize:15,outline:"none",width:"100%",
@@ -3780,155 +3939,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
               // ═══ Word Link ═══
               if(g.type==="wordlink"){
-                const current=g.currentIdx;
-                const [wordA,wordB]=[g.chain[current],g.chain[current+1]];
-                const myScore=g.scores[userId]||0;
-                const partnerScore=g.scores[partner._uid||"p2"]||0;
-                const [inputVal,setInputVal]=React.useState("");
-                const submitLink=async()=>{
-                  if(!inputVal.trim()||g.turn!==userId) return;
-                  const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-                    body:JSON.stringify({message:`Is "${inputVal}" a logical connection between the words "${wordA}" and "${wordB}"? Reply only: YES or NO`})});
-                  const data=await res.json();
-                  const valid=(data.reply||"").trim().toUpperCase().startsWith("Y");
-                  const nextIdx=current+1;
-                  const done=nextIdx>=g.chain.length-1;
-                  const updated={...g,
-                    connections:[...g.connections.slice(0,current),inputVal,...g.connections.slice(current+1)],
-                    currentIdx:done?current:nextIdx,
-                    turn:g.turn===userId?(partner._uid||"p2"):userId,
-                    scores:{...g.scores,[userId]:myScore+(valid?1:0)},
-                    status:done?"finished":"playing"};
-                  setActiveGame(updated); sendGameEvent(updated);
-                  setInputVal("");
-                };
-                return(
-                  <div style={{margin:"8px 12px",background:darkMode?"rgba(245,158,11,0.05)":"rgba(245,158,11,0.04)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:20,padding:"14px",fontFamily:"'Tajawal',system-ui"}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontSize:16}}>🔗</span>
-                        <span style={{fontWeight:800,fontSize:13,color:"#f59e0b"}}>توصيل المفاهيم</span>
-                      </div>
-                      <div style={{fontSize:11,color:muted}}>أنت: {myScore} | صديقك: {partnerScore}</div>
-                    </div>
-                    {/* السلسلة */}
-                    <div style={{display:"flex",alignItems:"center",gap:4,overflowX:"auto",padding:"4px 0",marginBottom:10}}>
-                      {g.chain.map((w,i)=>(
-                        <React.Fragment key={i}>
-                          <div style={{flexShrink:0,padding:"5px 10px",borderRadius:10,fontSize:12,fontWeight:700,
-                            background:i===current||i===current+1?"rgba(245,158,11,0.25)":"rgba(255,255,255,0.07)",
-                            color:i===current||i===current+1?"#f59e0b":muted,border:`1px solid ${i===current||i===current+1?"rgba(245,158,11,0.4)":"transparent"}`}}>
-                            {w}
-                          </div>
-                          {i<g.chain.length-1&&<div style={{flexShrink:0,fontSize:11,color:g.connections[i]?"#4ade80":muted,padding:"2px 4px"}}>
-                            {g.connections[i]?`→ ${g.connections[i]} →`:"→ ? →"}
-                          </div>}
-                        </React.Fragment>
-                      ))}
-                    </div>
-                    {g.status==="playing"&&(
-                      isMyTurn
-                        ? <><div style={{fontSize:12,color:"#f59e0b",marginBottom:6,fontWeight:600}}>ما الرابط بين "{wordA}" و "{wordB}"؟</div>
-                          <div style={{display:"flex",gap:6}}>
-                            <input value={inputVal} onChange={e=>setInputVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submitLink()} placeholder="اكتب الرابط..." style={{flex:1,padding:"8px 12px",borderRadius:10,background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.05)",border:`1px solid rgba(245,158,11,0.3)`,color:darkMode?"white":"#1e293b",fontSize:12,outline:"none",fontFamily:"'Tajawal',system-ui"}}/>
-                            <button onClick={submitLink} style={{padding:"8px 14px",borderRadius:10,background:"rgba(245,158,11,0.2)",border:"1px solid rgba(245,158,11,0.4)",color:"#f59e0b",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui"}}>إرسال</button>
-                          </div></>
-                        : <div style={{textAlign:"center",fontSize:12,color:muted}}>⏳ دور صديقك — يوصل "{wordA}" و "{wordB}"</div>
-                    )}
-                    {g.status==="finished"&&<div style={{textAlign:"center",fontSize:13,color:"#4ade80",fontWeight:800}}>🏆 انتهت اللعبة! نتيجتك: {myScore}</div>}
-                  </div>
-                );
+                return <WordLinkGame g={g} userId={userId} partner={partner} darkMode={darkMode} muted={muted} SUPA_URL={SUPA_URL} SUPA_KEY={SUPA_KEY} setActiveGame={setActiveGame} sendGameEvent={sendGameEvent}/>;
               }
 
               // ═══ X,O اللغوي ═══
               if(g.type==="xo"){
-                const mySymbol=g.xPlayer===userId?"X":"O";
-                const isMyTurnXO=g.turn===userId;
-                const [pendingInput,setPendingInput]=React.useState("");
-                const [selectedIdx,setSelectedIdx]=React.useState(null);
-                const claimCell=async(idx)=>{
-                  if(!isMyTurnXO||g.grid[idx].owner||g.validating||g.winner) return;
-                  setSelectedIdx(idx);
-                };
-                const submitSentence=async()=>{
-                  if(!pendingInput.trim()||selectedIdx===null) return;
-                  const cell=g.grid[selectedIdx];
-                  const validating={...g,validating:true};
-                  setActiveGame(validating); sendGameEvent(validating);
-                  const result=await aiValidateXOSentence(cell.word,pendingInput);
-                  if(result.valid){
-                    const newGrid=g.grid.map((c,i)=>i===selectedIdx?{...c,owner:mySymbol}:c);
-                    // تحقق من الفوز
-                    const wins=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
-                    const winner=wins.find(l=>l.every(i=>newGrid[i].owner===mySymbol))?mySymbol:null;
-                    const draw=!winner&&newGrid.every(c=>c.owner);
-                    const updated={...g,grid:newGrid,turn:g.turn===userId?(partner._uid||"p2"):userId,validating:false,winner:winner||( draw?"draw":null),status:winner||draw?"finished":"playing"};
-                    setActiveGame(updated); sendGameEvent(updated);
-                    setStreamMessages(p=>[...p,{id:Date.now(),_isSystem:true,_icon:result.valid?"✅":"❌",_label:result.valid?`جملة صحيحة! ${mySymbol} يحجز المربع`:"جملة خاطئة"}]);
-                    if(winner) setStreamMessages(p=>[...p,{id:Date.now(),_isSystem:true,_icon:"🏆",_label:`${mySymbol===g.xPlayer?"أنت":"صديقك"} فاز باللعبة!`}]);
-                  } else {
-                    const updated={...g,validating:false};
-                    setActiveGame(updated); sendGameEvent(updated);
-                    setStreamMessages(p=>[...p,{id:Date.now(),_isAiloSuggestion:true,id:Date.now(),text:`❌ الجملة غير صحيحة: ${result.reason||""}\n\nحاول مرة أخرى باستخدام "${cell.word}" في جملة مفيدة.`}]);
-                  }
-                  setPendingInput(""); setSelectedIdx(null);
-                };
-                const checkWinner=(grid,sym)=>[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]].some(l=>l.every(i=>grid[i].owner===sym));
-                return(
-                  <div style={{margin:"8px 12px",background:darkMode?"rgba(99,102,241,0.06)":"rgba(99,102,241,0.04)",border:"1px solid rgba(99,102,241,0.2)",borderRadius:20,padding:"14px",fontFamily:"'Tajawal',system-ui"}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontSize:16}}>⭕</span>
-                        <span style={{fontWeight:800,fontSize:13,color:"#6366f1"}}>إكس أو لغوي</span>
-                      </div>
-                      <div style={{fontSize:11,background:isMyTurnXO?"rgba(99,102,241,0.2)":"rgba(255,255,255,0.06)",color:isMyTurnXO?"#818cf8":muted,padding:"3px 10px",borderRadius:50,fontWeight:600}}>
-                        {g.winner?"انتهت":isMyTurnXO?`دورك ${mySymbol}`:"دور صديقك"}
-                      </div>
-                    </div>
-                    {/* شبكة 3×3 */}
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
-                      {g.grid.map((cell,i)=>(
-                        <button key={i} onClick={()=>claimCell(i)}
-                          disabled={!!cell.owner||!isMyTurnXO||g.validating||!!g.winner}
-                          style={{aspectRatio:"1",borderRadius:12,border:`2px solid ${
-                            cell.owner==="X"?"rgba(99,102,241,0.6)":cell.owner==="O"?"rgba(244,63,94,0.6)":
-                            selectedIdx===i?"rgba(99,102,241,0.8)":"rgba(255,255,255,0.1)"}`,
-                            background:cell.owner==="X"?"rgba(99,102,241,0.15)":cell.owner==="O"?"rgba(244,63,94,0.15)":
-                            selectedIdx===i?"rgba(99,102,241,0.1)":darkMode?"rgba(255,255,255,0.04)":"rgba(0,0,0,0.03)",
-                            cursor:cell.owner||!isMyTurnXO||g.winner?"default":"pointer",
-                            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
-                            transition:"all 0.15s",padding:4}}>
-                          {cell.owner
-                            ? <><div style={{fontSize:18,fontWeight:900,color:cell.owner==="X"?"#818cf8":"#f43f5e"}}>{cell.owner}</div>
-                              <div style={{fontSize:9,color:muted,fontWeight:600}}>{cell.word}</div></>
-                            : <><div style={{fontSize:16}}>{cell.emoji}</div>
-                              <div style={{fontSize:10,fontWeight:700,color:darkMode?"rgba(255,255,255,0.7)":"#374151"}}>{cell.word}</div></>
-                          }
-                        </button>
-                      ))}
-                    </div>
-                    {/* إدخال الجملة */}
-                    {selectedIdx!==null&&isMyTurnXO&&!g.winner&&(
-                      <div style={{background:darkMode?"rgba(99,102,241,0.1)":"rgba(99,102,241,0.06)",border:"1px solid rgba(99,102,241,0.3)",borderRadius:12,padding:"10px 12px",marginBottom:8}}>
-                        <div style={{fontSize:11,color:"#818cf8",fontWeight:700,marginBottom:6}}>
-                          كوّن جملة بـ "{g.grid[selectedIdx]?.word}" لتحجز المربع:
-                        </div>
-                        <div style={{display:"flex",gap:6}}>
-                          <input value={pendingInput} onChange={e=>setPendingInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submitSentence()} placeholder={`I love my ${g.grid[selectedIdx]?.word}...`}
-                            style={{flex:1,padding:"8px 12px",borderRadius:8,background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.05)",border:"1px solid rgba(99,102,241,0.35)",color:darkMode?"white":"#1e293b",fontSize:12,outline:"none",fontFamily:"'Tajawal',system-ui"}}/>
-                          <button onClick={submitSentence} disabled={g.validating} style={{padding:"8px 12px",borderRadius:8,background:"linear-gradient(135deg,#6C3CE1,#4A90D9)",border:"none",color:"white",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Tajawal',system-ui",display:"flex",alignItems:"center",gap:4}}>
-                            {g.validating?<div style={{width:12,height:12,borderRadius:6,border:"2px solid rgba(255,255,255,0.4)",borderTopColor:"white",animation:"spin 0.7s linear infinite"}}/>:"✓"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {g.winner&&g.winner!=="draw"&&<div style={{textAlign:"center",fontSize:14,fontWeight:800,color:g.winner===mySymbol?"#4ade80":"#ef4444"}}>
-                      {g.winner===mySymbol?"🏆 فزت!":"😔 فاز صديقك!"}
-                    </div>}
-                    {g.winner==="draw"&&<div style={{textAlign:"center",fontSize:13,fontWeight:800,color:"#f59e0b"}}>🤝 تعادل!</div>}
-                    {g.validating&&<div style={{textAlign:"center",fontSize:11,color:"#818cf8",marginTop:6}}>🤖 AI يتحقق من الجملة...</div>}
-                  </div>
-                );
+                return <XOGame g={g} userId={userId} partner={partner} darkMode={darkMode} muted={muted} aiValidateXOSentence={aiValidateXOSentence} setActiveGame={setActiveGame} sendGameEvent={sendGameEvent} setStreamMessages={setStreamMessages}/>;
               }
               return null;
             })()}
