@@ -82,6 +82,8 @@ input,select,button,textarea{font-family:'Poppins','Tajawal',system-ui}
 @keyframes fadeUp{0%{opacity:0;transform:translateX(-50%) translateY(6px)}100%{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @keyframes popIn{from{opacity:0;transform:scale(0.94)}to{opacity:1;transform:scale(1)}}
+@keyframes flashCorrect{0%{background:rgba(34,197,94,0.4)}100%{background:transparent}}
+@keyframes flashWrong{0%{background:rgba(239,68,68,0.4)}100%{background:transparent}}
 @keyframes dot0{0%,100%{opacity:0.3;transform:scale(0.85)}50%{opacity:1;transform:scale(1)}}
 @keyframes dot1{0%,100%{opacity:0.3;transform:scale(0.85)}50%{opacity:1;transform:scale(1)}}
 @keyframes dot2{0%,100%{opacity:0.3;transform:scale(0.85)}50%{opacity:1;transform:scale(1)}}
@@ -644,12 +646,17 @@ No markdown, no explanation, no backticks. Start directly with [`;
 
   const adminGenerateStickers = async (packType) => {
     setAdminGenLoading(true);
-    const packName = packType==="movies" ? "English Movies 🎬" : "Arabic Wisdom 🌙";
+    const packName = packType==="movies" ? "English Movies 🎬" : packType==="status" ? "Status Expressions 😊" : "Arabic Wisdom 🌙";
     setAdminGenLog([`⏳ جارٍ توليد ستيكرات حزمة "${packName}"...`]);
     const supa = getSupa();
     if(!supa){ setAdminGenLog(["❌ Supabase غير متصل"]); setAdminGenLoading(false); return; }
     try{
       const prompt = packType==="movies"
+        packType==="status"
+        ? `Generate 40 short expressive status stickers (like "I'm excited", "I need help", "Thinking...", "On my way", "Be right back").
+Mix Arabic and English. Each sticker max 60 chars with a relevant emoji.
+Return ONLY a JSON array like: [{"text":"🚀 I'm on my way!","trigger_emoji":"🚀"},...]`
+        : packType==="movies"
         ? `Generate 40 fun sticker messages inspired by famous English movies (quotes, reactions, emotions).
 Each sticker must have a matching trigger emoji.
 Return ONLY a valid JSON array, no markdown. Each object:
@@ -736,6 +743,9 @@ Return ONLY a valid JSON array, no markdown. Each object:
   const[showSettings,setShowSettings]=useState(false);
   const[showNotif,setShowNotif]=useState(false);
   const[showBlock,setShowBlock]=useState(false);
+  const[showStickerPicker,setShowStickerPicker]=useState(false);
+  const[stickerPacks,setStickerPacks]=useState([]);
+  const[stickerPackTab,setStickerPackTab]=useState("all");
   const[profile,setProfileRaw]=useState(()=>load("profile",{avatar:avUrl("Aisha"),name:"مستخدم جديد",status:"👋 مرحباً!",lang:"Arabic",bio:"أتعلم لغة جديدة"}));
   const setProfile=(fn)=>{ setProfileRaw(p=>{ const nv=typeof fn==="function"?fn(p):fn; save("profile",nv); return nv; }); };
   const[emailInput,setEmailInput]=useState("");
@@ -958,6 +968,12 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
   const[exStep,setExStep]=useState("lang"); // lang | topic | quiz | cooldown
   const[exLang,setExLang]=useState(null);
   const[exTopic,setExTopic]=useState(null);
+  // ── Onboarding ──
+  const[userPreferences,setUserPreferences]=useState(()=>load("userPreferences",null));
+  const[showOnboarding,setShowOnboarding]=useState(false);
+  const[onbLang,setOnbLang]=useState("");
+  const[onbLevel,setOnbLevel]=useState("beginner");
+  const[onbTopics,setOnbTopics]=useState([]);
   const[exQuestions,setExQuestions]=useState([]);
   const[exIdx,setExIdx]=useState(0);
   const[exAnswer,setExAnswer]=useState(null);
@@ -965,6 +981,43 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
   const[exLoading,setExLoading]=useState(false);
   const[langProgress,setLangProgress]=useState(()=>load("langProgress",{}));
   const saveLangProgress=(lp)=>{ save("langProgress",lp); };
+  // ── Tap-to-Translate ──
+  const[tapTooltip,setTapTooltip]=useState(null); // {word, x, y, translation}
+  const tapTranslateCache=React.useRef({});
+  const handleWordTap=async(word, event)=>{
+    if(!word||word.length<2) return;
+    event?.stopPropagation?.();
+    const rect=event?.target?.getBoundingClientRect?.();
+    const x=rect?rect.left+rect.width/2:window.innerWidth/2;
+    const y=rect?rect.top-8:100;
+    const cached=tapTranslateCache.current[word];
+    if(cached){ setTapTooltip({word,x,y,translation:cached}); setTimeout(()=>setTapTooltip(null),3000); return; }
+    setTapTooltip({word,x,y,translation:"..."});
+    try{
+      const userLang=load("profile",{}).lang||"Arabic";
+      const prompt=`Translate the word "${word}" to ${userLang}. Reply with ONLY the translation, no explanation, no punctuation.`;
+      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
+        method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body:JSON.stringify({message:prompt})
+      });
+      const parsed=await parseAiReply(res);
+      const tr=(parsed.reply||parsed.text||word).trim().slice(0,60);
+      tapTranslateCache.current[word]=tr;
+      setTapTooltip({word,x,y,translation:tr});
+    }catch(e){ setTapTooltip(t=>t?{...t,translation:word}:null); }
+    setTimeout(()=>setTapTooltip(null),3000);
+  };
+  // Helper: wrap text in clickable spans for tap-to-translate
+  const TapText=({text,style})=>{
+    if(!text) return null;
+    const words=text.split(/(\s+)/);
+    return <span style={style}>{words.map((w,i)=>{
+      const isWord=/\S/.test(w)&&w.length>1;
+      return isWord
+        ?<span key={i} onClick={e=>handleWordTap(w.replace(/[^a-zA-Z؀-ۿa-zA-ZÀ-ÿ]/g,""),e)} style={{cursor:"pointer",borderBottom:"1px dashed rgba(99,102,241,0.3)",transition:"color 0.15s"}} onMouseEnter={e=>e.target.style.color=primary} onMouseLeave={e=>e.target.style.color=""}>{w}</span>
+        :<span key={i}>{w}</span>;
+    })}</span>;
+  };
   // states for arrange type
   const[exArrWords,setExArrWords]=useState([]);
   const[exArrSel,setExArrSel]=useState([]);
@@ -1104,6 +1157,15 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
                  : Array.isArray(qData.items) ? qData.items : [];
     }
 
+    // ── LISTENING ──
+    if(type === "listening"){
+      base.type     = "listening";
+      base.sentence = qData.sentence || qData.text || qData.word || "";
+      base.options  = Array.isArray(qData.options) ? qData.options : [];
+      base.answer   = qData.answer !== undefined ? qData.answer : 0;
+      base.q        = qData.q || qData.question || "ماذا سمعت؟";
+    }
+
     return base;
   };
 
@@ -1120,7 +1182,9 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
     try{
       const supa = getSupa();
       if(supa && lang && topic){
-        const currentLevel = getLvl(totalXp).level;
+        const prefs = load("userPreferences",null);
+        const prefLevel = prefs?.level==="advanced"?3:prefs?.level==="intermediate"?2:1;
+        const currentLevel = prefLevel || getLvl(totalXp).level;
 
         // ── المحاولة الأولى: جدول exercises الجديد مع فلتر ديناميكي ──
         const tryExercisesTable = async (withLevel) => {
@@ -1155,6 +1219,13 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
           })).filter(q => q.type);
 
           if(normalized.length > 0){
+            // FIX 10: Cache questions offline
+            try{
+              const offKey=`offline_questions_${lang}_${topic}`;
+              const existing=JSON.parse(localStorage.getItem("ailo_"+offKey)||"[]");
+              const merged=[...existing,...normalized].filter((q,i,arr)=>arr.findIndex(x=>x.word===q.word&&x.type===q.type)===i).slice(0,50);
+              localStorage.setItem("ailo_"+offKey, JSON.stringify(merged));
+            }catch(_){}
             setExQuestions(normalized);
             setExStep("quiz");
             setExLoading(false);
@@ -1213,6 +1284,29 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
       console.warn("⚠️ Supabase fetch skipped:", supaErr.message);
     }
 
+    // ── FIX 10: Offline fallback before AI ──
+    try{
+      const offKey=`offline_questions_${lang}_${topic}`;
+      const cached=JSON.parse(localStorage.getItem("ailo_"+offKey)||"[]");
+      if(cached.length>=5){
+        const shuffled=[...cached].sort(()=>Math.random()-0.5).slice(0,10);
+        setExQuestions(shuffled); setExStep("quiz"); setExLoading(false);
+        return;
+      }
+    }catch(_){}
+
+    // ── FIX 11: AI call limit per session (max 3) ──
+    const aiCallCount=parseInt(sessionStorage.getItem("ailo_ai_calls")||"0");
+    if(aiCallCount>=3){
+      setExQuestions([
+        {type:"mcq",word:"Hello",q:"ترجم هذه الكلمة",options:["مرحبا","وداعا","شكرا","آسف"],answer:0},
+        {type:"mcq",word:"Thank you",q:"ترجم هذه الكلمة",options:["من فضلك","شكراً","آسف","نعم"],answer:1},
+        {type:"flashcard",word:"Goodbye",meaning:"وداعاً",example:"Goodbye, see you later!",pronunciation:"جود باي"},
+      ]);
+      setExStep("quiz"); setExLoading(false); return;
+    }
+    sessionStorage.setItem("ailo_ai_calls", aiCallCount+1);
+
     // ── Fallback: توليد أسئلة بالذكاء الاصطناعي ──
     try{
       const dueCards=getDueCards(lang,topic);
@@ -1238,6 +1332,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       if(!match) throw new Error("No JSON array found");
       const questions=JSON.parse(match[0]);
       if(!Array.isArray(questions)||questions.length===0) throw new Error("Empty questions");
+      // FIX 11: Cache AI-generated questions for offline use
+      try{
+        const offKey=`offline_questions_${lang}_${topic}`;
+        const existing=JSON.parse(localStorage.getItem("ailo_"+offKey)||"[]");
+        const merged=[...existing,...questions].filter((q,i,arr)=>arr.findIndex(x=>x.word===q.word&&x.type===q.type)===i).slice(0,50);
+        localStorage.setItem("ailo_"+offKey, JSON.stringify(merged));
+      }catch(_){}
       setExQuestions(questions);
       setExStep("quiz");
     }catch(e){
@@ -1376,7 +1477,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[shortId,setShortId]=useState(()=>load("shortId",""));
   // ── Admin Panel ──
   const[showAdmin,setShowAdmin]=useState(false);
-  const[adminGenType,setAdminGenType]=useState("questions"); // "questions"|"stickers_movies"|"stickers_wisdom"
+  const[adminGenType,setAdminGenType]=useState("questions"); // "questions"|"stickers_movies"|"stickers_wisdom"|"stickers_status"
   const[adminGenLang,setAdminGenLang]=useState("English");
   const[adminGenLoading,setAdminGenLoading]=useState(false);
   const[adminGenLog,setAdminGenLog]=useState([]);
@@ -1421,6 +1522,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const fileRef=useRef(null);
   // ── Ailo Chat Tools (Friend Chat) ──
   const[showAiloMenu,setShowAiloMenu]=useState(false);
+  const[showAiloMenuR,setShowAiloMenuR]=useState(false); // FIX 18: Ailo menu for random chat
   const[showFriendTopics,setShowFriendTopics]=useState(false);
   const[showFriendCorrection,setShowFriendCorrection]=useState(false);
   const CHAT_TOPICS=["🌍 السفر والثقافة","🍜 الطعام والطبخ","🎬 الأفلام والمسلسلات","📚 الكتب والتعلم","⚽ الرياضة والهوايات","💼 العمل والمهنة"];
@@ -1622,7 +1724,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           const otherId = ids.find(id=>id!==myId);
           if(!otherId) return;
           const otherData = state[otherId]?.[0] || {};
-          setPartner({ av: otherData.avatar||"🌍", name: otherData.name||"مستخدم", country: otherData.nativeLang||"?" });
+          setPartner({ av: otherData.avatar||"🌍", name: otherData.name||"مستخدم", country: otherData.nativeLang||"?", _uid: otherId });
           const rid = [myId,otherId].sort().join("__");
           setRoomId(rid);
           setMatched(true);
@@ -1688,6 +1790,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     });
     ch.on("broadcast",{event:"game_event"},({payload})=>{
       setActiveGame(payload);
+    });
+    // FIX 16: Handle message delete from partner
+    ch.on("broadcast",{event:"msg_delete"},({payload})=>{
+      setMessages(prev=>prev.map(m=>m.id===payload.id?{...m,_deleted:true,text:"تم حذف هذه الرسالة"}:m));
+    });
+    // FIX 16: Handle message reactions from partner
+    ch.on("broadcast",{event:"msg_reaction"},({payload})=>{
+      setMessages(prev=>prev.map(m=>{
+        if(m.id!==payload.msgId) return m;
+        const r=m._reactions||{};
+        return{...m,_reactions:{...r,[payload.emoji]:(r[payload.emoji]||0)+1}};
+      }));
     });
     // ── WebRTC Signaling ──────────────────────────────────────────────────
     ch.on("broadcast",{event:"webrtc_offer"},async({payload})=>{
@@ -1929,6 +2043,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   };
 
   // فتح قناة الدردشة المباشرة مع صديق
+  // FIX 17: Mark messages as read effect
+  useEffect(()=>{
+    if(activeChat==="friend" && directChanRef.current){
+      setTimeout(()=>markMessagesRead(), 500);
+    }
+  },[activeChat]);
+
   const joinStreamChannel = async (myId, partnerId) => {
     const supa = getSupa(); if(!supa) return;
     if(directChanRef.current){ try{supa.removeChannel(directChanRef.current);}catch(e){} directChanRef.current=null; }
@@ -2076,6 +2197,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // مؤشر الكتابة — مع debounce لتقليل الرسائل (Fix #4 & #17)
   const typingTimerRef = useRef(null);
+  // FIX 17: Mark messages as read when friend chat is open
+  const markMessagesRead = React.useCallback(()=>{
+    if(!directChanRef.current||!userId) return;
+    try{
+      directChanRef.current.send({type:"broadcast",event:"direct_read",payload:{reader:userId,at:Date.now()}});
+    }catch(_){}
+  },[userId]);
+
   const streamTypingStart = () => {
     // أرسل on:true فقط إذا لم يكن المؤقت شغّالاً (أول ضغطة فقط)
     if(!typingTimerRef.current){
@@ -2259,7 +2388,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     return()=>{window._callRejectedHandler=null;};
   },[screen,callStatus]);
   useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[messages]);
-  useEffect(()=>{msgEnd.current?.scrollIntoView({behavior:"smooth"});},[streamMessages]);
+  useEffect(()=>{
+    msgEnd.current?.scrollIntoView({behavior:"smooth"});
+    // FIX 17: Mark messages as read when viewing
+    if(activeChat==="friend") markMessagesRead();
+  },[streamMessages]);
   useEffect(()=>{botEnd.current?.scrollIntoView({behavior:"smooth"});},[botMsgs,botTyping]);
   useEffect(()=>{if(partner.name!=="Alex")save("last_partner",partner);},[partner]);
   useEffect(()=>{ const q=exQuestions[exIdx]; if(q&&q.type==='arrange'&&q.words){setExArrWords([...q.words].sort(()=>Math.random()-0.5));} if(q&&q.type==='pairs'){setExPairDone({});setExPairShuffled(q.pairs?[...q.pairs].sort(()=>Math.random()-0.5):[]);} },[exIdx,exQuestions]);
@@ -2694,6 +2827,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           if(savedXp > 0) setTotalXp(savedXp);
           if(savedCoins > 0) setCoins(savedCoins);
           addNotif("👋","مرحباً بعودتك!",`أهلاً ${userName}، جاهز لتعلم لغة جديدة اليوم؟`,"info");
+          // Onboarding: show if first login and no preferences set
+          if(!load("userPreferences",null)){
+            setTimeout(()=>setShowOnboarding(true), 800);
+          }
 
           // ✅ ربط userId بـ OneSignal
           if(window.OneSignal && newUid){
@@ -3208,7 +3345,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       <button key={r} onClick={()=>{
                         setReactMenuIdR(null);
                         setMessages(prev=>prev.map(x=>x.id===m.id?{...x,_reactions:{...(x._reactions||{}),[r]:((x._reactions||{})[r]||0)+1}}:x));
-                      }} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"2px"}}>{r}</button>
+                        // Broadcast reaction to partner
+                        try{ roomRef.current?.send({type:"broadcast",event:"msg_reaction",payload:{msgId:m.id,emoji:r}}); }catch(_){}
+                      }} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,padding:"2px",transition:"transform 0.1s"}}
+                        onPointerDown={e=>e.currentTarget.style.transform="scale(1.3)"}
+                        onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}>{r}</button>
                     ))}
                   </div>
                 )}
@@ -3259,7 +3400,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     {[
                       {icon:"↩️",label:"Reply",action:()=>{ setReplyToR({id:m.id,text:m.text||"📎"}); setMsgMenuIdR(null); }},
                       {icon:"📋",label:"Copy",action:()=>{ navigator.clipboard?.writeText(m.text||""); setMsgMenuIdR(null); }},
-                      ...(isMe&&!isDeleted?[{icon:"🗑️",label:"Delete",color:"#ef4444",action:()=>{ setMsgMenuIdR(null); setMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true}:x)); }}]:[]),
+                      ...(isMe&&!isDeleted?[{icon:"🗑️",label:"حذف",color:"#ef4444",action:()=>{
+                setMsgMenuIdR(null);
+                setMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true,text:"تم حذف هذه الرسالة"}:x));
+                // Broadcast delete to partner
+                try{ roomRef.current?.send({type:"broadcast",event:"msg_delete",payload:{id:m.id}}); }catch(_){}
+              }}]:[]),
+              {icon:"😊",label:"تفاعل",action:()=>{setMsgMenuIdR(null);setReactMenuIdR(m.id);}},
                     ].map((item,i)=>(
                       <button key={i} onClick={item.action} style={{width:"100%",background:"none",border:"none",cursor:"pointer",padding:"9px 14px",display:"flex",alignItems:"center",gap:10,color:item.color||text,fontSize:13,fontWeight:600,fontFamily:"'Poppins','Tajawal',system-ui",borderRadius:10}}>
                         <span>{item.icon}</span><span>{item.label}</span>
@@ -3273,6 +3420,43 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {isTyping&&<div style={{alignSelf:"flex-start",background:card,backdropFilter:"blur(10px)",padding:"12px 16px",borderRadius:"18px 18px 18px 4px",display:"flex",gap:5,border:`1px solid ${border}`}}>{[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:3.5,background:primary,animationName:`dot${i}`,animationDuration:"1s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}</div>}
           <div ref={msgEnd}/>
         </div>
+
+        {/* FIX 18: Ailo Tools Panel - random chat */}
+        {showAiloMenuR&&(
+          <div style={{padding:"10px 12px",background:darkMode?"rgba(9,14,28,0.97)":"rgba(255,255,255,0.98)",borderTop:`1px solid ${border}`,display:"flex",flexWrap:"wrap",gap:8}}>
+            {/* AI Topics */}
+            <button onClick={async()=>{
+              setShowAiloMenuR(false);
+              setTopicsLoading(true); setAiTopics([]);
+              try{
+                const lang=load("targetLang","English");
+                const prompt=`Generate 3 fun conversation topics for two people practicing ${lang}. Return ONLY a JSON array of 3 strings.`;
+                const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
+                const parsed=await parseAiReply(res);
+                const match=(parsed.reply||"").match(/\[[\s\S]*\]/);
+                if(match){ const arr=JSON.parse(match[0]); if(Array.isArray(arr)) setAiTopics(arr.slice(0,3)); }
+              }catch(_){}
+              setTopicsLoading(false); setShowFriendTopics(true);
+            }} style={{flex:1,padding:"10px 8px",borderRadius:12,background:`${primary}15`,border:`1px solid ${primary}30`,color:primary,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              💡 {topicsLoading?"...":"مواضيع AI"}
+            </button>
+            {/* AI Correction */}
+            <button onClick={()=>{setShowAiloMenuR(false);setShowFriendCorrection(true);}} style={{flex:1,padding:"10px 8px",borderRadius:12,background:"rgba(34,197,94,0.12)",border:"1px solid rgba(34,197,94,0.25)",color:"#22c55e",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              ✍️ تصحيح AI
+            </button>
+            {/* Word Link Game */}
+            <button onClick={async()=>{
+              setShowAiloMenuR(false);
+              const words=await aiGenerateWordChain(load("targetLang","English"));
+              if(words){
+                const g={type:"word_link",chain:words,connections:Array(words.length-1).fill(""),status:"playing",turn:userId,scores:{[userId]:0,[partner._uid||"p2"]:0}};
+                setActiveGame(g); sendGameEvent(g);
+              }
+            }} style={{flex:1,padding:"10px 8px",borderRadius:12,background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.25)",color:"#f59e0b",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              🔗 لعبة
+            </button>
+          </div>
+        )}
 
         {/* شريط الرد */}
         {replyToR&&(
@@ -3289,7 +3473,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         </div>}
 
         {/* شريط الإرسال */}
-        <div style={{padding:"10px 12px",background:card,backdropFilter:"blur(20px)",borderTop:`1px solid ${border}`,flexShrink:0}}>
+        <div style={{padding:"10px 12px",padding:"10px 12px calc(10px + env(safe-area-inset-bottom)) 12px",background:card,backdropFilter:"blur(20px)",borderTop:`1px solid ${border}`,flexShrink:0,position:"relative",zIndex:10}}>
           <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={e=>{
             const f=e.target.files?.[0]; if(!f)return;
             if(f.size > 5*1024*1024){ alert("File too large (max 5MB)"); e.target.value=""; return; }
@@ -3316,7 +3500,21 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             e.target.value="";
           }}/>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {/* زر أدوات Ailo - الدردشة العشوائية */}
+            <button onClick={()=>setShowAiloMenuR(p=>!p)}
+              style={{width:38,height:38,borderRadius:10,background:showAiloMenuR?`linear-gradient(135deg,${primary},${secondary})`:`${primary}18`,border:`1px solid ${showAiloMenuR?primary:border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.2s"}}>
+              <span style={{fontSize:16}}>🦌</span>
+            </button>
             <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex"}}>{Ic.image(muted)}</button>
+            {/* زر الستيكرات - الدردشة العشوائية */}
+            <button onClick={async()=>{
+              const supa=getSupa(); if(!supa) return;
+              const cached=load("stickers_cache",null);
+              if(cached){ setShowStickerPicker(true); setStickerPacks(cached); return; }
+              const{data}=await supa.from("stickers").select("id,text,trigger_emoji,pack_name").limit(200);
+              if(data){ save("stickers_cache",data); setStickerPacks(data); }
+              setShowStickerPicker(true);
+            }} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex",alignItems:"center",fontSize:18}}>🏷️</button>
             {/* زر التسجيل الصوتي */}
             <button
               onPointerDown={async(e)=>{
@@ -3371,7 +3569,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               style={{width:38,height:38,background:isRecordingR?`linear-gradient(135deg,#ef4444,#dc2626)`:`${primary}18`,border:`1px solid ${isRecordingR?"#ef4444":border}`,borderRadius:isRecordingR?19:9,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none",WebkitUserSelect:"none",touchAction:"none"}}
             >{Ic.mic(isRecordingR?"white":muted,18)}</button>
             <div style={{flex:1,position:"relative"}}>
-              <textarea value={chatInput} onChange={e=>{const v=e.target.value.slice(0,500);setChatInput(v);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";try{if(roomRef.current)roomRef.current.send({type:"broadcast",event:"typing"});}catch(ex){}}} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}} placeholder="Type a message..." rows={1} style={{...inp,flex:1,padding:"10px 14px",borderRadius:20,width:"100%",resize:"none",overflow:"hidden",lineHeight:"1.4"}}/>
+              <textarea value={chatInput} onChange={e=>{const v=e.target.value.slice(0,500);setChatInput(v);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";try{if(roomRef.current)roomRef.current.send({type:"broadcast",event:"typing"});}catch(ex){} fetchStickerSuggestions(v);}} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}} placeholder="Type a message..." rows={1} style={{...inp,flex:1,padding:"10px 14px",borderRadius:20,width:"100%",resize:"none",overflow:"hidden",lineHeight:"1.4"}}/>
             </div>
             <button onClick={sendMsg} style={{width:42,height:42,borderRadius:21,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${glow}`}}>{Ic.send("white")}</button>
           </div>
@@ -3387,6 +3585,71 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             </div>
           </div>
         )}
+
+        {/* ── FIX 13: Sticker Picker Modal ── */}
+        {showStickerPicker&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowStickerPicker(false)}>
+            <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:0,maxHeight:"60vh",display:"flex",flexDirection:"column"})}} onClick={e=>e.stopPropagation()}>
+              <div style={{padding:"14px 16px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+                <div style={{fontWeight:800,fontSize:15}}>🏷️ الملصقات</div>
+                <button onClick={()=>setShowStickerPicker(false)} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:20,lineHeight:1}}>×</button>
+              </div>
+              {/* Tabs */}
+              <div style={{display:"flex",gap:6,padding:"8px 14px",borderBottom:`1px solid ${border}`,flexShrink:0,overflowX:"auto"}}>
+                {[{k:"all",l:"الكل"},
+                  {k:"English Movies 🎬",l:"🎬 أفلام"},
+                  {k:"Arabic Wisdom 🌙",l:"🌙 حكم عربية"},
+                  {k:"Status Expressions 😊",l:"😊 تعبيرات"}
+                ].map(t=>(
+                  <button key={t.k} onClick={()=>setStickerPackTab(t.k)}
+                    style={{flexShrink:0,padding:"5px 12px",borderRadius:50,border:`1px solid ${stickerPackTab===t.k?primary:border}`,background:stickerPackTab===t.k?`${primary}22`:"transparent",color:stickerPackTab===t.k?primary:muted,fontSize:12,cursor:"pointer",fontWeight:stickerPackTab===t.k?700:400,fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                    {t.l}
+                  </button>
+                ))}
+              </div>
+              {/* Sticker Grid */}
+              <div style={{overflowY:"auto",flex:1,padding:"12px 14px",display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>
+                {(stickerPackTab==="all"?stickerPacks:stickerPacks.filter(s=>s.pack_name===stickerPackTab)).map(s=>(
+                  <button key={s.id} onClick={()=>{
+                    const t=now();
+                    const nm={id:Date.now(),from:"me",text:s.text,time:t,status:"sent"};
+                    setMessages(p=>[...p,nm]); setShowStickerPicker(false);
+                    if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:s.text,time:t}});
+                    addXp(2,"ستيكر"); setCoins(c=>c+1);
+                  }} style={{background:darkMode?"rgba(255,255,255,0.04)":"rgba(0,0,0,0.02)",border:`1px solid ${border}`,borderRadius:12,padding:"10px 8px",cursor:"pointer",textAlign:"center",fontFamily:"'Poppins','Tajawal',system-ui",fontSize:12,fontWeight:600,color:text,lineHeight:1.5,transition:"all 0.15s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=`${primary}15`}
+                    onMouseLeave={e=>e.currentTarget.style.background=darkMode?"rgba(255,255,255,0.04)":"rgba(0,0,0,0.02)"}>
+                    {s.text}
+                  </button>
+                ))}
+                {stickerPacks.length===0&&(
+                  <div style={{gridColumn:"1/-1",textAlign:"center",padding:"24px 0",color:muted,fontSize:13}}>
+                    <div style={{fontSize:32,marginBottom:8}}>🏷️</div>
+                    لا توجد ملصقات بعد — اطلب من المطور إضافتها
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── FIX 14: Sticker Suggestion Bar ── */}
+        {showStickerBar&&stickerSuggestions.length>0&&(
+          <div style={{position:"absolute",bottom:"100%",left:0,right:0,background:darkMode?"rgba(9,14,28,0.97)":"rgba(255,255,255,0.98)",borderTop:`1px solid ${border}`,padding:"8px 12px",display:"flex",gap:8,overflowX:"auto",zIndex:20}}>
+            {stickerSuggestions.map(s=>(
+              <button key={s.id} onClick={()=>{
+                const t=now();
+                const nm={id:Date.now(),from:"me",text:s.text,time:t,status:"sent"};
+                setMessages(p=>[...p,nm]); setShowStickerBar(false); setStickerSuggestions([]); setChatInput("");
+                if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:s.text,time:t}});
+              }} style={{flexShrink:0,background:`${primary}15`,border:`1px solid ${primary}30`,borderRadius:10,padding:"6px 10px",fontSize:11,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",color:text,fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {s.text}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── FIX 16: Context Menu (Long Press) ── */}
         <style>{CSS}</style>
       </div>
     );
@@ -3402,7 +3665,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   ];
 
   const isInsideExercise = !storeTab && (exStep==="quiz"||exStep==="cooldown"||exStep==="result");
-  const showBottomNav = activeChat===null && !isInsideExercise && tab!=="leaderboard" && tab!=="history" && !activeGame;
+  const showBottomNav = activeChat===null && screen!=="chat" && screen!=="call" && screen!=="matching" && !isInsideExercise && !activeGame;
 
   return(
     <div style={{
@@ -3421,10 +3684,30 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         <div style={{position:"fixed",top:"40%",left:"88%",width:1,height:1,borderRadius:"50%",background:"white",boxShadow:"0 0 4px 1px rgba(255,255,255,0.6)",pointerEvents:"none",zIndex:0}}/>
       </>}
 
+      {/* FIX 3: Tap-to-Translate Tooltip */}
+      {tapTooltip&&(
+        <div style={{
+          position:"fixed",
+          left:Math.max(10,Math.min(tapTooltip.x-60,window.innerWidth-130)),
+          top:Math.max(10,tapTooltip.y-50),
+          background:darkMode?"rgba(17,24,39,0.97)":"rgba(255,255,255,0.97)",
+          border:`1px solid ${primary}44`,
+          borderRadius:12,padding:"8px 14px",
+          boxShadow:`0 8px 28px rgba(0,0,0,0.3),0 0 0 1px ${primary}22`,
+          zIndex:9999,pointerEvents:"none",
+          animation:"popIn 0.18s cubic-bezier(0.34,1.56,0.64,1)",
+          maxWidth:160,textAlign:"center"
+        }}>
+          <div style={{fontSize:11,color:muted,marginBottom:2,fontWeight:600}}>{tapTooltip.word}</div>
+          <div style={{fontSize:14,fontWeight:800,color:primary}}>{tapTooltip.translation}</div>
+          <div style={{position:"absolute",bottom:-6,left:"50%",transform:"translateX(-50%)",width:10,height:10,background:darkMode?"rgba(17,24,39,0.97)":"rgba(255,255,255,0.97)",border:`1px solid ${primary}44`,borderTop:"none",borderLeft:"none",transform:"translateX(-50%) rotate(45deg)"}}/>
+        </div>
+      )}
+
       {xpPopup&&<div style={{position:"fixed",top:86,left:"50%",transform:"translateX(-50%)",background:`linear-gradient(135deg,${primary},${secondary})`,color:"white",padding:"8px 20px",borderRadius:50,fontWeight:800,fontSize:13,zIndex:500,animation:"fadeUp 0.35s cubic-bezier(0.34,1.56,0.64,1)",pointerEvents:"none",boxShadow:`0 6px 28px ${glow}, 0 1px 0 rgba(255,255,255,0.2) inset`,display:"flex",alignItems:"center",gap:7,whiteSpace:"nowrap",letterSpacing:"0.03em"}}>{Ic.zap("white",13)} +{xpPopup.amt} XP · {xpPopup.label}</div>}
 
-      {/* HEADER */}
-      <div style={{
+      {/* HEADER — show only in main tabs, not in chat/call/matching */}
+      {(activeChat===null && screen!=="chat" && screen!=="call" && screen!=="matching") && <div style={{
         background: darkMode ? "rgba(9,14,28,0.92)" : "rgba(255,255,255,0.95)",
         backdropFilter:"blur(16px) saturate(160%)",WebkitBackdropFilter:"blur(16px) saturate(160%)",
         borderBottom:`1px solid ${darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.06)"}`,
@@ -3482,7 +3765,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <button onClick={()=>setShowCoinsInfo(true)} style={{background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:50,padding:"2px 8px",display:"flex",alignItems:"center",gap:3,flexShrink:0,cursor:"pointer"}}><span style={{fontSize:12}}>🪙</span><span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>{coins}</span></button>
           <div style={{background:"rgba(239,68,68,0.15)",borderRadius:50,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#ef4444",flexShrink:0,display:"flex",alignItems:"center",gap:3}}><span style={{color:"#ef4444",fontSize:13}}>🔥</span><span>{streak}</span></div>
         </div>
-      </div>
+      </div>}
 
       {/* NOTIF PANEL */}
       {showNotif&&(
@@ -4186,11 +4469,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                         onClick={e=>e.stopPropagation()}>
                         {[
                           {icon:"↩️",label:"رد",action:()=>{setReplyTo({id:m.id,text:m.text||"📎"});setMsgMenuId(null);}},
+                          {icon:"😊",label:"تفاعل",action:()=>{setMsgMenuId(null);setReactMenuId(m.id);}},
                           {icon:"📋",label:"نسخ",action:()=>{navigator.clipboard?.writeText(m.text||"");setMsgMenuId(null);}},
                           ...(isMe&&!isDeleted?[{icon:"🗑️",label:"حذف",color:"#ef4444",action:()=>{
                             setMsgMenuId(null);
-                            setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true}:x));
-                            // Fix #7: أرسل حدث الحذف للطرف الآخر
+                            setStreamMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true,text:"تم حذف هذه الرسالة"}:x));
                             try{ if(directChanRef.current) directChanRef.current.send({type:"broadcast",event:"direct_delete",payload:{msgId:m.id,from:userId}}); }catch(e){}
                           }}]:[]),
                         ].map((item,i)=>(
@@ -4703,6 +4986,21 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 </svg>
               </button>
 
+              {/* 🏷️ زر الستيكرات - الدردشة المباشرة */}
+              <button onClick={async()=>{
+                const supa=getSupa(); if(!supa) return;
+                const cached=load("stickers_cache",null);
+                if(cached){ setShowStickerPicker(true); setStickerPacks(cached); return; }
+                const{data}=await supa.from("stickers").select("id,text,trigger_emoji,pack_name").limit(200);
+                if(data){ save("stickers_cache",data); setStickerPacks(data); }
+                setShowStickerPicker(true);
+              }} style={{width:40,height:40,borderRadius:14,
+                background:darkMode?"rgba(255,255,255,0.09)":"rgba(0,0,0,0.06)",
+                border:"none",cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>
+                🏷️
+              </button>
+
               {/* حقل النص */}
               <div style={{flex:1,
                 background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",
@@ -4909,6 +5207,47 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
         {/* EXERCISES */}
         {tab==="exercises"&&<div style={{animation:"slideIn 0.4s ease"}}>
+          {/* FIX 7: Weekly Challenge Banner - auto create if not exists */}
+          {(()=>{
+            // Auto-create weekly challenge
+            const now=Date.now();
+            const existing=load("weekly_challenge",null);
+            const wcExpiry=load("wc_expiry",0);
+            if(!existing||now>wcExpiry){
+              const challenges=[
+                {title:"أكمل 10 تمارين هذا الأسبوع",goal:10,unit:"تمرين",xp:50,coins:20},
+                {title:"أجب بشكل صحيح على 15 سؤال",goal:15,unit:"إجابة",xp:60,coins:25},
+                {title:"أكمل 5 جلسات تعلم",goal:5,unit:"جلسة",xp:40,coins:15},
+              ];
+              const chosen=challenges[Math.floor(Date.now()/1000/60)%challenges.length];
+              save("weekly_challenge",chosen);
+              save("wc_expiry",now+7*24*60*60*1000);
+              save("wc_progress",0);
+            }
+            const wc=load("weekly_challenge",null);
+            const wcProgress=load("wc_progress",0);
+            if(!wc) return null;
+            const pct=Math.min(100,Math.round((wcProgress/wc.goal)*100));
+            const done=wcProgress>=wc.goal;
+            return(
+              <div style={{...glass({marginBottom:14,padding:"14px 16px",background:done?"linear-gradient(135deg,rgba(34,197,94,0.1),rgba(16,185,129,0.06))":"linear-gradient(135deg,rgba(99,102,241,0.08),rgba(168,85,247,0.05))",border:`1px solid ${done?"rgba(34,197,94,0.25)":primary+"30"}`})}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:22}}>{done?"🏆":"⚡"}</span>
+                    <div>
+                      <div style={{fontWeight:800,fontSize:13,color:done?"#22c55e":primary}}>{done?"تحدي الأسبوع مكتمل! 🎉":wc.title||"تحدي الأسبوع"}</div>
+                      <div style={{color:muted,fontSize:11,marginTop:1}}>{wcProgress}/{wc.goal} {wc.unit||"تمرين"}</div>
+                    </div>
+                  </div>
+                  {done?<button onClick={()=>{addXp(wc.xp||50,"تحدي أسبوعي");setCoins(c=>c+(wc.coins||20));save("weekly_challenge",null);save("wc_progress",0);addNotif("🏆","مكافأة التحدي!",`حصلت على ${wc.xp||50} XP و ${wc.coins||20} 🪙`,"quest");}} style={btnP({padding:"7px 14px",fontSize:11})}>+{wc.xp||50}XP</button>
+                  :<div style={{color:primary,fontSize:11,fontWeight:700}}>{pct}%</div>}
+                </div>
+                <div style={{height:6,background:"rgba(128,128,128,0.15)",borderRadius:3}}>
+                  <div style={{width:`${pct}%`,height:"100%",borderRadius:3,background:done?"linear-gradient(90deg,#22c55e,#4ade80)":`linear-gradient(90deg,${primary},${secondary})`,transition:"width 0.8s"}}/>
+                </div>
+              </div>
+            );
+          })()}
           <div style={{display:"flex",gap:8,marginBottom:14}}>
             <button onClick={()=>setStoreTab(false)} style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${!storeTab?primary:border}`,background:!storeTab?`${primary}22`:"transparent",color:!storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>📚 تدريبات</button>
             <button onClick={()=>setStoreTab(true)}  style={{flex:1,padding:"9px",borderRadius:11,border:`1px solid ${storeTab?primary:border}`,background:storeTab?`${primary}22`:"transparent",color:storeTab?primary:muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>المتجر</button>
@@ -4936,6 +5275,41 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           </div>}
 
           {!storeTab&&<>
+            {/* ── SRS: مراجعة اليوم ── */}
+            {exStep==="lang"&&(()=>{
+              const dueAll=Object.entries(srsCards).filter(([k,v])=>v.nextReview<=Date.now());
+              if(dueAll.length===0) return null;
+              return(
+                <div style={{...glass({marginBottom:14,padding:"14px 16px",background:darkMode?"linear-gradient(135deg,rgba(239,68,68,0.08),rgba(249,115,22,0.06))":"linear-gradient(135deg,rgba(239,68,68,0.05),rgba(249,115,22,0.03))",border:"1px solid rgba(239,68,68,0.2)"})}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:32,height:32,borderRadius:16,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🔁</div>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:13}}>مراجعة اليوم</div>
+                        <div style={{color:muted,fontSize:11}}>{dueAll.length} كلمة تحتاج مراجعة</div>
+                      </div>
+                    </div>
+                    <div style={{background:"rgba(239,68,68,0.15)",color:"#ef4444",borderRadius:50,padding:"3px 10px",fontSize:11,fontWeight:800}}>{dueAll.length}</div>
+                  </div>
+                  <button onClick={()=>{
+                    // بدء جلسة مراجعة SRS
+                    const dueCards=dueAll.slice(0,10);
+                    const qArr=dueCards.map(([k,v])=>{
+                      const parts=k.split("_");
+                      const word=parts.slice(2).join("_");
+                      return{type:"mcq",word,q:"ترجم هذه الكلمة",options:[word,"...","---","???"],answer:0};
+                    });
+                    if(qArr.length>0){
+                      setExQuestions(qArr); setExIdx(0); setExAnswer(null); setExScore(0);
+                      setExStep("quiz"); setExLang({code:"mixed",name:"مراجعة مختلطة",flag:""}); setExTopic({key:"review",name:"مراجعة"});
+                    }
+                  }} style={btnP({width:"100%",fontSize:13,padding:"11px"})}>
+                    ابدأ المراجعة 🔁
+                  </button>
+                </div>
+              );
+            })()}
+
             {/* ── STEP 1: اختيار اللغة ── */}
             {exStep==="lang"&&<>
               <div style={{fontWeight:800,fontSize:15,marginBottom:14,display:"flex",alignItems:"center",gap:6}}>{Ic.star(primary,16)}<span>اختر اللغة التي تريد تعلمها</span></div>
@@ -4943,7 +5317,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 {LANGS_EX.map(l=>{
                   const prog=langProgress[l.code];
                   return(
-                    <button key={l.code} onClick={()=>{setExLang(l);setExStep("topic");}} style={{...glass({display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer",border:`1px solid ${exLang?.code===l.code?primary:border}`,background:exLang?.code===l.code?`${primary}22`:card,textAlign:"right"})}}>
+                    <button key={l.code} onClick={()=>{
+                      setExLang(l);
+                      const prefs=load("userPreferences",null);
+                      if(prefs&&prefs.topics&&prefs.topics.length>0){
+                        const topicObjs=TOPICS.filter(t=>prefs.topics.includes(t.key));
+                        const chosen=topicObjs[Math.floor(Math.random()*topicObjs.length)]||TOPICS[0];
+                        setExTopic(chosen);
+                        generateExercises(l.code,chosen.name);
+                      } else {
+                        setExStep("topic");
+                      }
+                    }} style={{...glass({display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer",border:`1px solid ${exLang?.code===l.code?primary:border}`,background:exLang?.code===l.code?`${primary}22`:card,textAlign:"right"})}}>
                       <div style={{width:56,height:40,borderRadius:10,overflow:"hidden",flexShrink:0,border:"1px solid rgba(128,128,128,0.2)",boxShadow:"0 2px 8px rgba(0,0,0,0.3)"}}>
                         <img src={l.flag} alt={l.name} style={{width:"100%",height:"100%",objectFit:l.fit||"cover"}}/>
                       </div>
@@ -4991,6 +5376,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               if(!q) return null;
 
               const goNext=(correct)=>{
+                // تحفيز بصري + اهتزاز
+                if(correct){
+                  try{ navigator.vibrate&&navigator.vibrate(50); }catch(_){}
+                  playNotifSound("msg");
+                } else {
+                  try{ navigator.vibrate&&navigator.vibrate([100,50,100]); }catch(_){}
+                }
                 // تحديث SRS للكلمة الحالية
                 if(q.word&&exLang&&exTopic){
                   updateSrsCard(exLang.code,exTopic.key,q.word,correct);
@@ -5009,7 +5401,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   setExPairSel(null); setExPairDone({}); setExClozeInput(""); setExCardFlipped(false);
                   if(isLast){
                     const newScore=(exScore+(correct?1:0));
-                    const lp={...langProgress,[exLang.code]:{score:(langProgress[exLang.code]?.score||0)+newScore,lastTopic:exTopic?.name,date:new Date().toLocaleDateString("ar")}};
+                    const topicKey=exLang.code+"_"+exTopic?.key;
+                    const prevTP=langProgress[topicKey]||{correct:0,total:0};
+                    const updTP={correct:prevTP.correct+newScore,total:prevTP.total+exQuestions.length};
+                    const lp={...langProgress,[exLang.code]:{score:(langProgress[exLang.code]?.score||0)+newScore,lastTopic:exTopic?.name,date:new Date().toLocaleDateString("ar")},[topicKey]:updTP};
                     setLangProgress(lp); saveLangProgress(lp);
                     addNotif("🎓","انتهيت من التمرين!",`أجبت ${newScore} من ${exQuestions.length} بشكل صحيح في ${exLang?.name}`,"quest");
                     const finalScore=exScore+(correct?1:0);
@@ -5022,6 +5417,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     const xpNow = totalXp;
                     pushLB(xpNow);
                     addNotif("📊","تم حفظ نتيجتك!",`${finalScore}/${exQuestions.length} — تم نشرها في الصدارة ✅`,"quest");
+                    // FIX 7: Update weekly challenge progress
+                    const wc=load("weekly_challenge",null);
+                    if(wc){ const p=load("wc_progress",0)+1; save("wc_progress",Math.min(p,wc.goal)); }
                     // إذا كان هناك أخطاء → Cool-down أولاً
                     const errors=[...sessionErrors,...(correct?[]:[q.word||""])].filter(Boolean);
                     if(errors.length>0){
@@ -5052,7 +5450,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               return(<>
                 {/* Header */}
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                  <button onClick={()=>{setExStep("topic");setExAnswer(null);setExArrWords([]);setExArrSel([]);setExPairSel(null);setExPairDone({});setExClozeInput("");setExCardFlipped(false);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:13,display:"flex",alignItems:"center",gap:4,fontFamily:"'Poppins','Tajawal',system-ui"}}>{Ic.back(muted,16)} رجوع</button>
+                  <button onClick={()=>{setExStep("lang");setExAnswer(null);setExArrWords([]);setExArrSel([]);setExPairSel(null);setExPairDone({});setExClozeInput("");setExCardFlipped(false);}} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:13,display:"flex",alignItems:"center",gap:4,fontFamily:"'Poppins','Tajawal',system-ui"}}>{Ic.back(muted,16)} رجوع</button>
+                  <button onClick={()=>{
+                    setExStep("lang");
+                    setOnbLang(userPreferences?.lang||"");
+                    setOnbLevel(userPreferences?.level||"beginner");
+                    setOnbTopics(userPreferences?.topics||[]);
+                    setShowOnboarding(true);
+                  }} style={{background:"none",border:"none",cursor:"pointer",color:primary,fontSize:11,fontWeight:700,fontFamily:"'Poppins','Tajawal',system-ui",flexShrink:0}}>🎯</button>
                   <div style={{flex:1}}>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:muted,marginBottom:4}}>
                       <span style={{display:"flex",alignItems:"center",gap:4}}>{exLang?.name} — {exTopic?.name}</span>
@@ -5063,17 +5468,20 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   <div style={{...tag("#22c55e"),display:"flex",alignItems:"center",gap:4}}><svg width="11" height="11" viewBox="0 0 24 24" fill="#22c55e33" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4a2 2 0 000 4h2M18 9h2a2 2 0 010 4h-2M12 17v4M8 21h8M7 4h10v7a5 5 0 01-10 0V4z"/></svg>{exScore}</div>
                 </div>
 
-                <div style={{...glass({padding:"20px 16px",marginBottom:12,background:q.type==="speech"?card:`linear-gradient(135deg,${primary}18,${accent}0a)`})}}>
+                <div style={{...glass({padding:"20px 16px",marginBottom:12,
+                  background:exAnswer==="correct"?"rgba(34,197,94,0.1)":exAnswer==="wrong"?"rgba(239,68,68,0.08)":q.type==="speech"?card:`linear-gradient(135deg,${primary}18,${accent}0a)`,
+                  transition:"background 0.4s",
+                  border:exAnswer==="correct"?"1px solid rgba(34,197,94,0.3)":exAnswer==="wrong"?"1px solid rgba(239,68,68,0.25)":undefined})}}>
 
                   {/* ── MCQ ── */}
                   {(!q.type||q.type==="mcq")&&<>
-                    <div style={{color:muted,fontSize:12,marginBottom:8,textAlign:"center"}}>{q.q}</div>
-                    <div style={{fontWeight:900,fontSize:30,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:20,textAlign:"center"}}>{q.word}</div>
+                    <div style={{color:muted,fontSize:12,marginBottom:8,textAlign:"center"}}><TapText text={q.q} style={{color:muted,fontSize:12}}/></div>
+                    <div style={{fontWeight:900,fontSize:30,background:`linear-gradient(135deg,${primary},${accent})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:20,textAlign:"center",cursor:"pointer"}} onClick={e=>handleWordTap(q.word,e)}>{q.word}</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                       {q.options?.map((o,i)=>{
                         let bg2=card,bc=border,co=text;
                         if(exAnswer!==null){if(i===q.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}else if(i===exAnswer){bg2="#ef444422";bc="#ef4444";co="#ef4444";}}
-                        return(<button key={i} onClick={()=>{if(exAnswer!==null)return;setExAnswer(i);goNext(i===q.answer);}} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:14,cursor:"pointer",color:co,fontFamily:"'Poppins','Tajawal',system-ui",transition:"all 0.2s",textAlign:"right"}}>{o}</button>);
+                        return(<button key={i} onClick={(e)=>{if(exAnswer!==null){handleWordTap(String(o).split(" ")[0],e);return;}setExAnswer(i);goNext(i===q.answer);}} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:14,cursor:"pointer",color:co,fontFamily:"'Poppins','Tajawal',system-ui",transition:"all 0.2s",textAlign:"right"}}>{o}</button>);
                       })}
                     </div>
                   </>}
@@ -5279,6 +5687,28 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       </div>
                     </>);
                   })()}
+                  {/* ── LISTENING ── */}
+                  {q.type==="listening"&&(()=>{
+                    const sentence=q.sentence||"";
+                    const langCode=exLang?.code==="Arabic"?"ar-SA":exLang?.code==="French"?"fr-FR":exLang?.code==="Spanish"?"es-ES":exLang?.code==="German"?"de-DE":exLang?.code==="Chinese"?"zh-CN":exLang?.code==="Japanese"?"ja-JP":exLang?.code==="Korean"?"ko-KR":exLang?.code==="Turkish"?"tr-TR":exLang?.code==="Portuguese"?"pt-PT":exLang?.code==="Italian"?"it-IT":exLang?.code==="Russian"?"ru-RU":"en-US";
+                    const speak=()=>{if(!window.speechSynthesis)return;window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(sentence);u.lang=langCode;u.rate=0.85;window.speechSynthesis.speak(u);};
+                    return(<>
+                      <div style={{color:muted,fontSize:12,marginBottom:14,textAlign:"center"}}>🎧 استمع جيداً واختر المعنى الصحيح</div>
+                      <div style={{...glass({textAlign:"center",padding:"24px 16px",marginBottom:16,background:`${primary}11`})}}>
+                        <button onClick={speak} style={{width:72,height:72,borderRadius:36,background:`linear-gradient(135deg,${primary},${secondary})`,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px",boxShadow:`0 8px 28px ${glow}`,fontSize:28}}>🔊</button>
+                        <div style={{color:muted,fontSize:12}}>اضغط للاستماع مجدداً</div>
+                      </div>
+                      <div style={{color:muted,fontSize:12,marginBottom:10,textAlign:"center"}}>{q.q||"ما معنى ما سمعته؟"}</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                        {q.options?.map((o,i)=>{
+                          let bg2=card,bc=border,co=text;
+                          if(exAnswer!==null){if(i===q.answer){bg2="#22c55e22";bc="#22c55e";co="#22c55e";}else if(i===exAnswer){bg2="#ef444422";bc="#ef4444";co="#ef4444";}}
+                          return(<button key={i} onClick={()=>{if(exAnswer!==null)return;setExAnswer(i);goNext(i===q.answer);}} style={{background:bg2,border:`2px solid ${bc}`,borderRadius:13,padding:"13px 9px",fontWeight:700,fontSize:14,cursor:"pointer",color:co,fontFamily:"'Poppins','Tajawal',system-ui",transition:"all 0.2s"}}>{o}</button>);
+                        })}
+                      </div>
+                    </>);
+                  })()}
+
                   {q.type==="pairs"&&<>
                     <div style={{color:muted,fontSize:12,marginBottom:12,textAlign:"center"}}>{q.q}</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -5390,6 +5820,88 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               </>);
             })()}
           </>}
+
+          {/* FIX 8: Community Questions Button */}
+          {!storeTab&&exStep==="lang"&&(()=>{
+            const[showCQ,setShowCQ]=React.useState(false);
+            const[cqForm,setCqForm]=React.useState({lang:"English",topic:"travel",qtype:"mcq",question:"",options:"",answer:"0",translation:""});
+            const[cqSending,setCqSending]=React.useState(false);
+            const[cqDone,setCqDone]=React.useState(false);
+            return(<>
+              <button onClick={()=>setShowCQ(true)} style={{...glass({width:"100%",padding:"12px 16px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",marginTop:4,border:`1px solid ${primary}30`,background:`${primary}08`})}}>
+                <span style={{fontSize:20}}>✏️</span>
+                <div style={{flex:1,textAlign:"right"}}>
+                  <div style={{fontWeight:700,fontSize:13}}>ساهم بسؤال</div>
+                  <div style={{color:muted,fontSize:11,marginTop:2}}>أضف سؤالاً لمساعدة المتعلمين الآخرين</div>
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={primary} strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+              {showCQ&&(
+                <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowCQ(false)}>
+                  <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22,maxHeight:"80vh",overflowY:"auto"})}} onClick={e=>e.stopPropagation()}>
+                    <div style={{fontWeight:900,fontSize:16,marginBottom:16,color:primary}}>✏️ أضف سؤالاً جديداً</div>
+                    {cqDone?(
+                      <div style={{textAlign:"center",padding:"20px 0"}}>
+                        <div style={{fontSize:48,marginBottom:12}}>✅</div>
+                        <div style={{fontWeight:800,fontSize:16,marginBottom:8}}>شكراً على مساهمتك!</div>
+                        <div style={{color:muted,fontSize:13}}>سيُراجع السؤال ويُضاف للتطبيق قريباً</div>
+                        <button onClick={()=>{setShowCQ(false);setCqDone(false);}} style={btnP({marginTop:16,padding:"12px 28px"})}>إغلاق</button>
+                      </div>
+                    ):(
+                      <>
+                        {[
+                          {label:"اللغة",field:"lang",type:"select",options:["English","Arabic","French","Spanish","German","Chinese","Japanese","Turkish"]},
+                          {label:"الموضوع",field:"topic",type:"select",options:["travel","food","music","school","work","family","sports","shopping","health","technology","nature","daily"]},
+                          {label:"نوع السؤال",field:"qtype",type:"select",options:["mcq","flashcard","cloze","arrange","speech"]},
+                          {label:"السؤال / الكلمة",field:"question",type:"text",placeholder:"مثال: What is the meaning of 'Hello'?"},
+                          {label:"الخيارات (مفصولة بفاصلة)",field:"options",type:"text",placeholder:"مرحبا, وداعا, شكرا, آسف"},
+                          {label:"رقم الإجابة الصحيحة (0-3)",field:"answer",type:"text",placeholder:"0"},
+                          {label:"الترجمة / المعنى",field:"translation",type:"text",placeholder:"مرحباً"},
+                        ].map(f=>(
+                          <div key={f.field} style={{marginBottom:12}}>
+                            <div style={{fontSize:12,color:muted,marginBottom:4,fontWeight:600}}>{f.label}</div>
+                            {f.type==="select"?(
+                              <select value={cqForm[f.field]} onChange={e=>setCqForm(p=>({...p,[f.field]:e.target.value}))}
+                                style={{width:"100%",padding:"10px 12px",borderRadius:10,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.04)",border:`1px solid ${border}`,color:text,fontSize:13,outline:"none",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                                {f.options.map(o=><option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ):(
+                              <input value={cqForm[f.field]} onChange={e=>setCqForm(p=>({...p,[f.field]:e.target.value}))}
+                                placeholder={f.placeholder} style={{width:"100%",padding:"10px 12px",borderRadius:10,background:darkMode?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.04)",border:`1px solid ${border}`,color:text,fontSize:13,outline:"none",fontFamily:"'Poppins','Tajawal',system-ui"}}/>
+                            )}
+                          </div>
+                        ))}
+                        <button onClick={async()=>{
+                          if(!cqForm.question.trim()){alert("اكتب السؤال أولاً");return;}
+                          setCqSending(true);
+                          try{
+                            const supa=getSupa();
+                            if(supa){
+                              const optArr=cqForm.options.split(",").map(s=>s.trim()).filter(Boolean);
+                              await supa.from("pending_questions").insert({
+                                language:cqForm.lang,category:cqForm.topic,type:cqForm.qtype,
+                                question_text:cqForm.question,options_text:cqForm.options,
+                                correct_answer:parseInt(cqForm.answer)||0,
+                                translation:cqForm.translation,
+                                submitted_by:userId||"anonymous",
+                                status:"pending",
+                                created_at:new Date().toISOString()
+                              });
+                              setCqDone(true);
+                              addXp(10,"مساهمة مجتمعية");
+                            }
+                          }catch(e){ alert("حدث خطأ، حاول مجدداً"); }
+                          setCqSending(false);
+                        }} style={btnP({width:"100%",opacity:cqSending?0.7:1})}>
+                          {cqSending?"جاري الإرسال...":"إرسال السؤال 📤"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>);
+          })()}
         </div>}
 
         {/* LEADERBOARD */}
@@ -5541,6 +6053,21 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             }
           </div>
 
+          {/* تعديل مواضيع التعلم */}
+          <button onClick={()=>{
+            setShowSettings(false);
+            setOnbLang(userPreferences?.lang||"");
+            setOnbLevel(userPreferences?.level||"beginner");
+            setOnbTopics(userPreferences?.topics||[]);
+            setShowOnboarding(true);
+          }} style={{width:"100%",padding:"13px",borderRadius:14,
+            border:`1px solid ${primary}33`,background:`${primary}11`,
+            color:primary,fontWeight:700,fontSize:13,cursor:"pointer",
+            marginBottom:10,fontFamily:"'Poppins','Tajawal',system-ui",
+            display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            🎯 تعديل مواضيع التعلم
+          </button>
+
           <button onClick={()=>setShowSettings(false)} style={btnP({width:"100%",marginBottom:10})}>حفظ ✓</button>
 
           {/* زر Admin Panel — للمالك فقط */}
@@ -5667,6 +6194,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   🌙 حكمة عربية
                 </button>
               </div>
+              {/* FIX 12: Status Expressions Pack */}
+              <div style={{marginTop:8}}>
+                <button
+                  onClick={()=>{ if(!adminGenLoading) adminGenerateStickers("status"); }}
+                  disabled={adminGenLoading}
+                  style={{width:"100%",padding:"11px",borderRadius:12,fontSize:12,fontWeight:700,
+                    cursor:"pointer",border:"1px solid rgba(34,197,94,0.4)",
+                    background:"rgba(34,197,94,0.12)",color:"#4ade80",
+                    fontFamily:"'Poppins','Tajawal',system-ui",
+                    opacity:adminGenLoading?0.5:1}}>
+                  😊 تعبيرات الحالة (Status)
+                </button>
+              </div>
             </div>
 
             {/* Log Output */}
@@ -5724,6 +6264,70 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               ))}
             </div>
             <button onClick={()=>setShowLangPicker(false)} style={{width:"100%",padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",marginTop:6}}>إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STICKER PICKER MODAL (shared: friend + random) ── */}
+      {showStickerPicker&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",zIndex:350,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowStickerPicker(false)}>
+          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:0,maxHeight:"65vh",display:"flex",flexDirection:"column"})}} onClick={e=>e.stopPropagation()}>
+            <div style={{padding:"14px 16px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+              <div style={{fontWeight:800,fontSize:15}}>🏷️ الملصقات</div>
+              <button onClick={()=>setShowStickerPicker(false)} style={{background:"none",border:"none",cursor:"pointer",color:muted,fontSize:22,lineHeight:1}}>×</button>
+            </div>
+            {/* Tabs */}
+            <div style={{display:"flex",gap:6,padding:"8px 14px",borderBottom:`1px solid ${border}`,flexShrink:0,overflowX:"auto"}}>
+              {[{k:"all",l:"الكل 🎯"},
+                {k:"English Movies 🎬",l:"🎬 أفلام"},
+                {k:"Arabic Wisdom 🌙",l:"🌙 حكم"},
+                {k:"Status Expressions 😊",l:"😊 حالات"}
+              ].map(t=>(
+                <button key={t.k} onClick={()=>setStickerPackTab(t.k)}
+                  style={{flexShrink:0,padding:"5px 12px",borderRadius:50,
+                    border:`1px solid ${stickerPackTab===t.k?primary:border}`,
+                    background:stickerPackTab===t.k?`${primary}22`:"transparent",
+                    color:stickerPackTab===t.k?primary:muted,fontSize:12,cursor:"pointer",
+                    fontWeight:stickerPackTab===t.k?700:400,fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                  {t.l}
+                </button>
+              ))}
+            </div>
+            {/* Sticker Grid */}
+            <div style={{overflowY:"auto",flex:1,padding:"12px 14px",display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>
+              {(stickerPackTab==="all"?stickerPacks:stickerPacks.filter(s=>s.pack_name===stickerPackTab)).map(s=>(
+                <button key={s.id} onClick={async()=>{
+                  setShowStickerPicker(false);
+                  // إرسال في أي شاشة محادثة نشطة
+                  if(activeChat==="friend"){
+                    const ok=await sendStreamMessage(s.text,null);
+                    if(ok){addXp(5,"ستيكر");setCoins(c=>c+1);}
+                  } else if(screen==="chat"){
+                    const t=now();
+                    const nm={id:Date.now(),from:"me",text:s.text,time:t,status:"sent"};
+                    setMessages(p=>[...p,nm]);
+                    if(roomRef.current) roomRef.current.send({type:"broadcast",event:"msg",payload:{text:s.text,time:t}});
+                    addXp(2,"ستيكر"); setCoins(c=>c+1);
+                  }
+                }} style={{
+                  background:darkMode?"rgba(255,255,255,0.04)":"rgba(0,0,0,0.02)",
+                  border:`1px solid ${border}`,borderRadius:12,padding:"10px 8px",
+                  cursor:"pointer",textAlign:"center",fontFamily:"'Poppins','Tajawal',system-ui",
+                  fontSize:12,fontWeight:600,color:text,lineHeight:1.5,transition:"all 0.15s"
+                }}
+                onPointerDown={e=>e.currentTarget.style.background=`${primary}18`}
+                onPointerUp={e=>e.currentTarget.style.background=darkMode?"rgba(255,255,255,0.04)":"rgba(0,0,0,0.02)"}>
+                  {s.text}
+                </button>
+              ))}
+              {stickerPacks.length===0&&(
+                <div style={{gridColumn:"1/-1",textAlign:"center",padding:"28px 0",color:muted,fontSize:13}}>
+                  <div style={{fontSize:36,marginBottom:8}}>🏷️</div>
+                  لا توجد ملصقات بعد<br/>
+                  <span style={{fontSize:11}}>اطلب من المطور إضافة الملصقات عبر لوحة الإدارة</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -5917,6 +6521,101 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               <button onClick={()=>{setShowProfileView(false);setShowProfile(true);}} style={btnP({flex:1,fontSize:13})}>✏️ تعديل</button>
               <button onClick={()=>setShowProfileView(false)} style={{flex:1,padding:"13px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ONBOARDING SCREEN (after first login) ── */}
+      {showOnboarding&&(
+        <div style={{position:"fixed",inset:0,background:darkMode?"#0b1120":"#f8faff",zIndex:1000,overflowY:"auto",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+          <div style={{maxWidth:480,margin:"0 auto",padding:"40px 20px 40px"}}>
+            <div style={{textAlign:"center",marginBottom:28}}>
+              <div style={{fontSize:56,marginBottom:10}}>🌍</div>
+              <div style={{fontWeight:900,fontSize:24,color:primary,marginBottom:6}}>إعدادات التعلم</div>
+              <div style={{color:muted,fontSize:13}}>خصّص تجربتك — يمكنك تغييرها لاحقاً في الإعدادات</div>
+            </div>
+
+            {/* اختيار اللغة */}
+            <div style={{fontWeight:800,fontSize:14,marginBottom:10,color:text}}>اللغة التي تريد تعلمها 🗣️</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:22}}>
+              {LANGS_EX.map(l=>(
+                <button key={l.code} onClick={()=>setOnbLang(l.code)}
+                  style={{...glass({padding:"10px 12px",display:"flex",alignItems:"center",gap:8,cursor:"pointer",
+                    border:`1.5px solid ${onbLang===l.code?primary:border}`,
+                    background:onbLang===l.code?`${primary}22`:card,transition:"all 0.2s"})}}>
+                  <div style={{width:34,height:24,borderRadius:4,overflow:"hidden",flexShrink:0,border:"1px solid rgba(128,128,128,0.15)"}}>
+                    <img src={l.flag} alt={l.name} style={{width:"100%",height:"100%",objectFit:l.fit||"cover"}}/>
+                  </div>
+                  <span style={{fontWeight:700,fontSize:12,flex:1,textAlign:"right",color:onbLang===l.code?primary:text}}>{l.name}</span>
+                  {onbLang===l.code&&<span style={{color:primary,fontSize:14}}>✓</span>}
+                </button>
+              ))}
+            </div>
+
+            {/* اختيار المستوى */}
+            <div style={{fontWeight:800,fontSize:14,marginBottom:10,color:text}}>مستواك في اللغة 📊</div>
+            <div style={{display:"flex",gap:8,marginBottom:22}}>
+              {[{k:"beginner",l:"مبتدئ",c:"A1/A2",e:"🌱"},{k:"intermediate",l:"متوسط",c:"B1",e:"🌿"},{k:"advanced",l:"متقدم",c:"B2+",e:"🌳"}].map(lv=>(
+                <button key={lv.k} onClick={()=>setOnbLevel(lv.k)}
+                  style={{flex:1,padding:"14px 8px",borderRadius:16,
+                    border:`1.5px solid ${onbLevel===lv.k?primary:border}`,
+                    background:onbLevel===lv.k?`${primary}22`:card,
+                    cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",transition:"all 0.2s"}}>
+                  <div style={{fontSize:22,marginBottom:6}}>{lv.e}</div>
+                  <div style={{fontWeight:800,fontSize:13,color:onbLevel===lv.k?primary:text}}>{lv.l}</div>
+                  <div style={{fontSize:10,color:muted,marginTop:2}}>{lv.c}</div>
+                </button>
+              ))}
+            </div>
+
+            {/* اختيار المواضيع */}
+            <div style={{fontWeight:800,fontSize:14,marginBottom:6,color:text}}>مواضيعك المفضلة ❤️</div>
+            <div style={{color:muted,fontSize:11,marginBottom:10}}>اختر حتى 3 مواضيع لتخصيص التمارين</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:28}}>
+              {TOPICS.map(t=>{
+                const sel=onbTopics.includes(t.key);
+                return(
+                  <button key={t.key} onClick={()=>{
+                    if(sel) setOnbTopics(p=>p.filter(x=>x!==t.key));
+                    else if(onbTopics.length<3) setOnbTopics(p=>[...p,t.key]);
+                    else{ const next=[...onbTopics.slice(1),t.key]; setOnbTopics(next); }
+                  }} style={{padding:"12px 6px",borderRadius:14,
+                    border:`1.5px solid ${sel?primary:border}`,
+                    background:sel?`${primary}22`:card,
+                    cursor:"pointer",textAlign:"center",
+                    fontFamily:"'Poppins','Tajawal',system-ui",transition:"all 0.2s",
+                    boxShadow:sel?`0 0 12px ${glow}`:undefined}}>
+                    <div style={{marginBottom:4}}>{t.svg}</div>
+                    <div style={{fontSize:10,fontWeight:700,color:sel?primary:text}}>{t.name}</div>
+                    {sel&&<div style={{fontSize:9,color:primary,marginTop:2}}>✓</div>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button onClick={async()=>{
+              if(!onbLang){ addNotif("⚠️","اختر اللغة","يرجى اختيار لغة واحدة على الأقل","info"); return; }
+              if(onbTopics.length===0){ addNotif("⚠️","اختر موضوعاً","يرجى اختيار موضوع واحد على الأقل","info"); return; }
+              const prefs={lang:onbLang,level:onbLevel,topics:onbTopics,updatedAt:new Date().toISOString()};
+              save("userPreferences",prefs);
+              setUserPreferences(prefs);
+              setShowOnboarding(false);
+              addXp(20,"إكمال الإعداد");
+              addNotif("🎉","تم الإعداد!","تجربتك جاهزة — ابدأ تمرينك الأول الآن 🚀","quest");
+              // حفظ في Supabase
+              try{
+                const supa=getSupa();
+                if(supa&&userId){
+                  await supa.from("user_preferences").upsert({user_id:userId,lang:onbLang,level:onbLevel,topics:onbTopics,updated_at:new Date().toISOString()});
+                }
+              }catch(_){}
+            }} style={btnP({width:"100%",fontSize:15,padding:"16px"})}>
+              ابدأ التعلم الآن 🚀
+            </button>
+
+            <button onClick={()=>setShowOnboarding(false)} style={{width:"100%",marginTop:10,padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+              تخطي — سأحدد لاحقاً
+            </button>
           </div>
         </div>
       )}
