@@ -12,8 +12,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/framer-motion@11/dist/framer-motion.js"></script>
-<!-- --- DAILY.CO ADDITION --- مكتبة Daily.co للمكالمات -->
-<script src="https://unpkg.com/@daily-co/daily-js"></script>
 <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script>
   window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -681,6 +679,180 @@ function Ailo(){
   const[startersLoading,setStartersLoading]=useState(false);    // AI يولّد أسئلة
   const callSpeechRef=useRef(null);                             // مرجع SpeechRecognition
   const callCorrTimerRef=useRef(null);                          // debounce timer للتصحيح
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ✦ AILO GRAMMAR ASSISTANT — States & Refs
+  // ══════════════════════════════════════════════════════════════════════════
+  const[ailoActive,setAiloActive]=useState(false);           // هل المساعد نشط؟
+  const[ailoVisible,setAiloVisible]=useState(false);         // هل الفقاعة مرئية؟
+  const[ailoOriginal,setAiloOriginal]=useState("");          // الجملة الخاطئة
+  const[ailoCorrected,setAiloCorrected]=useState("");        // الجملة المصححة
+  const[ailoTypingOrig,setAiloTypingOrig]=useState("");      // تأثير typewriter أصلية
+  const[ailoTypingCorr,setAiloTypingCorr]=useState("");      // تأثير typewriter مصححة
+  const[ailoZegoRoomId,setAiloZegoRoomId]=useState("");     // RoomID لنظام Zego
+  const[ailoCallType,setAiloCallType]=useState("voice");     // نوع المكالمة
+  const[showZegoLayer,setShowZegoLayer]=useState(false);     // هل طبقة Zego مفعّلة؟
+  const ailoSpeechRef=useRef(null);                          // مرجع continuous SR
+  const ailoAudioCtxRef=useRef(null);                        // Web Audio Context
+  const ailoAnalyserRef=useRef(null);                        // Analyser Node
+  const ailoVisualizerRef=useRef(null);                      // Canvas ref
+  const ailoAnimFrameRef=useRef(null);                       // RAF handle
+  const ailoTypeTimerOrigRef=useRef(null);
+  const ailoTypeTimerCorrRef=useRef(null);
+
+  // ── Typewriter Effect ──
+  const typewriterEffect=(text, setter, timerRef, delay=28)=>{
+    if(timerRef.current) clearInterval(timerRef.current);
+    setter(""); let i=0;
+    timerRef.current=setInterval(()=>{
+      if(i<=text.length){ setter(text.slice(0,i)); i++; }
+      else clearInterval(timerRef.current);
+    },delay);
+  };
+
+  // ── Audio Visualizer ──
+  const startAudioVisualizer=()=>{
+    try{
+      if(ailoAudioCtxRef.current) return; // already running
+      const ctx=new(window.AudioContext||window.webkitAudioContext)();
+      ailoAudioCtxRef.current=ctx;
+      navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+        const src=ctx.createMediaStreamSource(stream);
+        const analyser=ctx.createAnalyser();
+        analyser.fftSize=64;
+        src.connect(analyser);
+        ailoAnalyserRef.current=analyser;
+        const draw=()=>{
+          if(!ailoVisualizerRef.current||!ailoAnalyserRef.current){return;}
+          const canvas=ailoVisualizerRef.current;
+          const ct=canvas.getContext("2d");
+          const W=canvas.width,H=canvas.height;
+          const data=new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(data);
+          ct.clearRect(0,0,W,H);
+          const bars=16; const bw=W/bars-2;
+          for(let i=0;i<bars;i++){
+            const v=data[Math.floor(i*(data.length/bars))]/255;
+            const bh=Math.max(2,v*H);
+            const g=ct.createLinearGradient(0,H-bh,0,H);
+            g.addColorStop(0,"rgba(139,92,246,0.9)");
+            g.addColorStop(1,"rgba(99,102,241,0.5)");
+            ct.fillStyle=g;
+            ct.beginPath();
+            ct.roundRect(i*(bw+2),H-bh,bw,bh,2);
+            ct.fill();
+          }
+          ailoAnimFrameRef.current=requestAnimationFrame(draw);
+        };
+        draw();
+      }).catch(()=>{});
+    }catch(e){}
+  };
+
+  const stopAudioVisualizer=()=>{
+    try{
+      if(ailoAnimFrameRef.current) cancelAnimationFrame(ailoAnimFrameRef.current);
+      if(ailoAudioCtxRef.current){ ailoAudioCtxRef.current.close(); ailoAudioCtxRef.current=null; }
+      ailoAnalyserRef.current=null;
+    }catch(e){}
+  };
+
+  // ── تصحيح النحو عبر AI ──
+  const ailoCorrectGrammar=async(text)=>{
+    if(!text||text.trim().length<4) return;
+    try{
+      const lang=load("targetLang","English");
+      const prompt=`Language teacher. Student is practicing ${lang}. They said: "${text}"
+If CORRECT reply exactly: CORRECT
+If errors exist, reply ONLY this JSON:
+{"original":"${text.replace(/"/g,"'")}","corrected":"<corrected>","tip":"<tip in Arabic max 8 words>"}`;
+      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
+        method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+        body:JSON.stringify({message:prompt})
+      });
+      const parsed=await parseAiReply(res);
+      const reply=(parsed.reply||parsed.text||"").trim();
+      if(reply.startsWith("CORRECT")) return;
+      const match=reply.match(/\{[\s\S]*\}/);
+      if(match){
+        const obj=JSON.parse(match[0]);
+        setAiloOriginal(obj.original||text);
+        setAiloCorrected(obj.corrected||text);
+        setAiloVisible(true);
+        typewriterEffect(obj.original||text,setAiloTypingOrig,ailoTypeTimerOrigRef,26);
+        setTimeout(()=>typewriterEffect(obj.corrected||text,setAiloTypingCorr,ailoTypeTimerCorrRef,26),600);
+      }
+    }catch(e){}
+  };
+
+  // ── بدء الاستماع المستمر ──
+  const ailoStartListening=()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR) return;
+    if(ailoSpeechRef.current) try{ailoSpeechRef.current.stop();}catch(_){}
+    const sr=new SR();
+    sr.continuous=true;
+    sr.interimResults=false;
+    sr.lang=load("targetLang","English")==="Arabic"?"ar-SA":"en-US";
+    let debTimer=null;
+    sr.onresult=(e)=>{
+      let final="";
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal) final+=e.results[i][0].transcript;
+      }
+      if(final){
+        clearTimeout(debTimer);
+        debTimer=setTimeout(()=>ailoCorrectGrammar(final),1200);
+      }
+    };
+    sr.onend=()=>{
+      // أعد التشغيل تلقائياً إذا كان المساعد لا يزال نشطاً
+      if(ailoActive){
+        try{sr.start();}catch(_){}
+      }
+    };
+    sr.onerror=(e)=>{
+      if(e.error!=="no-speech"&&ailoActive){
+        try{setTimeout(()=>sr.start(),500);}catch(_){}
+      }
+    };
+    sr.start();
+    ailoSpeechRef.current=sr;
+    setAiloActive(true);
+    startAudioVisualizer();
+  };
+
+  // ── إيقاف الاستماع ──
+  const ailoStopListening=()=>{
+    setAiloActive(false);
+    setAiloVisible(false);
+    try{ailoSpeechRef.current?.stop();}catch(_){}
+    stopAudioVisualizer();
+  };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ✦ renderZegoCall — واجهة الاتصال الموحدة مع طبقة المساعد النحوي
+  // يُستدعى من:
+  //   أ- acceptMatch (العشوائي)
+  //   ب- قبول مكالمة الصديق (Incoming Call Accept)
+  // ══════════════════════════════════════════════════════════════════════════
+  const renderZegoCall=(roomID, isVideo, myUserId)=>{
+    setAiloZegoRoomId(roomID);
+    setAiloCallType(isVideo?"video":"voice");
+    setShowZegoLayer(true);
+    setAiloActive(false);
+    setAiloVisible(false);
+    setAiloOriginal("");
+    setAiloCorrected("");
+    setAiloTypingOrig("");
+    setAiloTypingCorr("");
+  };
+
+  // ── توليد RoomID لمكالمة الصديق ──
+  const generateFriendRoomId=(myId, friendId)=>{
+    return "friend_"+[myId,friendId].sort().join("_")+"_"+Date.now().toString(36);
+  };
+
   const CONVO_STARTERS_DEFAULT=[
     "What's your favorite travel destination and why?",
     "How do you usually spend your weekends?",
@@ -1988,13 +2160,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         return{...m,_reactions:{...r,[payload.emoji]:(r[payload.emoji]||0)+1}};
       }));
     });
-    // --- DAILY.CO ADDITION --- استقبال رابط Daily من الطرف المُبادر
-    ch.on("broadcast",{event:"daily_room_url"},({payload})=>{
-      if(payload?.url){
-        const isVideo = payload.callType === "video";
-        renderDailyCall(payload.url, isVideo);
-      }
-    });
     // ── WebRTC Signaling ──────────────────────────────────────────────────
     ch.on("broadcast",{event:"webrtc_offer"},async({payload})=>{
       // Fix #1: إذا لم تُنشأ PC بعد، خزّن الـ offer مؤقتاً
@@ -2045,9 +2210,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     const rid = roomId || "ailo_"+Date.now();
     setRoomId(rid);
     joinRoom(rid);
-    // --- DAILY.CO ADDITION --- Plan A: Daily.co | Plan B: WebRTC
-    if(callType!=="text") setTimeout(()=>joinAgoraDailyFirst(rid, callType),500);
+    if(callType!=="text") setTimeout(()=>joinAgora(rid, callType),500);
     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
+    // ✦ تفعيل المساعد النحوي الذكي عند قبول المطابقة (غير النصية)
+    if(callType!=="text"){
+      renderZegoCall(rid, callType==="video", userId);
+    }
     setScreen(callType==="text"?"chat":"call");
   };
 
@@ -2065,6 +2233,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   useEffect(()=>{
     if(screen==="call") return; // do nothing when entering call (acceptMatch handles join)
     // When leaving call screen for any reason, ensure cleanup
+    // ✦ أوقف المساعد النحوي عند مغادرة شاشة المكالمة
+    if(screen!=="call"){
+      setShowZegoLayer(false);
+      ailoStopListening();
+    }
     return ()=>{ leaveAgora(); };
   },[screen]);
 
@@ -2758,147 +2931,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ── استقبال إشارات WebRTC من joinRoom ────────────────────────────────────
   // (يُضاف في joinRoom أسفل)
 
-  // --- DAILY.CO ADDITION --- ref لحفظ كائن Daily call frame
-  const dailyFrameRef = useRef(null);
-  // --- DAILY.CO ADDITION --- حالة لتتبع إذا كان Daily نشطاً الآن
-  const [dailyActive, setDailyActive] = useState(false);
-
-  // --- DAILY.CO ADDITION ---
-  // createDailyRoom: تنشئ غرفة Daily.co عبر Supabase Edge Function
-  // تنتهي صلاحية الغرفة بعد ساعة واحدة
-  const createDailyRoom = async () => {
-    try {
-      const res = await fetch(`${SUPA_URL}/functions/v1/ailo-daily-room`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPA_KEY,
-          "Authorization": `Bearer ${load("token", SUPA_KEY)}`
-        },
-        body: JSON.stringify({
-          exp: Math.floor(Date.now() / 1000) + 3600 // تنتهي بعد ساعة
-        })
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      return data?.url || null;
-    } catch (e) {
-      console.warn("--- DAILY.CO ADDITION --- createDailyRoom failed:", e.message);
-      return null;
-    }
-  };
-
-  // --- DAILY.CO ADDITION ---
-  // renderDailyCall: يشغّل إطار Daily.co فوق كل شيء (z-index: 9999)
-  // isVideo=false → يغلق الكاميرا تلقائياً (مكالمة صوتية)
-  // يدمر الإطار تلقائياً عند حدث left-meeting
-  const renderDailyCall = (roomUrl, isVideo) => {
-    // تنظيف أي إطار سابق
-    if (dailyFrameRef.current) {
-      try { dailyFrameRef.current.destroy(); } catch (_) {}
-      dailyFrameRef.current = null;
-    }
-
-    // إنشاء حاوية الإطار
-    const container = document.createElement("div");
-    container.id = "daily-call-container";
-    container.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      background: #060612;
-      display: flex;
-      flex-direction: column;
-    `;
-    document.body.appendChild(container);
-
-    try {
-      const frame = window.DailyIframe.createFrame(container, {
-        iframeStyle: {
-          width: "100%",
-          height: "100%",
-          border: "none",
-          borderRadius: "0"
-        },
-        showLeaveButton: true,
-        showFullscreenButton: false,
-        startVideoOff: !isVideo, // أغلق الكاميرا للمكالمة الصوتية
-        startAudioOff: false,
-      });
-
-      dailyFrameRef.current = frame;
-      setDailyActive(true);
-
-      // الانضمام للغرفة
-      frame.join({ url: roomUrl });
-
-      // --- DAILY.CO ADDITION --- تدمير الإطار عند مغادرة المكالمة
-      frame.on("left-meeting", async () => {
-        setDailyActive(false);
-        try { frame.destroy(); } catch (_) {}
-        dailyFrameRef.current = null;
-        const el = document.getElementById("daily-call-container");
-        if (el) el.remove();
-        // تنظيف حالة المكالمة
-        setCallStatus("idle");
-        setScreen("home");
-        addXp(30, "مكالمة Daily");
-      });
-
-      // --- DAILY.CO ADDITION --- تحديث حالة الاتصال
-      frame.on("joined-meeting", () => {
-        setCallStatus("connected");
-        setCallTime(0);
-      });
-
-      frame.on("error", (err) => {
-        console.error("--- DAILY.CO ADDITION --- Daily error:", err);
-        setDailyActive(false);
-        try { frame.destroy(); } catch (_) {}
-        dailyFrameRef.current = null;
-        const el = document.getElementById("daily-call-container");
-        if (el) el.remove();
-      });
-
-    } catch (e) {
-      console.error("--- DAILY.CO ADDITION --- renderDailyCall failed:", e);
-      const el = document.getElementById("daily-call-container");
-      if (el) el.remove();
-      setDailyActive(false);
-    }
-  };
-
-  // --- DAILY.CO ADDITION ---
-  // joinAgoraDailyFirst: Plan A → Daily.co ، Plan B → WebRTC القديم
-  // يستبدل استدعاءات joinAgora المباشرة للمكالمات الصوتية/المرئية
-  const joinAgoraDailyFirst = useCallback(async (channelName, type) => {
-    // Plan A: Daily.co
-    const isVideo = type === "video";
-    try {
-      const roomUrl = await createDailyRoom();
-      if (roomUrl) {
-        // --- DAILY.CO ADDITION --- Daily.co نجح → شارك الرابط مع الطرف الآخر
-        if (roomRef.current) {
-          try {
-            roomRef.current.send({
-              type: "broadcast",
-              event: "daily_room_url",
-              payload: { url: roomUrl, callType: type }
-            });
-          } catch (_) {}
-        }
-        renderDailyCall(roomUrl, isVideo);
-        return; // Plan A نجح — لا داعي لـ Plan B
-      }
-    } catch (e) {
-      console.warn("--- DAILY.CO ADDITION --- Plan A failed, falling back to WebRTC:", e.message);
-    }
-
-    // Plan B: WebRTC القديم كـ Fallback
-    console.log("--- DAILY.CO ADDITION --- Using Plan B: Legacy WebRTC");
-    await joinAgora(channelName, type);
-  }, [joinAgora, roomRef]);
-
   // ── كتم/تشغيل الميك ──────────────────────────────────────────────────────
   const toggleMic = useCallback(async()=>{
     if(!localStreamRef.current) return;
@@ -3583,6 +3615,152 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <span style={{color:"rgba(255,255,255,0.45)",fontSize:10,fontWeight:600}}>Report</span>
         </button>
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          ✦ AILO GRAMMAR ASSISTANT OVERLAY
+          يطفو فوق كل شيء بـ z-index:10000
+      ══════════════════════════════════════════════════════════════════ */}
+      {showZegoLayer&&(
+        <>
+          {/* ── زر Ailo العائم ── */}
+          <button
+            onClick={()=>{
+              if(ailoActive){
+                ailoStopListening();
+              } else {
+                ailoStartListening();
+                setAiloVisible(false);
+              }
+            }}
+            style={{
+              position:"fixed",
+              bottom:160,
+              left:"50%",
+              transform:"translateX(-50%)",
+              zIndex:10000,
+              background:"transparent",
+              border:"none",
+              cursor:"pointer",
+              padding:"6px 14px",
+              borderRadius:50,
+              fontFamily:"'Poppins',system-ui",
+              fontWeight:900,
+              fontSize:15,
+              letterSpacing:"0.08em",
+              color:ailoActive?"#a78bfa":"rgba(139,92,246,0.7)",
+              textShadow:ailoActive?"0 0 16px rgba(139,92,246,0.9)":"0 0 8px rgba(139,92,246,0.4)",
+              transition:"all 0.25s cubic-bezier(0.4,0,0.2,1)",
+              outline:"none",
+              WebkitTapHighlightColor:"transparent",
+            }}
+            onPointerDown={e=>e.currentTarget.style.transform="translateX(-50%) scale(0.92)"}
+            onPointerUp={e=>e.currentTarget.style.transform="translateX(-50%) scale(1)"}
+          >
+            {ailoActive&&(
+              <span style={{
+                display:"inline-block",
+                width:8,height:8,borderRadius:4,
+                background:"#a78bfa",
+                marginRight:6,
+                verticalAlign:"middle",
+                animation:"dot0 0.9s ease-in-out infinite",
+                boxShadow:"0 0 8px rgba(167,139,250,0.8)"
+              }}/>
+            )}
+            Ailo
+          </button>
+
+          {/* ── فقاعة التصحيح (تظهر عند وجود خطأ فقط) ── */}
+          {ailoVisible&&(
+            <div style={{
+              position:"fixed",
+              bottom:210,
+              left:"50%",
+              transform:"translateX(-50%)",
+              zIndex:10000,
+              width:"min(360px, 90vw)",
+              borderRadius:20,
+              overflow:"hidden",
+              boxShadow:"0 8px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(139,92,246,0.3)",
+              animation:"popIn 0.25s cubic-bezier(0.34,1.56,0.64,1)",
+              fontFamily:"'Poppins','Tajawal',system-ui",
+            }}>
+              {/* النصف العلوي — الجملة الخاطئة */}
+              <div style={{
+                background:"rgba(10,14,28,0.96)",
+                backdropFilter:"blur(20px)",
+                padding:"14px 16px 10px",
+                borderBottom:"none",
+                position:"relative",
+              }}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                  {/* أيقونة X */}
+                  <div style={{
+                    width:24,height:24,borderRadius:12,
+                    background:"rgba(239,68,68,0.18)",
+                    border:"1.5px solid rgba(239,68,68,0.4)",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    flexShrink:0,marginTop:1,
+                  }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </div>
+                  <div style={{flex:1,fontSize:13,color:"rgba(255,255,255,0.55)",lineHeight:1.6,wordBreak:"break-word",minHeight:20}}>
+                    {ailoTypingOrig||<span style={{opacity:0.3}}>...</span>}
+                    {ailoTypingOrig.length<ailoOriginal.length&&<span style={{display:"inline-block",width:2,height:14,background:"rgba(239,68,68,0.7)",marginLeft:2,verticalAlign:"middle",animation:"dot0 0.7s ease-in-out infinite"}}/>}
+                  </div>
+                  {/* زر إغلاق الفقاعة */}
+                  <button onClick={()=>setAiloVisible(false)} style={{
+                    background:"none",border:"none",cursor:"pointer",
+                    color:"rgba(255,255,255,0.25)",fontSize:16,padding:"0 0 0 4px",lineHeight:1,flexShrink:0,
+                  }}>×</button>
+                </div>
+              </div>
+
+              {/* خط الترددات (Audio Visualizer) */}
+              <div style={{
+                background:"rgba(6,8,18,0.98)",
+                padding:"6px 16px",
+                display:"flex",alignItems:"center",gap:8,
+                borderTop:"1px solid rgba(139,92,246,0.15)",
+                borderBottom:"1px solid rgba(139,92,246,0.15)",
+              }}>
+                <canvas
+                  ref={ailoVisualizerRef}
+                  width={240}
+                  height={28}
+                  style={{flex:1,borderRadius:4,display:"block"}}
+                />
+                <div style={{fontSize:10,color:"rgba(139,92,246,0.6)",fontWeight:700,letterSpacing:1,flexShrink:0}}>AILO</div>
+              </div>
+
+              {/* النصف السفلي — الجملة المصححة */}
+              <div style={{
+                background:"rgba(10,14,28,0.96)",
+                backdropFilter:"blur(20px)",
+                padding:"10px 16px 14px",
+              }}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                  {/* أيقونة ✓ */}
+                  <div style={{
+                    width:24,height:24,borderRadius:12,
+                    background:"rgba(34,197,94,0.18)",
+                    border:"1.5px solid rgba(34,197,94,0.4)",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    flexShrink:0,marginTop:1,
+                  }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <div style={{flex:1,fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.92)",lineHeight:1.6,wordBreak:"break-word",minHeight:20}}>
+                    {ailoTypingCorr||<span style={{opacity:0.25,fontWeight:400}}>...</span>}
+                    {ailoTypingCorr.length>0&&ailoTypingCorr.length<ailoCorrected.length&&<span style={{display:"inline-block",width:2,height:14,background:"rgba(34,197,94,0.7)",marginLeft:2,verticalAlign:"middle",animation:"dot0 0.7s ease-in-out infinite"}}/>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       <style>{CSS}</style>
     </div>
   );
@@ -3640,8 +3818,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               joinRoom(roomId);
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
-              // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
-              setTimeout(()=>joinAgoraDailyFirst(roomId,"voice"),300);
+              setTimeout(()=>joinAgora(roomId,"voice"),300);
             }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.phone(primary,16)}</button>
             <button onClick={async()=>{
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
@@ -3652,8 +3829,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               joinRoom(roomId);
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
-              // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
-              setTimeout(()=>joinAgoraDailyFirst(roomId,"video"),300);
+              setTimeout(()=>joinAgora(roomId,"video"),300);
             }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.video(primary,16)}</button>
             <button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>
           </div>
@@ -4495,15 +4671,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 {/* مكالمة صوتية */}
                 <button onClick={async()=>{
                   const targetId=partner._uid; if(!targetId) return;
+                  // ✦ توليد RoomID جديد وإرساله للصديق
+                  const newRid=generateFriendRoomId(userId, targetId);
+                  setRoomId(newRid);
                   setCallType("voice"); setCallStatus("outgoing"); setCallTime(0);
                   setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                   setScreen("call");
                   addCallSystemMsg("🎙️","Voice call","Waiting for answer...");
-                  joinRoom(roomId);
+                  joinRoom(newRid);
                   const supa=getSupa();
-                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
-                  // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
-              setTimeout(()=>joinAgoraDailyFirst(roomId,"voice"),300);
+                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:newRid,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:newRid,callType:"voice"});}
+                  // ✦ تفعيل المساعد النحوي الذكي على جانب المتصل
+                  renderZegoCall(newRid, false, userId);
+                  setTimeout(()=>joinAgora(newRid,"voice"),300);
                 }} style={{width:36,height:36,borderRadius:18,
                   background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
                   border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
@@ -4513,15 +4693,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 {/* مكالمة فيديو */}
                 <button onClick={async()=>{
                   const targetId=partner._uid; if(!targetId) return;
+                  // ✦ توليد RoomID جديد وإرساله للصديق
+                  const newRid=generateFriendRoomId(userId, targetId);
+                  setRoomId(newRid);
                   setCallType("video"); setCallStatus("outgoing"); setCallTime(0);
                   setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                   setScreen("call");
                   addCallSystemMsg("📹","Video call","Waiting for answer...");
-                  joinRoom(roomId);
+                  joinRoom(newRid);
                   const supa=getSupa();
-                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
-                  // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
-              setTimeout(()=>joinAgoraDailyFirst(roomId,"video"),300);
+                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:newRid,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:newRid,callType:"video"});}
+                  // ✦ تفعيل المساعد النحوي الذكي على جانب المتصل
+                  renderZegoCall(newRid, true, userId);
+                  setTimeout(()=>joinAgora(newRid,"video"),300);
                 }} style={{width:36,height:36,borderRadius:18,
                   background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
                   border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
@@ -6844,8 +7028,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   const d=incomingData;
                   setShowIncoming(false); setIncomingData(null);
                   setPartner({av:d.from?.av||"🌍",name:d.from?.name||"مستخدم",country:"—",_uid:d.from?.userId||""});
-                  setRoomId(d.rid);
-                  joinRoom(d.rid);
+                  // ✦ استخدام RoomID الوارد أو توليد واحد جديد
+                  const friendRid = d.rid || generateFriendRoomId(userId, d.from?.userId||"anon");
+                  setRoomId(friendRid);
+                  joinRoom(friendRid);
                   if(d.callType!=="text"){
                     addCallSystemMsg(d.callType==="video"?"📹":"🎙️",d.callType==="video"?"مكالمة فيديو واردة":"مكالمة صوتية واردة","جاري القبول...");
                     setCallType(d.callType);
@@ -6853,9 +7039,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setCallTime(0);
                     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                     setScreen("call");
+                    // ✦ تفعيل المساعد النحوي الذكي عند قبول مكالمة الصديق
+                    renderZegoCall(friendRid, d.callType==="video", userId);
                     setTimeout(async()=>{
-                      // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC للمكالمات الواردة
-                      await joinAgoraDailyFirst(d.rid, d.callType);
+                      await joinAgora(friendRid, d.callType);
                       if(roomRef.current) try{roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}});}catch(e){}
                     },400);
                   } else {
