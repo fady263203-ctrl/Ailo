@@ -12,6 +12,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/framer-motion@11/dist/framer-motion.js"></script>
+<!-- --- DAILY.CO ADDITION --- مكتبة Daily.co للمكالمات -->
+<script src="https://unpkg.com/@daily-co/daily-js"></script>
 <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script>
   window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -1986,6 +1988,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         return{...m,_reactions:{...r,[payload.emoji]:(r[payload.emoji]||0)+1}};
       }));
     });
+    // --- DAILY.CO ADDITION --- استقبال رابط Daily من الطرف المُبادر
+    ch.on("broadcast",{event:"daily_room_url"},({payload})=>{
+      if(payload?.url){
+        const isVideo = payload.callType === "video";
+        renderDailyCall(payload.url, isVideo);
+      }
+    });
     // ── WebRTC Signaling ──────────────────────────────────────────────────
     ch.on("broadcast",{event:"webrtc_offer"},async({payload})=>{
       // Fix #1: إذا لم تُنشأ PC بعد، خزّن الـ offer مؤقتاً
@@ -2036,7 +2045,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     const rid = roomId || "ailo_"+Date.now();
     setRoomId(rid);
     joinRoom(rid);
-    if(callType!=="text") setTimeout(()=>joinAgora(rid, callType),500);
+    // --- DAILY.CO ADDITION --- Plan A: Daily.co | Plan B: WebRTC
+    if(callType!=="text") setTimeout(()=>joinAgoraDailyFirst(rid, callType),500);
     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
     setScreen(callType==="text"?"chat":"call");
   };
@@ -2747,6 +2757,147 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   // ── استقبال إشارات WebRTC من joinRoom ────────────────────────────────────
   // (يُضاف في joinRoom أسفل)
+
+  // --- DAILY.CO ADDITION --- ref لحفظ كائن Daily call frame
+  const dailyFrameRef = useRef(null);
+  // --- DAILY.CO ADDITION --- حالة لتتبع إذا كان Daily نشطاً الآن
+  const [dailyActive, setDailyActive] = useState(false);
+
+  // --- DAILY.CO ADDITION ---
+  // createDailyRoom: تنشئ غرفة Daily.co عبر Supabase Edge Function
+  // تنتهي صلاحية الغرفة بعد ساعة واحدة
+  const createDailyRoom = async () => {
+    try {
+      const res = await fetch(`${SUPA_URL}/functions/v1/ailo-daily-room`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPA_KEY,
+          "Authorization": `Bearer ${load("token", SUPA_KEY)}`
+        },
+        body: JSON.stringify({
+          exp: Math.floor(Date.now() / 1000) + 3600 // تنتهي بعد ساعة
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return data?.url || null;
+    } catch (e) {
+      console.warn("--- DAILY.CO ADDITION --- createDailyRoom failed:", e.message);
+      return null;
+    }
+  };
+
+  // --- DAILY.CO ADDITION ---
+  // renderDailyCall: يشغّل إطار Daily.co فوق كل شيء (z-index: 9999)
+  // isVideo=false → يغلق الكاميرا تلقائياً (مكالمة صوتية)
+  // يدمر الإطار تلقائياً عند حدث left-meeting
+  const renderDailyCall = (roomUrl, isVideo) => {
+    // تنظيف أي إطار سابق
+    if (dailyFrameRef.current) {
+      try { dailyFrameRef.current.destroy(); } catch (_) {}
+      dailyFrameRef.current = null;
+    }
+
+    // إنشاء حاوية الإطار
+    const container = document.createElement("div");
+    container.id = "daily-call-container";
+    container.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #060612;
+      display: flex;
+      flex-direction: column;
+    `;
+    document.body.appendChild(container);
+
+    try {
+      const frame = window.DailyIframe.createFrame(container, {
+        iframeStyle: {
+          width: "100%",
+          height: "100%",
+          border: "none",
+          borderRadius: "0"
+        },
+        showLeaveButton: true,
+        showFullscreenButton: false,
+        startVideoOff: !isVideo, // أغلق الكاميرا للمكالمة الصوتية
+        startAudioOff: false,
+      });
+
+      dailyFrameRef.current = frame;
+      setDailyActive(true);
+
+      // الانضمام للغرفة
+      frame.join({ url: roomUrl });
+
+      // --- DAILY.CO ADDITION --- تدمير الإطار عند مغادرة المكالمة
+      frame.on("left-meeting", async () => {
+        setDailyActive(false);
+        try { frame.destroy(); } catch (_) {}
+        dailyFrameRef.current = null;
+        const el = document.getElementById("daily-call-container");
+        if (el) el.remove();
+        // تنظيف حالة المكالمة
+        setCallStatus("idle");
+        setScreen("home");
+        addXp(30, "مكالمة Daily");
+      });
+
+      // --- DAILY.CO ADDITION --- تحديث حالة الاتصال
+      frame.on("joined-meeting", () => {
+        setCallStatus("connected");
+        setCallTime(0);
+      });
+
+      frame.on("error", (err) => {
+        console.error("--- DAILY.CO ADDITION --- Daily error:", err);
+        setDailyActive(false);
+        try { frame.destroy(); } catch (_) {}
+        dailyFrameRef.current = null;
+        const el = document.getElementById("daily-call-container");
+        if (el) el.remove();
+      });
+
+    } catch (e) {
+      console.error("--- DAILY.CO ADDITION --- renderDailyCall failed:", e);
+      const el = document.getElementById("daily-call-container");
+      if (el) el.remove();
+      setDailyActive(false);
+    }
+  };
+
+  // --- DAILY.CO ADDITION ---
+  // joinAgoraDailyFirst: Plan A → Daily.co ، Plan B → WebRTC القديم
+  // يستبدل استدعاءات joinAgora المباشرة للمكالمات الصوتية/المرئية
+  const joinAgoraDailyFirst = useCallback(async (channelName, type) => {
+    // Plan A: Daily.co
+    const isVideo = type === "video";
+    try {
+      const roomUrl = await createDailyRoom();
+      if (roomUrl) {
+        // --- DAILY.CO ADDITION --- Daily.co نجح → شارك الرابط مع الطرف الآخر
+        if (roomRef.current) {
+          try {
+            roomRef.current.send({
+              type: "broadcast",
+              event: "daily_room_url",
+              payload: { url: roomUrl, callType: type }
+            });
+          } catch (_) {}
+        }
+        renderDailyCall(roomUrl, isVideo);
+        return; // Plan A نجح — لا داعي لـ Plan B
+      }
+    } catch (e) {
+      console.warn("--- DAILY.CO ADDITION --- Plan A failed, falling back to WebRTC:", e.message);
+    }
+
+    // Plan B: WebRTC القديم كـ Fallback
+    console.log("--- DAILY.CO ADDITION --- Using Plan B: Legacy WebRTC");
+    await joinAgora(channelName, type);
+  }, [joinAgora, roomRef]);
 
   // ── كتم/تشغيل الميك ──────────────────────────────────────────────────────
   const toggleMic = useCallback(async()=>{
@@ -3489,7 +3640,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               joinRoom(roomId);
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
-              setTimeout(()=>joinAgora(roomId,"voice"),300);
+              // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
+              setTimeout(()=>joinAgoraDailyFirst(roomId,"voice"),300);
             }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.phone(primary,16)}</button>
             <button onClick={async()=>{
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
@@ -3500,7 +3652,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               joinRoom(roomId);
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
-              setTimeout(()=>joinAgora(roomId,"video"),300);
+              // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
+              setTimeout(()=>joinAgoraDailyFirst(roomId,"video"),300);
             }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.video(primary,16)}</button>
             <button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>
           </div>
@@ -4349,7 +4502,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   joinRoom(roomId);
                   const supa=getSupa();
                   if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
-                  setTimeout(()=>joinAgora(roomId,"voice"),300);
+                  // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
+              setTimeout(()=>joinAgoraDailyFirst(roomId,"voice"),300);
                 }} style={{width:36,height:36,borderRadius:18,
                   background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
                   border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
@@ -4366,7 +4520,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   joinRoom(roomId);
                   const supa=getSupa();
                   if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
-                  setTimeout(()=>joinAgora(roomId,"video"),300);
+                  // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC
+              setTimeout(()=>joinAgoraDailyFirst(roomId,"video"),300);
                 }} style={{width:36,height:36,borderRadius:18,
                   background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
                   border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
@@ -6699,7 +6854,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                     setScreen("call");
                     setTimeout(async()=>{
-                      await joinAgora(d.rid, d.callType);
+                      // --- DAILY.CO ADDITION --- Plan A: Daily | Plan B: WebRTC للمكالمات الواردة
+                      await joinAgoraDailyFirst(d.rid, d.callType);
                       if(roomRef.current) try{roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}});}catch(e){}
                     },400);
                   } else {
