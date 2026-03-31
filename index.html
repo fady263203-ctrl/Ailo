@@ -836,6 +836,8 @@ If errors exist, reply ONLY this JSON:
   //   أ- acceptMatch (العشوائي)
   //   ب- قبول مكالمة الصديق (Incoming Call Accept)
   // ══════════════════════════════════════════════════════════════════════════
+  const ZEGO_APP_ID = 1793172823;
+  const ZEGO_SERVER_SECRET = "3e3eba8bdf985d238e918dc045c07da4";
   const renderZegoCall=(roomID, isVideo, myUserId)=>{
     setAiloZegoRoomId(roomID);
     setAiloCallType(isVideo?"video":"voice");
@@ -1880,6 +1882,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ── Ailo Chat Tools (Friend Chat) ──
   const[showAiloMenu,setShowAiloMenu]=useState(false);
   const[showAiloMenuR,setShowAiloMenuR]=useState(false); // FIX 18: Ailo menu for random chat
+  // ── Zombie Session Guard ──────────────────────────────────────────────────
+  const[peerExited,setPeerExited]=useState(false);          // الطرف الآخر غادر
+  const[peerExitedCountdown,setPeerExitedCountdown]=useState(3); // عداد تنازلي (ثوانٍ)
+  const peerExitTimerRef=useRef(null);                      // مرجع الـ interval للعداد
   const[showFriendTopics,setShowFriendTopics]=useState(false);
   const[showFriendCorrection,setShowFriendCorrection]=useState(false);
   const CHAT_TOPICS=["🌍 السفر والثقافة","🍜 الطعام والطبخ","🎬 الأفلام والمسلسلات","📚 الكتب والتعلم","⚽ الرياضة والهوايات","💼 العمل والمهنة"];
@@ -2199,6 +2205,35 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setScreen("home");
       addXp(30,"مكالمة");
     });
+
+    // ── USER_EXITED: الطرف (A) غادر → الطرف (B) يُعطَّل فوراً ───────────
+    ch.on("broadcast",{event:"USER_EXITED"},()=>{
+      // ① وقف أي عداد سابق
+      if(peerExitTimerRef.current){ clearInterval(peerExitTimerRef.current); }
+      // ② تفعيل حالة "الطرف المهجور"
+      setPeerExited(true);
+      setPeerExitedCountdown(3);
+      addNotif("👋","غادر الشريك","الطرف الآخر غادر المحادثة","info");
+      // ③ عداد تنازلي 3 ثوانٍ ثم تحويل للرئيسية
+      let t=3;
+      peerExitTimerRef.current=setInterval(()=>{
+        t--;
+        setPeerExitedCountdown(t);
+        if(t<=0){
+          clearInterval(peerExitTimerRef.current);
+          peerExitTimerRef.current=null;
+          // ④ تدمير القناة كاملاً
+          const supa3=getSupa();
+          if(roomRef.current&&supa3){ try{supa3.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
+          try{ leaveAgora(); }catch(e){}
+          setPeerExited(false);
+          setPeerExitedCountdown(3);
+          setMessages([]);
+          setMatched(false);
+          setScreen("home");
+        }
+      },1000);
+    });
     ch.subscribe();
     roomRef.current = ch;
   };
@@ -2229,6 +2264,43 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     leaveAgora();
     setScreen("home");
   };
+
+  // ── ═══════════════════════════════════════════════════════════════════════
+  // ✦ exitRandomChat — نظام التنظيف الذري (Atomic Cleanup System)
+  // يُستدعى عند: زر الرجوع في الدردشة، أو window.beforeunload
+  // يضمن: موت الجلسة فوراً من الطرفين
+  // ═══════════════════════════════════════════════════════════════════════
+  const exitRandomChat = useCallback(async () => {
+    const supa = getSupa();
+    // ① أوقف عداد "الطرف المهجور" إن كان يعمل
+    if(peerExitTimerRef.current){ clearInterval(peerExitTimerRef.current); peerExitTimerRef.current=null; }
+    // ② أرسل إشارة USER_EXITED للطرف الآخر قبل أي تنظيف
+    if(roomRef.current){
+      try{
+        await roomRef.current.send({
+          type:"broadcast", event:"USER_EXITED",
+          payload:{ from: userId, name: profile.name }
+        });
+      }catch(e){}
+      // ③ Unsubscribe وتدمير كائن القناة كاملاً
+      try{ supa && supa.removeChannel(roomRef.current); }catch(e){}
+      roomRef.current = null;
+    }
+    // ④ تنظيف قناة الـ lobby إن وُجدت
+    if(lobbyRef.current && supa){
+      try{ if(lobbyRef.current._retryInterval) clearInterval(lobbyRef.current._retryInterval); }catch(e){}
+      try{ supa.removeChannel(lobbyRef.current); }catch(e){}
+      lobbyRef.current = null;
+    }
+    // ⑤ إنهاء مكالمة Agora إن كانت نشطة
+    try{ leaveAgora(); }catch(e){}
+    // ⑥ إعادة تعيين الحالة
+    setPeerExited(false);
+    setPeerExitedCountdown(3);
+    setMessages([]);
+    setMatched(false);
+    setScreen("home");
+  }, [userId, profile.name]);
   // Cleanup Agora when navigating away from call screen
   useEffect(()=>{
     if(screen==="call") return; // do nothing when entering call (acceptMatch handles join)
@@ -2240,6 +2312,25 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }
     return ()=>{ leaveAgora(); };
   },[screen]);
+
+  // ── beforeunload: تنظيف الجلسة عند إغلاق/تحديث الصفحة ────────────────
+  useEffect(()=>{
+    const handleBeforeUnload = () => {
+      // إرسال إشارة المغادرة بشكل متزامن قدر الإمكان
+      if(roomRef.current){
+        try{
+          roomRef.current.send({
+            type:"broadcast", event:"USER_EXITED",
+            payload:{ from: userId, name: profile.name }
+          });
+        }catch(e){}
+        // محاولة إنهاء Agora
+        try{ leaveAgora(); }catch(e){}
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return ()=>{ window.removeEventListener("beforeunload", handleBeforeUnload); };
+  }, [userId]);
 
   // ── Presence: تتبع حالة المستخدمين متصل/غير متصل ──
   useEffect(()=>{
@@ -3769,6 +3860,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   if(screen==="chat"){
     const REACTIONS_R=["❤️","😂","😮","😢","👍","🔥"];
     const sendMsg=()=>{
+      if(peerExited){ addNotif("⚠️","لا يمكن الإرسال","الطرف الآخر غادر المحادثة","info"); return; }
       if(!chatInput.trim())return;
       if(chatInput.length > 500){ alert("Message too long (max 500 chars)"); return; }
       const now_ms = Date.now();
@@ -3789,6 +3881,40 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     return(
       <div style={{position:"fixed",inset:0,background:bg,maxWidth:480,margin:"0 auto",left:0,right:0,display:"flex",flexDirection:"column",fontFamily:"'Poppins','Tajawal',system-ui",color:text,zIndex:60,userSelect:"none",WebkitUserSelect:"none"}} onClick={()=>{setMsgMenuIdR(null);setReactMenuIdR(null);}}>
 
+        {/* ── Peer Exited Overlay ── الطرف الآخر غادر المحادثة ── */}
+        {peerExited&&(
+          <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.82)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:32}}>
+            <div style={{fontSize:64,animation:"popIn 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>👋</div>
+            <div style={{fontWeight:900,fontSize:20,color:"white",textAlign:"center",letterSpacing:"-0.3px"}}>
+              غادر الطرف الآخر
+            </div>
+            <div style={{color:"rgba(255,255,255,0.55)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
+              سيتم تحويلك للصفحة الرئيسية خلال
+            </div>
+            {/* عداد تنازلي دائري */}
+            <div style={{
+              width:72,height:72,borderRadius:36,
+              background:"rgba(99,102,241,0.15)",
+              border:"3px solid rgba(99,102,241,0.6)",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              boxShadow:"0 0 30px rgba(99,102,241,0.4)",
+              fontSize:28,fontWeight:900,color:"#818cf8",
+              animation:"glowPulse 1s ease-in-out infinite"
+            }}>
+              {peerExitedCountdown}
+            </div>
+            <button onClick={exitRandomChat} style={{
+              marginTop:8,padding:"12px 32px",borderRadius:50,
+              background:"linear-gradient(135deg,#6366f1,#818cf8)",
+              border:"none",color:"white",fontWeight:800,fontSize:14,
+              cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",
+              boxShadow:"0 4px 20px rgba(99,102,241,0.5)"
+            }}>
+              العودة الآن ←
+            </button>
+          </div>
+        )}
+
         {/* Header */}
         <div style={{
           background: darkMode?"rgba(9,14,28,0.97)":"rgba(255,255,255,0.97)",
@@ -3797,7 +3923,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           display:"flex",alignItems:"center",gap:10,padding:"12px 14px",
           boxShadow:darkMode?"0 4px 24px rgba(0,0,0,0.5)":"0 4px 20px rgba(0,0,0,0.06)",flexShrink:0
         }}>
-          <button onClick={()=>setScreen("home")} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.back(muted)}</button>
+          <button onClick={exitRandomChat} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.back(muted)}</button>
           <button onClick={()=>setShowPartnerR(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:10,flex:1}}>
             <Av src={partner.av} size={36} primary={primary} card={card} glow={glow}/>
             <div style={{flex:1,textAlign:"right"}}>
@@ -3810,7 +3936,17 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {/* Call buttons — Fix #3: اتصال مباشر بالشريك الحالي عبر inbox، لا بحث جديد */}
           <div style={{display:"flex",gap:6}}>
             <button onClick={async()=>{
+              // ── Call Signaling Guard: تحقق من أن الطرف لا يزال موجوداً ──
+              if(peerExited){ addNotif("⚠️","تعذّر الاتصال","الطرف الآخر غادر المحادثة","info"); return; }
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
+              // التحقق السريع من حالة الطرف عبر Supabase Presence
+              const supaG=getSupa();
+              if(supaG){
+                const presState=presenceRef.current?.presenceState?.();
+                if(presState && !presState[targetId]){
+                  addNotif("⚠️","الشريك غير متصل","يبدو أن الطرف الآخر غادر","info"); return;
+                }
+              }
               setCallType("voice"); setCallStatus("outgoing"); setCallTime(0);
               setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
               setScreen("call");
@@ -3819,9 +3955,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
               setTimeout(()=>joinAgora(roomId,"voice"),300);
-            }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.phone(primary,16)}</button>
+            }} disabled={peerExited} style={{width:34,height:34,borderRadius:17,background:peerExited?"rgba(128,128,128,0.1)":`${primary}18`,border:`1px solid ${peerExited?"rgba(128,128,128,0.2)":primary+"30"}`,cursor:peerExited?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:peerExited?0.4:1}}>{Ic.phone(peerExited?"#888":primary,16)}</button>
             <button onClick={async()=>{
+              // ── Call Signaling Guard: تحقق من أن الطرف لا يزال موجوداً ──
+              if(peerExited){ addNotif("⚠️","تعذّر الاتصال","الطرف الآخر غادر المحادثة","info"); return; }
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
+              // التحقق السريع من حالة الطرف عبر Supabase Presence
+              const supaG=getSupa();
+              if(supaG){
+                const presState=presenceRef.current?.presenceState?.();
+                if(presState && !presState[targetId]){
+                  addNotif("⚠️","الشريك غير متصل","يبدو أن الطرف الآخر غادر","info"); return;
+                }
+              }
               setCallType("video"); setCallStatus("outgoing"); setCallTime(0);
               setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
               setScreen("call");
@@ -3830,7 +3976,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
               setTimeout(()=>joinAgora(roomId,"video"),300);
-            }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.video(primary,16)}</button>
+            }} disabled={peerExited} style={{width:34,height:34,borderRadius:17,background:peerExited?"rgba(128,128,128,0.1)":`${primary}18`,border:`1px solid ${peerExited?"rgba(128,128,128,0.2)":primary+"30"}`,cursor:peerExited?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:peerExited?0.4:1}}>{Ic.video(peerExited?"#888":primary,16)}</button>
             <button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>
           </div>
         </div>
@@ -4101,7 +4247,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBlock(false)}>
             <div style={{...glass({width:"100%",borderRadius:"22px 22px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
               <div style={{fontWeight:800,fontSize:16,marginBottom:14}}>Privacy</div>
-              {[{icon:Ic.block("#ef4444"),label:`Block ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner.name]);setShowBlock(false);setScreen("home");}},{icon:Ic.flag("#f59e0b"),label:"Report",c:"#f59e0b",action:()=>setShowBlock(false)}].map((b,i)=>(
+              {[{icon:Ic.block("#ef4444"),label:`Block ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner.name]);setShowBlock(false);exitRandomChat();}},{icon:Ic.flag("#f59e0b"),label:"Report",c:"#f59e0b",action:()=>setShowBlock(false)}].map((b,i)=>(
                 <button key={i} onClick={b.action} style={{width:"100%",background:`${b.c}11`,border:`1px solid ${b.c}44`,borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",color:b.c,fontWeight:700,marginBottom:10,fontFamily:"'Poppins','Tajawal',system-ui"}}>{b.icon}<span>{b.label}</span></button>
               ))}
             </div>
