@@ -13,6 +13,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/framer-motion@11/dist/framer-motion.js"></script>
 <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<!-- ZegoCloud UIKit Prebuilt -->
+<script src="https://unpkg.com/@zegocloud/zego-uikit-prebuilt/zego-uikit-prebuilt.js"></script>
 <script>
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
@@ -838,9 +840,22 @@ If errors exist, reply ONLY this JSON:
   // ══════════════════════════════════════════════════════════════════════════
   const ZEGO_APP_ID = 1793172823;
   const ZEGO_SERVER_SECRET = "3e3eba8bdf985d238e918dc045c07da4";
-  const renderZegoCall=(roomID, isVideo, myUserId)=>{
+
+  // ── توليد Token لـ ZegoCloud (بدون server — Kit Token) ──
+  const generateZegoToken = (roomID, userID) => {
+    try{
+      const ZegoUIKitPrebuilt = window.ZegoUIKitPrebuilt;
+      if(!ZegoUIKitPrebuilt) return null;
+      return ZegoUIKitPrebuilt.generateKitTokenForTest(
+        ZEGO_APP_ID, ZEGO_SERVER_SECRET, roomID, userID,
+        profile.name || userID
+      );
+    }catch(e){ return null; }
+  };
+
+  const renderZegoCall = (roomID, isVideo, myUserId) => {
     setAiloZegoRoomId(roomID);
-    setAiloCallType(isVideo?"video":"voice");
+    setAiloCallType(isVideo ? "video" : "voice");
     setShowZegoLayer(true);
     setAiloActive(false);
     setAiloVisible(false);
@@ -848,6 +863,48 @@ If errors exist, reply ONLY this JSON:
     setAiloCorrected("");
     setAiloTypingOrig("");
     setAiloTypingCorr("");
+
+    // ── محاولة تهيئة ZegoCloud SDK ──────────────────────────────────────
+    const ZegoUIKitPrebuilt = window.ZegoUIKitPrebuilt;
+    if(!ZegoUIKitPrebuilt){
+      // SDK غير محمّل → الواجهة القديمة (WebRTC) تعمل بالفعل
+      return;
+    }
+
+    // انتظر حتى يُضاف div الـ container للـ DOM
+    setTimeout(()=>{
+      const container = document.getElementById("zego-call-container");
+      if(!container) return; // الـ div غير موجود بعد → الواجهة القديمة تكفي
+
+      try{
+        const kitToken = generateZegoToken(roomID, myUserId || userId);
+        if(!kitToken) return;
+
+        const zp = ZegoUIKitPrebuilt.create(kitToken);
+        zp.joinRoom({
+          container,
+          scenario:{
+            mode: isVideo
+              ? ZegoUIKitPrebuilt.VideoConference
+              : ZegoUIKitPrebuilt.VoiceCall,
+          },
+          showPreJoinView: false,
+          turnOnCameraWhenJoining: isVideo,
+          turnOnMicrophoneWhenJoining: true,
+          showLeavingView: false,
+          onLeaveRoom: () => {
+            // عند الخروج من Zego → نظّف وارجع للرئيسية
+            setShowZegoLayer(false);
+            ailoStopListening();
+            leaveAgora();
+            setCallStatus("idle");
+            setScreen("home");
+          },
+        });
+      }catch(e){
+        // أي خطأ في Zego → الواجهة القديمة تعمل بالفعل، لا نفعل شيئاً
+      }
+    }, 400);
   };
 
   // ── توليد RoomID لمكالمة الصديق ──
@@ -2769,65 +2826,133 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ✅ استرجاع الجلسة والاتصال بـ Stream عند فتح التطبيق
   useEffect(()=>{
     const restoreSession = async () => {
-      const token = localStorage.getItem("ailo_token");
-      if(token){
-        const supa = getSupa();
-        if(supa){
-          try{
-            const { data, error } = await supa.auth.getUser(token);
-            // ✅ token منتهي أو غير صالح → تسجيل خروج تلقائي
-            if(error || !data?.user){
-              console.warn("Session expired. Logging out.");
-              localStorage.removeItem("ailo_token");
-              setAppScreen("login");
-              return;
+      const accessToken   = localStorage.getItem("ailo_token");
+      const refreshToken  = localStorage.getItem("ailo_refresh_token");
+      if(!accessToken) return;
+
+      const supa = getSupa();
+      if(!supa) return;
+
+      try{
+        // ① جرّب استرجاع الجلسة عبر setSession (يدعم كلا التوكن)
+        let user = null;
+        if(refreshToken){
+          const { data: sd, error: se } = await supa.auth.setSession({
+            access_token:  accessToken,
+            refresh_token: refreshToken
+          });
+          if(!se && sd?.user){
+            user = sd.user;
+            // حدّث التوكنات المخزّنة إذا جُدِّدت
+            if(sd.session?.access_token){
+              localStorage.setItem("ailo_token", sd.session.access_token);
+              if(sd.session.refresh_token) localStorage.setItem("ailo_refresh_token", sd.session.refresh_token);
+              if(sd.session.expires_at)    localStorage.setItem("ailo_expires_at",    String(sd.session.expires_at));
             }
-            // الجلسة صالحة → استرجع كل البيانات
-            const uid = data.user.id;
-            setUserId(uid);
-            // ✅ استرجاع الـ shortId — من localStorage أولاً ثم Supabase
-            let sid = load("shortId","");
-            if(sid){
-              setShortId(sid);
-            } else {
-              try{
-                const r = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${uid}&select=short_id`,{headers:{"apikey":SUPA_KEY}});
-                const rows = await r.json();
-                if(rows?.[0]?.short_id){
-                  save("shortId", rows[0].short_id);
-                  setShortId(rows[0].short_id);
-                  sid = rows[0].short_id;
-                }
-              }catch(e){}
-            }
-            const sp = load("profile",null);
-            if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
-            const sx = load("xp",0); if(sx>0) setTotalXp(sx);
-            const sc = load("coins",0); if(sc>0) setCoins(sc);
-            // Direct chat uses Supabase — no init needed
-          }catch(e){ console.error("Session check error:", e); }
+          }
         }
-      }
+        // ② إذا لم ينجح setSession، جرّب refreshSession مباشرةً
+        if(!user && refreshToken){
+          const { data: rd, error: re } = await supa.auth.refreshSession({ refresh_token: refreshToken });
+          if(!re && rd?.user){
+            user = rd.user;
+            if(rd.session?.access_token){
+              localStorage.setItem("ailo_token", rd.session.access_token);
+              if(rd.session.refresh_token) localStorage.setItem("ailo_refresh_token", rd.session.refresh_token);
+              if(rd.session.expires_at)    localStorage.setItem("ailo_expires_at",    String(rd.session.expires_at));
+            }
+          }
+        }
+        // ③ إذا فشل الاثنان → getUser كمحاولة أخيرة (بدون param — Supabase v2)
+        if(!user){
+          const { data: ud, error: ue } = await supa.auth.getUser();
+          if(!ue && ud?.user) user = ud.user;
+        }
+        // ④ تسجيل خروج فقط إذا فشلت كل المحاولات
+        if(!user){
+          localStorage.removeItem("ailo_token");
+          localStorage.removeItem("ailo_refresh_token");
+          localStorage.removeItem("ailo_expires_at");
+          setAppScreen("login");
+          return;
+        }
+
+        // ✅ الجلسة صالحة — استرجع بيانات المستخدم
+        const uid = user.id;
+        setUserId(uid);
+        let sid = load("shortId","");
+        if(sid){
+          setShortId(sid);
+        } else {
+          try{
+            const r = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${uid}&select=short_id`,{headers:{"apikey":SUPA_KEY}});
+            const rows = await r.json();
+            if(rows?.[0]?.short_id){
+              save("shortId", rows[0].short_id);
+              setShortId(rows[0].short_id);
+              sid = rows[0].short_id;
+            }
+          }catch(e){}
+        }
+        const sp = load("profile",null);
+        if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
+        const sx = load("xp",0); if(sx>0) setTotalXp(sx);
+        const sc = load("coins",0); if(sc>0) setCoins(sc);
+      }catch(e){ console.error("Session check error:", e); }
     };
     if(appScreen === "main") restoreSession();
-  },[appScreen, profile.name, profile.avatar]);
+  },[appScreen]);
 
-  // ✅ Fix #8: تجديد تلقائي للـ token كل 23 ساعة — بالتحقق من صلاحية الجلسة
+  // ✅ نظام تجديد التوكن الذكي — onAuthStateChange + Proactive Refresh
   useEffect(()=>{
-    const refreshInterval = setInterval(async()=>{
-      const supa = getSupa(); if(!supa) return;
-      const storedToken = localStorage.getItem("ailo_token"); if(!storedToken) return;
-      try{
-        const { data, error } = await supa.auth.getUser(storedToken);
-        if(error || !data?.user){
-          // Token منتهي — تسجيل خروج تلقائي
-          localStorage.removeItem("ailo_token");
-          setAppScreen("login");
-        }
-        // التوكن صالح — لا حاجة لأي إجراء
-      }catch(e){}
-    }, 23 * 60 * 60 * 1000); // 23 ساعة
-    return ()=> clearInterval(refreshInterval);
+    const supa = getSupa(); if(!supa) return;
+
+    // ① مستمع التغييرات من Supabase SDK (يُطلَق عند كل refresh تلقائي)
+    const { data: { subscription } } = supa.auth.onAuthStateChange((event, session)=>{
+      if(event === "TOKEN_REFRESHED" && session){
+        // حدّث التوكنات المخزّنة فور تجديدها
+        localStorage.setItem("ailo_token", session.access_token);
+        if(session.refresh_token) localStorage.setItem("ailo_refresh_token", session.refresh_token);
+        if(session.expires_at)    localStorage.setItem("ailo_expires_at",    String(session.expires_at));
+      }
+      if(event === "SIGNED_OUT"){
+        // تأكّد من تنظيف الـ storage
+        localStorage.removeItem("ailo_token");
+        localStorage.removeItem("ailo_refresh_token");
+        localStorage.removeItem("ailo_expires_at");
+      }
+    });
+
+    // ② Proactive Refresh: تحقق كل 4 دقائق — جدِّد قبل 5 دقائق من الانتهاء
+    const proactiveInterval = setInterval(async()=>{
+      const expiresAt = parseInt(localStorage.getItem("ailo_expires_at")||"0");
+      const refreshToken = localStorage.getItem("ailo_refresh_token");
+      if(!refreshToken) return;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const secsLeft = expiresAt - nowSec;
+      // جدِّد إذا بقي أقل من 5 دقائق (300 ثانية) أو انتهى
+      if(secsLeft < 300){
+        try{
+          const { data: rd, error: re } = await supa.auth.refreshSession({ refresh_token: refreshToken });
+          if(!re && rd?.session){
+            localStorage.setItem("ailo_token", rd.session.access_token);
+            if(rd.session.refresh_token) localStorage.setItem("ailo_refresh_token", rd.session.refresh_token);
+            if(rd.session.expires_at)    localStorage.setItem("ailo_expires_at",    String(rd.session.expires_at));
+          } else if(re){
+            // فشل التجديد — سجّل خروج بهدوء
+            localStorage.removeItem("ailo_token");
+            localStorage.removeItem("ailo_refresh_token");
+            localStorage.removeItem("ailo_expires_at");
+            setAppScreen("login");
+          }
+        }catch(e){}
+      }
+    }, 4 * 60 * 1000); // كل 4 دقائق
+
+    return ()=>{
+      subscription?.unsubscribe?.();
+      clearInterval(proactiveInterval);
+    };
   },[userId]);
 
   useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
@@ -3248,8 +3373,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             }
             setAuthLoading(false); return;
           }
-          // save token & user info
-          try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
+          // save token & user info (access + refresh للتجديد التلقائي)
+          try {
+            localStorage.setItem("ailo_token", data.access_token);
+            if(data.refresh_token) localStorage.setItem("ailo_refresh_token", data.refresh_token);
+            if(data.expires_at)    localStorage.setItem("ailo_expires_at",   String(data.expires_at));
+          } catch(e){}
           const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
           const userLang = data.user?.user_metadata?.lang || "Arabic";
           // ✅ تعيين الـ ID — المالك يحصل دائماً على AIL-F
@@ -3713,6 +3842,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       ══════════════════════════════════════════════════════════════════ */}
       {showZegoLayer&&(
         <>
+          {/* ── ZegoCloud Call Container (يظهر فقط عند توفر SDK) ── */}
+          {window.ZegoUIKitPrebuilt && (
+            <div
+              id="zego-call-container"
+              style={{
+                position:"fixed", inset:0,
+                zIndex:9000,
+                background:"#060612",
+              }}
+            />
+          )}
+
           {/* ── زر Ailo العائم ── */}
           <button
             onClick={()=>{
@@ -6790,10 +6931,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           )}
 
           {/* LOGOUT */}
-          <button onClick={()=>{
+          <button onClick={async()=>{
             setShowSettings(false);
-            // ✅ احفظ كل البيانات — لا تمسح إلا التوكن فقط
-            try{ localStorage.removeItem("ailo_token"); }catch(e){}
+            // تسجيل الخروج عبر Supabase SDK (يُبطل الجلسة من السيرفر)
+            try{
+              const supa=getSupa();
+              if(supa) await supa.auth.signOut();
+            }catch(e){}
+            // ✅ احفظ كل البيانات — امسح التوكنات فقط
+            try{
+              localStorage.removeItem("ailo_token");
+              localStorage.removeItem("ailo_refresh_token");
+              localStorage.removeItem("ailo_expires_at");
+            }catch(e){}
             disconnectStream();
             setAppScreen("login");
             setAuthForm({name:"",email:"",password:"",lang:"Arabic"});
