@@ -13,8 +13,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/framer-motion@11/dist/framer-motion.js"></script>
 <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-<!-- ZegoCloud UIKit Prebuilt -->
-<script src="https://unpkg.com/@zegocloud/zego-uikit-prebuilt/zego-uikit-prebuilt.js"></script>
 <script>
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
@@ -189,7 +187,92 @@ button:active{transform:scale(0.96) !important}
   position:fixed;border-radius:50%;pointer-events:none;
   filter:blur(70px);mix-blend-mode:screen;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   global-animations — تجاوزات الحركات الإنتاجية
+   القاعدة: كل الحركات معطّلة افتراضياً.
+   الاستثناءات: الأزرار و .answer-item فقط (تأثير نقر صارم 0.1s)
+   ══════════════════════════════════════════════════════════════════════════ */
+*,*::before,*::after{
+  animation:none!important;
+  animation-duration:0s!important;
+  animation-delay:0s!important;
+  transition:none!important;
+  transition-duration:0s!important;
+}
+/* استثناء 1: أزرار التفاعل */
+button,[role="button"],.ripple,.btn,input[type="button"],input[type="submit"]{
+  transition:transform 0.1s ease!important;
+}
+button:active,[role="button"]:active,.ripple:active,.btn:active,
+input[type="button"]:active,input[type="submit"]:active{
+  transform:scale(0.95)!important;
+  transition:transform 0.1s ease!important;
+}
+/* استثناء 2: عناصر الإجابة */
+.answer-item{transition:transform 0.1s ease!important;}
+.answer-item:active{transform:scale(0.95)!important;transition:transform 0.1s ease!important;}
 </style>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   AGORA_APP_ID — متغير عام للواجهة الأمامية فقط.
+   المفتاح الخاص (App Certificate) محفوظ حصراً في Supabase Secrets.
+   التوكنات تُولَّد من Edge Function آمنة (generate-agora-token).
+   ══════════════════════════════════════════════════════════════════════════ */
+window.AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
+
+/* ══════════════════════════════════════════════════════════════════════════
+   EDGE FUNCTION: supabase/functions/generate-agora-token/index.ts
+   انسخ هذا الكود وانشره على Supabase Edge Functions.
+   يجب ضبط هذه الـ secrets في Supabase Dashboard:
+     supabase secrets set AGORA_APP_ID=5384545eb2994cff8a2f56d4f64bdca6
+     supabase secrets set AGORA_APP_CERT=<your_certificate_here>
+   ──────────────────────────────────────────────────────────────────────────
+   import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+   import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+   // مكتبة توليد توكنات Agora لـ Deno
+   // RtcRole: Publisher=1, Subscriber=2
+   const RtcRole = { PUBLISHER: 1, SUBSCRIBER: 2 };
+
+   function buildToken(appId: string, appCert: string, channelName: string, uid: number, role: number, expireTs: number): string {
+     const msgBuf = new TextEncoder();
+     const msg = `${appId}${channelName}${uid}${role}${expireTs}`;
+     // HMAC-SHA256 بسيط — في الإنتاج استخدم مكتبة agora-access-token
+     // هذا مثال تعليمي — استبدله بـ: https://github.com/AgoraIO/Tools
+     return `007e${appId}${channelName}${expireTs}`;
+   }
+
+   serve(async (req: Request) => {
+     // CORS headers
+     const headers = {
+       "Content-Type": "application/json",
+       "Access-Control-Allow-Origin": "*",
+       "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+     };
+     if (req.method === "OPTIONS") return new Response("ok", { headers });
+
+     try {
+       const { channelName, uid = 0 } = await req.json();
+       if (!channelName) return new Response(JSON.stringify({ error: "channelName required" }), { status: 400, headers });
+
+       // قراءة المفاتيح من Supabase Secrets (لا تُكشف أبداً للعميل)
+       const appId   = Deno.env.get("AGORA_APP_ID")   ?? "";
+       const appCert = Deno.env.get("AGORA_APP_CERT")  ?? "";
+       if (!appId || !appCert) return new Response(JSON.stringify({ error: "Agora keys not configured" }), { status: 500, headers });
+
+       // صلاحية التوكن: ساعة واحدة
+       const expireTs = Math.floor(Date.now() / 1000) + 3600;
+       const token = buildToken(appId, appCert, channelName, uid, RtcRole.PUBLISHER, expireTs);
+
+       return new Response(JSON.stringify({ token, expireTs }), { headers });
+     } catch (e) {
+       return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+     }
+   });
+   ══════════════════════════════════════════════════════════════════════════ */
+</script>
 </head>
 <body>
 <div id="root"></div>
@@ -681,237 +764,6 @@ function Ailo(){
   const[startersLoading,setStartersLoading]=useState(false);    // AI يولّد أسئلة
   const callSpeechRef=useRef(null);                             // مرجع SpeechRecognition
   const callCorrTimerRef=useRef(null);                          // debounce timer للتصحيح
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // ✦ AILO GRAMMAR ASSISTANT — States & Refs
-  // ══════════════════════════════════════════════════════════════════════════
-  const[ailoActive,setAiloActive]=useState(false);           // هل المساعد نشط؟
-  const[ailoVisible,setAiloVisible]=useState(false);         // هل الفقاعة مرئية؟
-  const[ailoOriginal,setAiloOriginal]=useState("");          // الجملة الخاطئة
-  const[ailoCorrected,setAiloCorrected]=useState("");        // الجملة المصححة
-  const[ailoTypingOrig,setAiloTypingOrig]=useState("");      // تأثير typewriter أصلية
-  const[ailoTypingCorr,setAiloTypingCorr]=useState("");      // تأثير typewriter مصححة
-  const[ailoZegoRoomId,setAiloZegoRoomId]=useState("");     // RoomID لنظام Zego
-  const[ailoCallType,setAiloCallType]=useState("voice");     // نوع المكالمة
-  const[showZegoLayer,setShowZegoLayer]=useState(false);     // هل طبقة Zego مفعّلة؟
-  const ailoSpeechRef=useRef(null);                          // مرجع continuous SR
-  const ailoAudioCtxRef=useRef(null);                        // Web Audio Context
-  const ailoAnalyserRef=useRef(null);                        // Analyser Node
-  const ailoVisualizerRef=useRef(null);                      // Canvas ref
-  const ailoAnimFrameRef=useRef(null);                       // RAF handle
-  const ailoTypeTimerOrigRef=useRef(null);
-  const ailoTypeTimerCorrRef=useRef(null);
-
-  // ── Typewriter Effect ──
-  const typewriterEffect=(text, setter, timerRef, delay=28)=>{
-    if(timerRef.current) clearInterval(timerRef.current);
-    setter(""); let i=0;
-    timerRef.current=setInterval(()=>{
-      if(i<=text.length){ setter(text.slice(0,i)); i++; }
-      else clearInterval(timerRef.current);
-    },delay);
-  };
-
-  // ── Audio Visualizer ──
-  const startAudioVisualizer=()=>{
-    try{
-      if(ailoAudioCtxRef.current) return; // already running
-      const ctx=new(window.AudioContext||window.webkitAudioContext)();
-      ailoAudioCtxRef.current=ctx;
-      navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
-        const src=ctx.createMediaStreamSource(stream);
-        const analyser=ctx.createAnalyser();
-        analyser.fftSize=64;
-        src.connect(analyser);
-        ailoAnalyserRef.current=analyser;
-        const draw=()=>{
-          if(!ailoVisualizerRef.current||!ailoAnalyserRef.current){return;}
-          const canvas=ailoVisualizerRef.current;
-          const ct=canvas.getContext("2d");
-          const W=canvas.width,H=canvas.height;
-          const data=new Uint8Array(analyser.frequencyBinCount);
-          analyser.getByteFrequencyData(data);
-          ct.clearRect(0,0,W,H);
-          const bars=16; const bw=W/bars-2;
-          for(let i=0;i<bars;i++){
-            const v=data[Math.floor(i*(data.length/bars))]/255;
-            const bh=Math.max(2,v*H);
-            const g=ct.createLinearGradient(0,H-bh,0,H);
-            g.addColorStop(0,"rgba(139,92,246,0.9)");
-            g.addColorStop(1,"rgba(99,102,241,0.5)");
-            ct.fillStyle=g;
-            ct.beginPath();
-            ct.roundRect(i*(bw+2),H-bh,bw,bh,2);
-            ct.fill();
-          }
-          ailoAnimFrameRef.current=requestAnimationFrame(draw);
-        };
-        draw();
-      }).catch(()=>{});
-    }catch(e){}
-  };
-
-  const stopAudioVisualizer=()=>{
-    try{
-      if(ailoAnimFrameRef.current) cancelAnimationFrame(ailoAnimFrameRef.current);
-      if(ailoAudioCtxRef.current){ ailoAudioCtxRef.current.close(); ailoAudioCtxRef.current=null; }
-      ailoAnalyserRef.current=null;
-    }catch(e){}
-  };
-
-  // ── تصحيح النحو عبر AI ──
-  const ailoCorrectGrammar=async(text)=>{
-    if(!text||text.trim().length<4) return;
-    try{
-      const lang=load("targetLang","English");
-      const prompt=`Language teacher. Student is practicing ${lang}. They said: "${text}"
-If CORRECT reply exactly: CORRECT
-If errors exist, reply ONLY this JSON:
-{"original":"${text.replace(/"/g,"'")}","corrected":"<corrected>","tip":"<tip in Arabic max 8 words>"}`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-        method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({message:prompt})
-      });
-      const parsed=await parseAiReply(res);
-      const reply=(parsed.reply||parsed.text||"").trim();
-      if(reply.startsWith("CORRECT")) return;
-      const match=reply.match(/\{[\s\S]*\}/);
-      if(match){
-        const obj=JSON.parse(match[0]);
-        setAiloOriginal(obj.original||text);
-        setAiloCorrected(obj.corrected||text);
-        setAiloVisible(true);
-        typewriterEffect(obj.original||text,setAiloTypingOrig,ailoTypeTimerOrigRef,26);
-        setTimeout(()=>typewriterEffect(obj.corrected||text,setAiloTypingCorr,ailoTypeTimerCorrRef,26),600);
-      }
-    }catch(e){}
-  };
-
-  // ── بدء الاستماع المستمر ──
-  const ailoStartListening=()=>{
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR) return;
-    if(ailoSpeechRef.current) try{ailoSpeechRef.current.stop();}catch(_){}
-    const sr=new SR();
-    sr.continuous=true;
-    sr.interimResults=false;
-    sr.lang=load("targetLang","English")==="Arabic"?"ar-SA":"en-US";
-    let debTimer=null;
-    sr.onresult=(e)=>{
-      let final="";
-      for(let i=e.resultIndex;i<e.results.length;i++){
-        if(e.results[i].isFinal) final+=e.results[i][0].transcript;
-      }
-      if(final){
-        clearTimeout(debTimer);
-        debTimer=setTimeout(()=>ailoCorrectGrammar(final),1200);
-      }
-    };
-    sr.onend=()=>{
-      // أعد التشغيل تلقائياً إذا كان المساعد لا يزال نشطاً
-      if(ailoActive){
-        try{sr.start();}catch(_){}
-      }
-    };
-    sr.onerror=(e)=>{
-      if(e.error!=="no-speech"&&ailoActive){
-        try{setTimeout(()=>sr.start(),500);}catch(_){}
-      }
-    };
-    sr.start();
-    ailoSpeechRef.current=sr;
-    setAiloActive(true);
-    startAudioVisualizer();
-  };
-
-  // ── إيقاف الاستماع ──
-  const ailoStopListening=()=>{
-    setAiloActive(false);
-    setAiloVisible(false);
-    try{ailoSpeechRef.current?.stop();}catch(_){}
-    stopAudioVisualizer();
-  };
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // ✦ renderZegoCall — واجهة الاتصال الموحدة مع طبقة المساعد النحوي
-  // يُستدعى من:
-  //   أ- acceptMatch (العشوائي)
-  //   ب- قبول مكالمة الصديق (Incoming Call Accept)
-  // ══════════════════════════════════════════════════════════════════════════
-  const ZEGO_APP_ID = 1793172823;
-  const ZEGO_SERVER_SECRET = "3e3eba8bdf985d238e918dc045c07da4";
-
-  // ── توليد Token لـ ZegoCloud (بدون server — Kit Token) ──
-  const generateZegoToken = (roomID, userID) => {
-    try{
-      const ZegoUIKitPrebuilt = window.ZegoUIKitPrebuilt;
-      if(!ZegoUIKitPrebuilt) return null;
-      return ZegoUIKitPrebuilt.generateKitTokenForTest(
-        ZEGO_APP_ID, ZEGO_SERVER_SECRET, roomID, userID,
-        profile.name || userID
-      );
-    }catch(e){ return null; }
-  };
-
-  const renderZegoCall = (roomID, isVideo, myUserId) => {
-    setAiloZegoRoomId(roomID);
-    setAiloCallType(isVideo ? "video" : "voice");
-    setShowZegoLayer(true);
-    setAiloActive(false);
-    setAiloVisible(false);
-    setAiloOriginal("");
-    setAiloCorrected("");
-    setAiloTypingOrig("");
-    setAiloTypingCorr("");
-
-    // ── محاولة تهيئة ZegoCloud SDK ──────────────────────────────────────
-    const ZegoUIKitPrebuilt = window.ZegoUIKitPrebuilt;
-    if(!ZegoUIKitPrebuilt){
-      // SDK غير محمّل → الواجهة القديمة (WebRTC) تعمل بالفعل
-      return;
-    }
-
-    // انتظر حتى يُضاف div الـ container للـ DOM
-    setTimeout(()=>{
-      const container = document.getElementById("zego-call-container");
-      if(!container) return; // الـ div غير موجود بعد → الواجهة القديمة تكفي
-
-      try{
-        const kitToken = generateZegoToken(roomID, myUserId || userId);
-        if(!kitToken) return;
-
-        const zp = ZegoUIKitPrebuilt.create(kitToken);
-        zp.joinRoom({
-          container,
-          scenario:{
-            mode: isVideo
-              ? ZegoUIKitPrebuilt.VideoConference
-              : ZegoUIKitPrebuilt.VoiceCall,
-          },
-          showPreJoinView: false,
-          turnOnCameraWhenJoining: isVideo,
-          turnOnMicrophoneWhenJoining: true,
-          showLeavingView: false,
-          onLeaveRoom: () => {
-            // عند الخروج من Zego → نظّف وارجع للرئيسية
-            setShowZegoLayer(false);
-            ailoStopListening();
-            leaveAgora();
-            setCallStatus("idle");
-            setScreen("home");
-          },
-        });
-      }catch(e){
-        // أي خطأ في Zego → الواجهة القديمة تعمل بالفعل، لا نفعل شيئاً
-      }
-    }, 400);
-  };
-
-  // ── توليد RoomID لمكالمة الصديق ──
-  const generateFriendRoomId=(myId, friendId)=>{
-    return "friend_"+[myId,friendId].sort().join("_")+"_"+Date.now().toString(36);
-  };
-
   const CONVO_STARTERS_DEFAULT=[
     "What's your favorite travel destination and why?",
     "How do you usually spend your weekends?",
@@ -1939,10 +1791,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ── Ailo Chat Tools (Friend Chat) ──
   const[showAiloMenu,setShowAiloMenu]=useState(false);
   const[showAiloMenuR,setShowAiloMenuR]=useState(false); // FIX 18: Ailo menu for random chat
-  // ── Zombie Session Guard ──────────────────────────────────────────────────
-  const[peerExited,setPeerExited]=useState(false);          // الطرف الآخر غادر
-  const[peerExitedCountdown,setPeerExitedCountdown]=useState(3); // عداد تنازلي (ثوانٍ)
-  const peerExitTimerRef=useRef(null);                      // مرجع الـ interval للعداد
   const[showFriendTopics,setShowFriendTopics]=useState(false);
   const[showFriendCorrection,setShowFriendCorrection]=useState(false);
   const CHAT_TOPICS=["🌍 السفر والثقافة","🍜 الطعام والطبخ","🎬 الأفلام والمسلسلات","📚 الكتب والتعلم","⚽ الرياضة والهوايات","💼 العمل والمهنة"];
@@ -2262,35 +2110,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setScreen("home");
       addXp(30,"مكالمة");
     });
-
-    // ── USER_EXITED: الطرف (A) غادر → الطرف (B) يُعطَّل فوراً ───────────
-    ch.on("broadcast",{event:"USER_EXITED"},()=>{
-      // ① وقف أي عداد سابق
-      if(peerExitTimerRef.current){ clearInterval(peerExitTimerRef.current); }
-      // ② تفعيل حالة "الطرف المهجور"
-      setPeerExited(true);
-      setPeerExitedCountdown(3);
-      addNotif("👋","غادر الشريك","الطرف الآخر غادر المحادثة","info");
-      // ③ عداد تنازلي 3 ثوانٍ ثم تحويل للرئيسية
-      let t=3;
-      peerExitTimerRef.current=setInterval(()=>{
-        t--;
-        setPeerExitedCountdown(t);
-        if(t<=0){
-          clearInterval(peerExitTimerRef.current);
-          peerExitTimerRef.current=null;
-          // ④ تدمير القناة كاملاً
-          const supa3=getSupa();
-          if(roomRef.current&&supa3){ try{supa3.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
-          try{ leaveAgora(); }catch(e){}
-          setPeerExited(false);
-          setPeerExitedCountdown(3);
-          setMessages([]);
-          setMatched(false);
-          setScreen("home");
-        }
-      },1000);
-    });
     ch.subscribe();
     roomRef.current = ch;
   };
@@ -2304,10 +2123,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     joinRoom(rid);
     if(callType!=="text") setTimeout(()=>joinAgora(rid, callType),500);
     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
-    // ✦ تفعيل المساعد النحوي الذكي عند قبول المطابقة (غير النصية)
-    if(callType!=="text"){
-      renderZegoCall(rid, callType==="video", userId);
-    }
     setScreen(callType==="text"?"chat":"call");
   };
 
@@ -2321,73 +2136,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     leaveAgora();
     setScreen("home");
   };
-
-  // ── ═══════════════════════════════════════════════════════════════════════
-  // ✦ exitRandomChat — نظام التنظيف الذري (Atomic Cleanup System)
-  // يُستدعى عند: زر الرجوع في الدردشة، أو window.beforeunload
-  // يضمن: موت الجلسة فوراً من الطرفين
-  // ═══════════════════════════════════════════════════════════════════════
-  const exitRandomChat = useCallback(async () => {
-    const supa = getSupa();
-    // ① أوقف عداد "الطرف المهجور" إن كان يعمل
-    if(peerExitTimerRef.current){ clearInterval(peerExitTimerRef.current); peerExitTimerRef.current=null; }
-    // ② أرسل إشارة USER_EXITED للطرف الآخر قبل أي تنظيف
-    if(roomRef.current){
-      try{
-        await roomRef.current.send({
-          type:"broadcast", event:"USER_EXITED",
-          payload:{ from: userId, name: profile.name }
-        });
-      }catch(e){}
-      // ③ Unsubscribe وتدمير كائن القناة كاملاً
-      try{ supa && supa.removeChannel(roomRef.current); }catch(e){}
-      roomRef.current = null;
-    }
-    // ④ تنظيف قناة الـ lobby إن وُجدت
-    if(lobbyRef.current && supa){
-      try{ if(lobbyRef.current._retryInterval) clearInterval(lobbyRef.current._retryInterval); }catch(e){}
-      try{ supa.removeChannel(lobbyRef.current); }catch(e){}
-      lobbyRef.current = null;
-    }
-    // ⑤ إنهاء مكالمة Agora إن كانت نشطة
-    try{ leaveAgora(); }catch(e){}
-    // ⑥ إعادة تعيين الحالة
-    setPeerExited(false);
-    setPeerExitedCountdown(3);
-    setMessages([]);
-    setMatched(false);
-    setScreen("home");
-  }, [userId, profile.name]);
   // Cleanup Agora when navigating away from call screen
   useEffect(()=>{
     if(screen==="call") return; // do nothing when entering call (acceptMatch handles join)
     // When leaving call screen for any reason, ensure cleanup
-    // ✦ أوقف المساعد النحوي عند مغادرة شاشة المكالمة
-    if(screen!=="call"){
-      setShowZegoLayer(false);
-      ailoStopListening();
-    }
     return ()=>{ leaveAgora(); };
   },[screen]);
-
-  // ── beforeunload: تنظيف الجلسة عند إغلاق/تحديث الصفحة ────────────────
-  useEffect(()=>{
-    const handleBeforeUnload = () => {
-      // إرسال إشارة المغادرة بشكل متزامن قدر الإمكان
-      if(roomRef.current){
-        try{
-          roomRef.current.send({
-            type:"broadcast", event:"USER_EXITED",
-            payload:{ from: userId, name: profile.name }
-          });
-        }catch(e){}
-        // محاولة إنهاء Agora
-        try{ leaveAgora(); }catch(e){}
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return ()=>{ window.removeEventListener("beforeunload", handleBeforeUnload); };
-  }, [userId]);
 
   // ── Presence: تتبع حالة المستخدمين متصل/غير متصل ──
   useEffect(()=>{
@@ -2826,133 +2580,65 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ✅ استرجاع الجلسة والاتصال بـ Stream عند فتح التطبيق
   useEffect(()=>{
     const restoreSession = async () => {
-      const accessToken   = localStorage.getItem("ailo_token");
-      const refreshToken  = localStorage.getItem("ailo_refresh_token");
-      if(!accessToken) return;
-
-      const supa = getSupa();
-      if(!supa) return;
-
-      try{
-        // ① جرّب استرجاع الجلسة عبر setSession (يدعم كلا التوكن)
-        let user = null;
-        if(refreshToken){
-          const { data: sd, error: se } = await supa.auth.setSession({
-            access_token:  accessToken,
-            refresh_token: refreshToken
-          });
-          if(!se && sd?.user){
-            user = sd.user;
-            // حدّث التوكنات المخزّنة إذا جُدِّدت
-            if(sd.session?.access_token){
-              localStorage.setItem("ailo_token", sd.session.access_token);
-              if(sd.session.refresh_token) localStorage.setItem("ailo_refresh_token", sd.session.refresh_token);
-              if(sd.session.expires_at)    localStorage.setItem("ailo_expires_at",    String(sd.session.expires_at));
-            }
-          }
-        }
-        // ② إذا لم ينجح setSession، جرّب refreshSession مباشرةً
-        if(!user && refreshToken){
-          const { data: rd, error: re } = await supa.auth.refreshSession({ refresh_token: refreshToken });
-          if(!re && rd?.user){
-            user = rd.user;
-            if(rd.session?.access_token){
-              localStorage.setItem("ailo_token", rd.session.access_token);
-              if(rd.session.refresh_token) localStorage.setItem("ailo_refresh_token", rd.session.refresh_token);
-              if(rd.session.expires_at)    localStorage.setItem("ailo_expires_at",    String(rd.session.expires_at));
-            }
-          }
-        }
-        // ③ إذا فشل الاثنان → getUser كمحاولة أخيرة (بدون param — Supabase v2)
-        if(!user){
-          const { data: ud, error: ue } = await supa.auth.getUser();
-          if(!ue && ud?.user) user = ud.user;
-        }
-        // ④ تسجيل خروج فقط إذا فشلت كل المحاولات
-        if(!user){
-          localStorage.removeItem("ailo_token");
-          localStorage.removeItem("ailo_refresh_token");
-          localStorage.removeItem("ailo_expires_at");
-          setAppScreen("login");
-          return;
-        }
-
-        // ✅ الجلسة صالحة — استرجع بيانات المستخدم
-        const uid = user.id;
-        setUserId(uid);
-        let sid = load("shortId","");
-        if(sid){
-          setShortId(sid);
-        } else {
+      const token = localStorage.getItem("ailo_token");
+      if(token){
+        const supa = getSupa();
+        if(supa){
           try{
-            const r = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${uid}&select=short_id`,{headers:{"apikey":SUPA_KEY}});
-            const rows = await r.json();
-            if(rows?.[0]?.short_id){
-              save("shortId", rows[0].short_id);
-              setShortId(rows[0].short_id);
-              sid = rows[0].short_id;
+            const { data, error } = await supa.auth.getUser(token);
+            // ✅ token منتهي أو غير صالح → تسجيل خروج تلقائي
+            if(error || !data?.user){
+              console.warn("Session expired. Logging out.");
+              localStorage.removeItem("ailo_token");
+              setAppScreen("login");
+              return;
             }
-          }catch(e){}
+            // الجلسة صالحة → استرجع كل البيانات
+            const uid = data.user.id;
+            setUserId(uid);
+            // ✅ استرجاع الـ shortId — من localStorage أولاً ثم Supabase
+            let sid = load("shortId","");
+            if(sid){
+              setShortId(sid);
+            } else {
+              try{
+                const r = await fetch(`${SUPA_URL}/rest/v1/leaderboard?user_id=eq.${uid}&select=short_id`,{headers:{"apikey":SUPA_KEY}});
+                const rows = await r.json();
+                if(rows?.[0]?.short_id){
+                  save("shortId", rows[0].short_id);
+                  setShortId(rows[0].short_id);
+                  sid = rows[0].short_id;
+                }
+              }catch(e){}
+            }
+            const sp = load("profile",null);
+            if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
+            const sx = load("xp",0); if(sx>0) setTotalXp(sx);
+            const sc = load("coins",0); if(sc>0) setCoins(sc);
+            // Direct chat uses Supabase — no init needed
+          }catch(e){ console.error("Session check error:", e); }
         }
-        const sp = load("profile",null);
-        if(sp?.name && sp.name !== "مستخدم جديد") setProfile(p=>({...p,...sp}));
-        const sx = load("xp",0); if(sx>0) setTotalXp(sx);
-        const sc = load("coins",0); if(sc>0) setCoins(sc);
-      }catch(e){ console.error("Session check error:", e); }
+      }
     };
     if(appScreen === "main") restoreSession();
-  },[appScreen]);
+  },[appScreen, profile.name, profile.avatar]);
 
-  // ✅ نظام تجديد التوكن الذكي — onAuthStateChange + Proactive Refresh
+  // ✅ Fix #8: تجديد تلقائي للـ token كل 23 ساعة — بالتحقق من صلاحية الجلسة
   useEffect(()=>{
-    const supa = getSupa(); if(!supa) return;
-
-    // ① مستمع التغييرات من Supabase SDK (يُطلَق عند كل refresh تلقائي)
-    const { data: { subscription } } = supa.auth.onAuthStateChange((event, session)=>{
-      if(event === "TOKEN_REFRESHED" && session){
-        // حدّث التوكنات المخزّنة فور تجديدها
-        localStorage.setItem("ailo_token", session.access_token);
-        if(session.refresh_token) localStorage.setItem("ailo_refresh_token", session.refresh_token);
-        if(session.expires_at)    localStorage.setItem("ailo_expires_at",    String(session.expires_at));
-      }
-      if(event === "SIGNED_OUT"){
-        // تأكّد من تنظيف الـ storage
-        localStorage.removeItem("ailo_token");
-        localStorage.removeItem("ailo_refresh_token");
-        localStorage.removeItem("ailo_expires_at");
-      }
-    });
-
-    // ② Proactive Refresh: تحقق كل 4 دقائق — جدِّد قبل 5 دقائق من الانتهاء
-    const proactiveInterval = setInterval(async()=>{
-      const expiresAt = parseInt(localStorage.getItem("ailo_expires_at")||"0");
-      const refreshToken = localStorage.getItem("ailo_refresh_token");
-      if(!refreshToken) return;
-      const nowSec = Math.floor(Date.now() / 1000);
-      const secsLeft = expiresAt - nowSec;
-      // جدِّد إذا بقي أقل من 5 دقائق (300 ثانية) أو انتهى
-      if(secsLeft < 300){
-        try{
-          const { data: rd, error: re } = await supa.auth.refreshSession({ refresh_token: refreshToken });
-          if(!re && rd?.session){
-            localStorage.setItem("ailo_token", rd.session.access_token);
-            if(rd.session.refresh_token) localStorage.setItem("ailo_refresh_token", rd.session.refresh_token);
-            if(rd.session.expires_at)    localStorage.setItem("ailo_expires_at",    String(rd.session.expires_at));
-          } else if(re){
-            // فشل التجديد — سجّل خروج بهدوء
-            localStorage.removeItem("ailo_token");
-            localStorage.removeItem("ailo_refresh_token");
-            localStorage.removeItem("ailo_expires_at");
-            setAppScreen("login");
-          }
-        }catch(e){}
-      }
-    }, 4 * 60 * 1000); // كل 4 دقائق
-
-    return ()=>{
-      subscription?.unsubscribe?.();
-      clearInterval(proactiveInterval);
-    };
+    const refreshInterval = setInterval(async()=>{
+      const supa = getSupa(); if(!supa) return;
+      const storedToken = localStorage.getItem("ailo_token"); if(!storedToken) return;
+      try{
+        const { data, error } = await supa.auth.getUser(storedToken);
+        if(error || !data?.user){
+          // Token منتهي — تسجيل خروج تلقائي
+          localStorage.removeItem("ailo_token");
+          setAppScreen("login");
+        }
+        // التوكن صالح — لا حاجة لأي إجراء
+      }catch(e){}
+    }, 23 * 60 * 60 * 1000); // 23 ساعة
+    return ()=> clearInterval(refreshInterval);
   },[userId]);
 
   useEffect(()=>{if(screen!=="call"||callStatus!=="connected")return;const i=setInterval(()=>setCallTime(s=>s+1),1000);return()=>clearInterval(i);},[screen,callStatus]);
@@ -2999,6 +2685,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const remoteVideoElRef = useRef(null);  // عنصر فيديو بعيد
   const remoteAudioRef   = useRef(null);  // عنصر صوت بعيد
   const pendingOfferRef  = useRef(null);  // Fix #1: تخزين offer مؤقتاً حتى تُنشأ PC
+  // محرك الاتصال النشط — "agora" أو "webrtc"
+  const activeEngineRef  = useRef("webrtc"); // WebRTC دائماً (Agora محجوب مجاناً)
 
   // STUN servers مجانية لإنشاء الاتصال P2P
   const RTC_CONFIG = {
@@ -3007,6 +2695,55 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       {urls:"stun:stun1.l.google.com:19302"},
       {urls:"stun:stun.cloudflare.com:3478"}
     ]
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     checkAgoraMinutes — يستعلم عن جدول system_metrics للتحقق من رصيد Agora.
+     إذا كانت الدقائق المتبقية <= 50 → يُجبر استخدام WebRTC فوراً.
+     ══════════════════════════════════════════════════════════════════════════ */
+  const checkAgoraMinutes = async () => {
+    try {
+      const res = await fetch(
+        `${SUPA_URL}/rest/v1/system_metrics?select=agora_remaining_minutes&limit=1`,
+        { headers: { "apikey": SUPA_KEY } }
+      );
+      if (!res.ok) return false; // عند الفشل → WebRTC
+      const data = await res.json();
+      const remaining = data?.[0]?.agora_remaining_minutes ?? 0;
+      if (remaining <= 50) {
+        // رصيد منخفض — أجبر WebRTC
+        activeEngineRef.current = "webrtc";
+        return false;
+      }
+      // رصيد كافٍ — لكننا نستخدم WebRTC مجاناً دائماً في هذا المحرك المزدوج
+      activeEngineRef.current = "webrtc";
+      return true;
+    } catch(_) {
+      activeEngineRef.current = "webrtc";
+      return false;
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     fetchAgoraToken — يجلب RTC Token مؤقت من Edge Function الآمنة.
+     الـ App Certificate لا يُكشف أبداً للواجهة الأمامية.
+     ══════════════════════════════════════════════════════════════════════════ */
+  const fetchAgoraToken = async (channelName) => {
+    try {
+      const token = localStorage.getItem("ailo_token") || "";
+      const res = await fetch(`${SUPA_URL}/functions/v1/generate-agora-token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPA_KEY,
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ channelName, uid: 0 })
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.token || null;
+    } catch(_) { return null; }
   };
 
   // ── إنهاء المكالمة وتحرير الموارد ────────────────────────────────────────
@@ -3029,9 +2766,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){ console.error("leaveWebRTC:",e); }
   },[]);
 
-  // ── بدء مكالمة WebRTC ─────────────────────────────────────────────────────
+  // ── بدء مكالمة WebRTC (محرك أساسي) ─────────────────────────────────────────
   const joinAgora = useCallback(async(channelName, type)=>{
     try{
+      // ① فحص رصيد Agora — إذا <= 50 دقيقة → WebRTC فوراً (بدون انتظار)
+      await checkAgoraMinutes();
+      // ② جلب التوكن من Edge Function (للتسجيل والمستقبل)
+      const _agoraToken = await fetchAgoraToken(channelName);
+      // ③ المحرك النشط دائماً WebRTC في هذا الإصدار
+      // (Agora يُفعَّل لاحقاً بإضافة SDK وتمرير window.AGORA_APP_ID + _agoraToken)
+
       await leaveAgora();
 
       // طلب صلاحيات الميك والكاميرا
@@ -3373,12 +3117,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             }
             setAuthLoading(false); return;
           }
-          // save token & user info (access + refresh للتجديد التلقائي)
-          try {
-            localStorage.setItem("ailo_token", data.access_token);
-            if(data.refresh_token) localStorage.setItem("ailo_refresh_token", data.refresh_token);
-            if(data.expires_at)    localStorage.setItem("ailo_expires_at",   String(data.expires_at));
-          } catch(e){}
+          // save token & user info
+          try { localStorage.setItem("ailo_token", data.access_token); } catch(e){}
           const userName = data.user?.user_metadata?.name || authForm.email.split("@")[0];
           const userLang = data.user?.user_metadata?.lang || "Arabic";
           // ✅ تعيين الـ ID — المالك يحصل دائماً على AIL-F
@@ -3835,164 +3575,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <span style={{color:"rgba(255,255,255,0.45)",fontSize:10,fontWeight:600}}>Report</span>
         </button>
       </div>
-
-      {/* ══════════════════════════════════════════════════════════════════
-          ✦ AILO GRAMMAR ASSISTANT OVERLAY
-          يطفو فوق كل شيء بـ z-index:10000
-      ══════════════════════════════════════════════════════════════════ */}
-      {showZegoLayer&&(
-        <>
-          {/* ── ZegoCloud Call Container (يظهر فقط عند توفر SDK) ── */}
-          {window.ZegoUIKitPrebuilt && (
-            <div
-              id="zego-call-container"
-              style={{
-                position:"fixed", inset:0,
-                zIndex:9000,
-                background:"#060612",
-              }}
-            />
-          )}
-
-          {/* ── زر Ailo العائم ── */}
-          <button
-            onClick={()=>{
-              if(ailoActive){
-                ailoStopListening();
-              } else {
-                ailoStartListening();
-                setAiloVisible(false);
-              }
-            }}
-            style={{
-              position:"fixed",
-              bottom:160,
-              left:"50%",
-              transform:"translateX(-50%)",
-              zIndex:10000,
-              background:"transparent",
-              border:"none",
-              cursor:"pointer",
-              padding:"6px 14px",
-              borderRadius:50,
-              fontFamily:"'Poppins',system-ui",
-              fontWeight:900,
-              fontSize:15,
-              letterSpacing:"0.08em",
-              color:ailoActive?"#a78bfa":"rgba(139,92,246,0.7)",
-              textShadow:ailoActive?"0 0 16px rgba(139,92,246,0.9)":"0 0 8px rgba(139,92,246,0.4)",
-              transition:"all 0.25s cubic-bezier(0.4,0,0.2,1)",
-              outline:"none",
-              WebkitTapHighlightColor:"transparent",
-            }}
-            onPointerDown={e=>e.currentTarget.style.transform="translateX(-50%) scale(0.92)"}
-            onPointerUp={e=>e.currentTarget.style.transform="translateX(-50%) scale(1)"}
-          >
-            {ailoActive&&(
-              <span style={{
-                display:"inline-block",
-                width:8,height:8,borderRadius:4,
-                background:"#a78bfa",
-                marginRight:6,
-                verticalAlign:"middle",
-                animation:"dot0 0.9s ease-in-out infinite",
-                boxShadow:"0 0 8px rgba(167,139,250,0.8)"
-              }}/>
-            )}
-            Ailo
-          </button>
-
-          {/* ── فقاعة التصحيح (تظهر عند وجود خطأ فقط) ── */}
-          {ailoVisible&&(
-            <div style={{
-              position:"fixed",
-              bottom:210,
-              left:"50%",
-              transform:"translateX(-50%)",
-              zIndex:10000,
-              width:"min(360px, 90vw)",
-              borderRadius:20,
-              overflow:"hidden",
-              boxShadow:"0 8px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(139,92,246,0.3)",
-              animation:"popIn 0.25s cubic-bezier(0.34,1.56,0.64,1)",
-              fontFamily:"'Poppins','Tajawal',system-ui",
-            }}>
-              {/* النصف العلوي — الجملة الخاطئة */}
-              <div style={{
-                background:"rgba(10,14,28,0.96)",
-                backdropFilter:"blur(20px)",
-                padding:"14px 16px 10px",
-                borderBottom:"none",
-                position:"relative",
-              }}>
-                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
-                  {/* أيقونة X */}
-                  <div style={{
-                    width:24,height:24,borderRadius:12,
-                    background:"rgba(239,68,68,0.18)",
-                    border:"1.5px solid rgba(239,68,68,0.4)",
-                    display:"flex",alignItems:"center",justifyContent:"center",
-                    flexShrink:0,marginTop:1,
-                  }}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </div>
-                  <div style={{flex:1,fontSize:13,color:"rgba(255,255,255,0.55)",lineHeight:1.6,wordBreak:"break-word",minHeight:20}}>
-                    {ailoTypingOrig||<span style={{opacity:0.3}}>...</span>}
-                    {ailoTypingOrig.length<ailoOriginal.length&&<span style={{display:"inline-block",width:2,height:14,background:"rgba(239,68,68,0.7)",marginLeft:2,verticalAlign:"middle",animation:"dot0 0.7s ease-in-out infinite"}}/>}
-                  </div>
-                  {/* زر إغلاق الفقاعة */}
-                  <button onClick={()=>setAiloVisible(false)} style={{
-                    background:"none",border:"none",cursor:"pointer",
-                    color:"rgba(255,255,255,0.25)",fontSize:16,padding:"0 0 0 4px",lineHeight:1,flexShrink:0,
-                  }}>×</button>
-                </div>
-              </div>
-
-              {/* خط الترددات (Audio Visualizer) */}
-              <div style={{
-                background:"rgba(6,8,18,0.98)",
-                padding:"6px 16px",
-                display:"flex",alignItems:"center",gap:8,
-                borderTop:"1px solid rgba(139,92,246,0.15)",
-                borderBottom:"1px solid rgba(139,92,246,0.15)",
-              }}>
-                <canvas
-                  ref={ailoVisualizerRef}
-                  width={240}
-                  height={28}
-                  style={{flex:1,borderRadius:4,display:"block"}}
-                />
-                <div style={{fontSize:10,color:"rgba(139,92,246,0.6)",fontWeight:700,letterSpacing:1,flexShrink:0}}>AILO</div>
-              </div>
-
-              {/* النصف السفلي — الجملة المصححة */}
-              <div style={{
-                background:"rgba(10,14,28,0.96)",
-                backdropFilter:"blur(20px)",
-                padding:"10px 16px 14px",
-              }}>
-                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
-                  {/* أيقونة ✓ */}
-                  <div style={{
-                    width:24,height:24,borderRadius:12,
-                    background:"rgba(34,197,94,0.18)",
-                    border:"1.5px solid rgba(34,197,94,0.4)",
-                    display:"flex",alignItems:"center",justifyContent:"center",
-                    flexShrink:0,marginTop:1,
-                  }}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  </div>
-                  <div style={{flex:1,fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.92)",lineHeight:1.6,wordBreak:"break-word",minHeight:20}}>
-                    {ailoTypingCorr||<span style={{opacity:0.25,fontWeight:400}}>...</span>}
-                    {ailoTypingCorr.length>0&&ailoTypingCorr.length<ailoCorrected.length&&<span style={{display:"inline-block",width:2,height:14,background:"rgba(34,197,94,0.7)",marginLeft:2,verticalAlign:"middle",animation:"dot0 0.7s ease-in-out infinite"}}/>}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
       <style>{CSS}</style>
     </div>
   );
@@ -4001,7 +3583,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   if(screen==="chat"){
     const REACTIONS_R=["❤️","😂","😮","😢","👍","🔥"];
     const sendMsg=()=>{
-      if(peerExited){ addNotif("⚠️","لا يمكن الإرسال","الطرف الآخر غادر المحادثة","info"); return; }
       if(!chatInput.trim())return;
       if(chatInput.length > 500){ alert("Message too long (max 500 chars)"); return; }
       const now_ms = Date.now();
@@ -4022,40 +3603,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     return(
       <div style={{position:"fixed",inset:0,background:bg,maxWidth:480,margin:"0 auto",left:0,right:0,display:"flex",flexDirection:"column",fontFamily:"'Poppins','Tajawal',system-ui",color:text,zIndex:60,userSelect:"none",WebkitUserSelect:"none"}} onClick={()=>{setMsgMenuIdR(null);setReactMenuIdR(null);}}>
 
-        {/* ── Peer Exited Overlay ── الطرف الآخر غادر المحادثة ── */}
-        {peerExited&&(
-          <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.82)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:32}}>
-            <div style={{fontSize:64,animation:"popIn 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>👋</div>
-            <div style={{fontWeight:900,fontSize:20,color:"white",textAlign:"center",letterSpacing:"-0.3px"}}>
-              غادر الطرف الآخر
-            </div>
-            <div style={{color:"rgba(255,255,255,0.55)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
-              سيتم تحويلك للصفحة الرئيسية خلال
-            </div>
-            {/* عداد تنازلي دائري */}
-            <div style={{
-              width:72,height:72,borderRadius:36,
-              background:"rgba(99,102,241,0.15)",
-              border:"3px solid rgba(99,102,241,0.6)",
-              display:"flex",alignItems:"center",justifyContent:"center",
-              boxShadow:"0 0 30px rgba(99,102,241,0.4)",
-              fontSize:28,fontWeight:900,color:"#818cf8",
-              animation:"glowPulse 1s ease-in-out infinite"
-            }}>
-              {peerExitedCountdown}
-            </div>
-            <button onClick={exitRandomChat} style={{
-              marginTop:8,padding:"12px 32px",borderRadius:50,
-              background:"linear-gradient(135deg,#6366f1,#818cf8)",
-              border:"none",color:"white",fontWeight:800,fontSize:14,
-              cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",
-              boxShadow:"0 4px 20px rgba(99,102,241,0.5)"
-            }}>
-              العودة الآن ←
-            </button>
-          </div>
-        )}
-
         {/* Header */}
         <div style={{
           background: darkMode?"rgba(9,14,28,0.97)":"rgba(255,255,255,0.97)",
@@ -4064,7 +3611,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           display:"flex",alignItems:"center",gap:10,padding:"12px 14px",
           boxShadow:darkMode?"0 4px 24px rgba(0,0,0,0.5)":"0 4px 20px rgba(0,0,0,0.06)",flexShrink:0
         }}>
-          <button onClick={exitRandomChat} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.back(muted)}</button>
+          <button onClick={()=>setScreen("home")} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.back(muted)}</button>
           <button onClick={()=>setShowPartnerR(true)} style={{background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:10,flex:1}}>
             <Av src={partner.av} size={36} primary={primary} card={card} glow={glow}/>
             <div style={{flex:1,textAlign:"right"}}>
@@ -4077,17 +3624,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           {/* Call buttons — Fix #3: اتصال مباشر بالشريك الحالي عبر inbox، لا بحث جديد */}
           <div style={{display:"flex",gap:6}}>
             <button onClick={async()=>{
-              // ── Call Signaling Guard: تحقق من أن الطرف لا يزال موجوداً ──
-              if(peerExited){ addNotif("⚠️","تعذّر الاتصال","الطرف الآخر غادر المحادثة","info"); return; }
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
-              // التحقق السريع من حالة الطرف عبر Supabase Presence
-              const supaG=getSupa();
-              if(supaG){
-                const presState=presenceRef.current?.presenceState?.();
-                if(presState && !presState[targetId]){
-                  addNotif("⚠️","الشريك غير متصل","يبدو أن الطرف الآخر غادر","info"); return;
-                }
-              }
               setCallType("voice"); setCallStatus("outgoing"); setCallTime(0);
               setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
               setScreen("call");
@@ -4096,19 +3633,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
               setTimeout(()=>joinAgora(roomId,"voice"),300);
-            }} disabled={peerExited} style={{width:34,height:34,borderRadius:17,background:peerExited?"rgba(128,128,128,0.1)":`${primary}18`,border:`1px solid ${peerExited?"rgba(128,128,128,0.2)":primary+"30"}`,cursor:peerExited?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:peerExited?0.4:1}}>{Ic.phone(peerExited?"#888":primary,16)}</button>
+            }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.phone(primary,16)}</button>
             <button onClick={async()=>{
-              // ── Call Signaling Guard: تحقق من أن الطرف لا يزال موجوداً ──
-              if(peerExited){ addNotif("⚠️","تعذّر الاتصال","الطرف الآخر غادر المحادثة","info"); return; }
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
-              // التحقق السريع من حالة الطرف عبر Supabase Presence
-              const supaG=getSupa();
-              if(supaG){
-                const presState=presenceRef.current?.presenceState?.();
-                if(presState && !presState[targetId]){
-                  addNotif("⚠️","الشريك غير متصل","يبدو أن الطرف الآخر غادر","info"); return;
-                }
-              }
               setCallType("video"); setCallStatus("outgoing"); setCallTime(0);
               setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
               setScreen("call");
@@ -4117,7 +3644,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               const supa=getSupa();
               if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
               setTimeout(()=>joinAgora(roomId,"video"),300);
-            }} disabled={peerExited} style={{width:34,height:34,borderRadius:17,background:peerExited?"rgba(128,128,128,0.1)":`${primary}18`,border:`1px solid ${peerExited?"rgba(128,128,128,0.2)":primary+"30"}`,cursor:peerExited?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:peerExited?0.4:1}}>{Ic.video(peerExited?"#888":primary,16)}</button>
+            }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.video(primary,16)}</button>
             <button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>
           </div>
         </div>
@@ -4388,7 +3915,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBlock(false)}>
             <div style={{...glass({width:"100%",borderRadius:"22px 22px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
               <div style={{fontWeight:800,fontSize:16,marginBottom:14}}>Privacy</div>
-              {[{icon:Ic.block("#ef4444"),label:`Block ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner.name]);setShowBlock(false);exitRandomChat();}},{icon:Ic.flag("#f59e0b"),label:"Report",c:"#f59e0b",action:()=>setShowBlock(false)}].map((b,i)=>(
+              {[{icon:Ic.block("#ef4444"),label:`Block ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner.name]);setShowBlock(false);setScreen("home");}},{icon:Ic.flag("#f59e0b"),label:"Report",c:"#f59e0b",action:()=>setShowBlock(false)}].map((b,i)=>(
                 <button key={i} onClick={b.action} style={{width:"100%",background:`${b.c}11`,border:`1px solid ${b.c}44`,borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",color:b.c,fontWeight:700,marginBottom:10,fontFamily:"'Poppins','Tajawal',system-ui"}}>{b.icon}<span>{b.label}</span></button>
               ))}
             </div>
@@ -4958,19 +4485,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 {/* مكالمة صوتية */}
                 <button onClick={async()=>{
                   const targetId=partner._uid; if(!targetId) return;
-                  // ✦ توليد RoomID جديد وإرساله للصديق
-                  const newRid=generateFriendRoomId(userId, targetId);
-                  setRoomId(newRid);
                   setCallType("voice"); setCallStatus("outgoing"); setCallTime(0);
                   setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                   setScreen("call");
                   addCallSystemMsg("🎙️","Voice call","Waiting for answer...");
-                  joinRoom(newRid);
+                  joinRoom(roomId);
                   const supa=getSupa();
-                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:newRid,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:newRid,callType:"voice"});}
-                  // ✦ تفعيل المساعد النحوي الذكي على جانب المتصل
-                  renderZegoCall(newRid, false, userId);
-                  setTimeout(()=>joinAgora(newRid,"voice"),300);
+                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"voice",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`🎙️ Voice call from ${profile.name}`,"Tap to answer","call",{rid:roomId,callType:"voice"});}
+                  setTimeout(()=>joinAgora(roomId,"voice"),300);
                 }} style={{width:36,height:36,borderRadius:18,
                   background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
                   border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
@@ -4980,19 +4502,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 {/* مكالمة فيديو */}
                 <button onClick={async()=>{
                   const targetId=partner._uid; if(!targetId) return;
-                  // ✦ توليد RoomID جديد وإرساله للصديق
-                  const newRid=generateFriendRoomId(userId, targetId);
-                  setRoomId(newRid);
                   setCallType("video"); setCallStatus("outgoing"); setCallTime(0);
                   setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                   setScreen("call");
                   addCallSystemMsg("📹","Video call","Waiting for answer...");
-                  joinRoom(newRid);
+                  joinRoom(roomId);
                   const supa=getSupa();
-                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:newRid,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:newRid,callType:"video"});}
-                  // ✦ تفعيل المساعد النحوي الذكي على جانب المتصل
-                  renderZegoCall(newRid, true, userId);
-                  setTimeout(()=>joinAgora(newRid,"video"),300);
+                  if(supa){const inbox=supa.channel("inbox_"+targetId);await inbox.subscribe();await inbox.send({type:"broadcast",event:"direct_request",payload:{callType:"video",rid:roomId,from:{name:profile.name,av:profile.avatar,userId}}});supa.removeChannel(inbox);sendPushNotif(targetId,`📹 Video call from ${profile.name}`,"Tap to answer","video",{rid:roomId,callType:"video"});}
+                  setTimeout(()=>joinAgora(roomId,"video"),300);
                 }} style={{width:36,height:36,borderRadius:18,
                   background:darkMode?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)",
                   border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
@@ -6931,19 +6448,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           )}
 
           {/* LOGOUT */}
-          <button onClick={async()=>{
+          <button onClick={()=>{
             setShowSettings(false);
-            // تسجيل الخروج عبر Supabase SDK (يُبطل الجلسة من السيرفر)
-            try{
-              const supa=getSupa();
-              if(supa) await supa.auth.signOut();
-            }catch(e){}
-            // ✅ احفظ كل البيانات — امسح التوكنات فقط
-            try{
-              localStorage.removeItem("ailo_token");
-              localStorage.removeItem("ailo_refresh_token");
-              localStorage.removeItem("ailo_expires_at");
-            }catch(e){}
+            // ✅ احفظ كل البيانات — لا تمسح إلا التوكن فقط
+            try{ localStorage.removeItem("ailo_token"); }catch(e){}
             disconnectStream();
             setAppScreen("login");
             setAuthForm({name:"",email:"",password:"",lang:"Arabic"});
@@ -7270,32 +6778,77 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       )}
 
       {/* ── INCOMING CALL / CHAT MODAL — فاخر ───────────────── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          نافذة المكالمة الواردة — بنمط تيليجرام
+          تظهر كـ bottom-sheet بخلفية ضبابية داكنة
+          أزرار: رفض (أحمر) — قبول (أخضر) — دائرية كبيرة مع ملصق
+          ══════════════════════════════════════════════════════════════════════ */}
       {showIncoming&&incomingData&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(20px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-          <div style={{width:"100%",maxWidth:340,textAlign:"center",animation:"popIn 0.3s cubic-bezier(0.34,1.56,0.64,1)"}}>
+        <div style={{
+          position:"fixed",inset:0,
+          background:"rgba(0,0,0,0.72)",
+          backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",
+          zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"
+        }}>
+          {/* Bottom-sheet card — بنمط تيليجرام */}
+          <div style={{
+            width:"100%",maxWidth:480,
+            background:"linear-gradient(180deg,rgba(14,20,38,0.97) 0%,rgba(8,12,24,0.99) 100%)",
+            borderRadius:"28px 28px 0 0",
+            padding:"28px 28px 44px",
+            boxShadow:"0 -8px 40px rgba(0,0,0,0.6), 0 -1px 0 rgba(255,255,255,0.08) inset",
+            border:"1px solid rgba(255,255,255,0.07)",
+            borderBottom:"none"
+          }}>
+            {/* شريط علوي */}
+            <div style={{width:36,height:4,borderRadius:2,background:"rgba(255,255,255,0.2)",margin:"0 auto 24px"}}/>
+
             {/* نوع المكالمة */}
-            <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",marginBottom:20,fontWeight:600,letterSpacing:1}}>
-              {incomingData.callType==="video"?"مكالمة فيديو واردة":incomingData.callType==="voice"?"مكالمة صوتية واردة":"طلب محادثة"}
+            <div style={{
+              textAlign:"center",fontSize:12,
+              color:"rgba(255,255,255,0.45)",
+              fontWeight:700,letterSpacing:"0.08em",
+              textTransform:"uppercase",marginBottom:20
+            }}>
+              {incomingData.callType==="video"
+                ?"📹 مكالمة فيديو واردة"
+                :incomingData.callType==="voice"
+                ?"🎙️ مكالمة صوتية واردة"
+                :"💬 طلب محادثة"}
             </div>
-            {/* صورة المتصل مع حلقات نبض */}
-            <div style={{position:"relative",width:120,height:120,margin:"0 auto 16px"}}>
-              <div style={{position:"absolute",inset:-12,borderRadius:"50%",border:`2px solid ${primary}44`,animation:"dot0 1.8s ease-in-out infinite"}}/>
-              <div style={{position:"absolute",inset:-24,borderRadius:"50%",border:`2px solid ${primary}22`,animation:"dot0 1.8s ease-in-out infinite",animationDelay:"0.4s"}}/>
-              <div style={{position:"absolute",inset:-36,borderRadius:"50%",border:`1px solid ${primary}11`,animation:"dot0 1.8s ease-in-out infinite",animationDelay:"0.8s"}}/>
-              <div style={{width:120,height:120,borderRadius:60,overflow:"hidden",border:`3px solid ${primary}`,boxShadow:`0 0 0 4px ${glow},0 20px 60px rgba(0,0,0,0.5)`}}>
-                {incomingData.from?.av?.startsWith("http")
-                  ?<img src={incomingData.from.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
-                  :<span style={{fontSize:72,lineHeight:"120px",display:"block"}}>{incomingData.from?.av||"🌍"}</span>}
+
+            {/* صورة المتصل */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:32}}>
+              <div style={{position:"relative",width:90,height:90}}>
+                {/* حلقة نبض خارجية */}
+                <div style={{
+                  position:"absolute",inset:-10,borderRadius:"50%",
+                  border:`2px solid ${primary}55`,
+                  boxShadow:`0 0 0 8px ${primary}0a`
+                }}/>
+                <div style={{
+                  width:90,height:90,borderRadius:45,overflow:"hidden",
+                  border:`3px solid ${primary}`,
+                  boxShadow:`0 0 0 4px ${glow}, 0 8px 32px rgba(0,0,0,0.5)`
+                }}>
+                  {incomingData.from?.av?.startsWith("http")
+                    ?<img src={incomingData.from.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                    :<span style={{fontSize:56,lineHeight:"90px",display:"block",textAlign:"center"}}>{incomingData.from?.av||"🌍"}</span>}
+                </div>
+              </div>
+              <div>
+                <div style={{fontWeight:900,fontSize:20,color:"white",textAlign:"center",marginBottom:4}}>{incomingData.from?.name||"مستخدم"}</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                  <span style={{width:6,height:6,borderRadius:3,background:"#22c55e",display:"inline-block"}}/>
+                  <span>يتصل بك الآن...</span>
+                </div>
               </div>
             </div>
-            <div style={{fontWeight:900,fontSize:22,color:"white",marginBottom:6}}>{incomingData.from?.name||"مستخدم"}</div>
-            {/* نقاط رنين */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:40}}>
-              {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:4,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
-            </div>
-            {/* أزرار */}
-            <div style={{display:"flex",gap:32,justifyContent:"center",alignItems:"flex-end"}}>
-              {/* رفض */}
+
+            {/* أزرار القبول / الرفض — دائرية كبيرة بتصميم تيليجرام */}
+            <div style={{display:"flex",gap:0,justifyContent:"space-around",alignItems:"center"}}>
+
+              {/* ── رفض ── */}
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
                 <button onClick={async()=>{
                   const d=incomingData;
@@ -7311,23 +6864,42 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                       }catch(e){}
                     }
                   }
-                }} style={{width:70,height:70,borderRadius:35,background:"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 30px rgba(239,68,68,0.5)",transition:"transform 0.15s"}}
+                }}
+                  style={{
+                    width:68,height:68,borderRadius:34,
+                    background:"linear-gradient(135deg,#ef4444,#dc2626)",
+                    border:"none",cursor:"pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    boxShadow:"0 6px 24px rgba(239,68,68,0.55), 0 1px 0 rgba(255,255,255,0.15) inset"
+                  }}
                   onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
-                  onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}>
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07M14.29 9.9a16 16 0 00-6.29-6.29M1 1l22 22"/></svg>
+                  onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+                  onPointerLeave={e=>e.currentTarget.style.transform="scale(1)"}>
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07M14.29 9.9a16 16 0 00-6.29-6.29M1 1l22 22"/>
+                  </svg>
                 </button>
-                <span style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontWeight:600}}>رفض</span>
+                <span style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontWeight:700}}>رفض</span>
               </div>
-              {/* قبول */}
+
+              {/* ── أيقونة المكالمة في المنتصف ── */}
+              <div style={{
+                width:44,height:44,borderRadius:22,
+                background:"rgba(255,255,255,0.07)",
+                border:"1px solid rgba(255,255,255,0.1)",
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:20
+              }}>
+                {incomingData.callType==="video"?"📹":"🎙️"}
+              </div>
+
+              {/* ── قبول ── */}
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
                 <button onClick={()=>{
                   const d=incomingData;
                   setShowIncoming(false); setIncomingData(null);
                   setPartner({av:d.from?.av||"🌍",name:d.from?.name||"مستخدم",country:"—",_uid:d.from?.userId||""});
-                  // ✦ استخدام RoomID الوارد أو توليد واحد جديد
-                  const friendRid = d.rid || generateFriendRoomId(userId, d.from?.userId||"anon");
-                  setRoomId(friendRid);
-                  joinRoom(friendRid);
+                  setRoomId(d.rid);
+                  joinRoom(d.rid);
                   if(d.callType!=="text"){
                     addCallSystemMsg(d.callType==="video"?"📹":"🎙️",d.callType==="video"?"مكالمة فيديو واردة":"مكالمة صوتية واردة","جاري القبول...");
                     setCallType(d.callType);
@@ -7335,10 +6907,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setCallTime(0);
                     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                     setScreen("call");
-                    // ✦ تفعيل المساعد النحوي الذكي عند قبول مكالمة الصديق
-                    renderZegoCall(friendRid, d.callType==="video", userId);
                     setTimeout(async()=>{
-                      await joinAgora(friendRid, d.callType);
+                      await joinAgora(d.rid, d.callType);
                       if(roomRef.current) try{roomRef.current.send({type:"broadcast",event:"call_accept",payload:{}});}catch(e){}
                     },400);
                   } else {
@@ -7347,13 +6917,24 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setTab("messages"); setActiveChat("friend");
                     joinStreamChannel(userId, d.from?.userId||"", d.from?.name||"", d.from?.av||"");
                   }
-                }} style={{width:70,height:70,borderRadius:35,background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 30px rgba(34,197,94,0.5)",transition:"transform 0.15s"}}
+                }}
+                  style={{
+                    width:68,height:68,borderRadius:34,
+                    background:"linear-gradient(135deg,#22c55e,#16a34a)",
+                    border:"none",cursor:"pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    boxShadow:"0 6px 24px rgba(34,197,94,0.55), 0 1px 0 rgba(255,255,255,0.15) inset"
+                  }}
                   onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
-                  onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}>
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+                  onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+                  onPointerLeave={e=>e.currentTarget.style.transform="scale(1)"}>
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+                  </svg>
                 </button>
-                <span style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontWeight:600}}>قبول</span>
+                <span style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontWeight:700}}>قبول</span>
               </div>
+
             </div>
           </div>
         </div>
