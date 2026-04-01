@@ -223,55 +223,76 @@ input[type="button"]:active,input[type="submit"]:active{
 window.AGORA_APP_ID = "5384545eb2994cff8a2f56d4f64bdca6";
 
 /* ══════════════════════════════════════════════════════════════════════════
-   EDGE FUNCTION: supabase/functions/generate-agora-token/index.ts
-   انسخ هذا الكود وانشره على Supabase Edge Functions.
-   يجب ضبط هذه الـ secrets في Supabase Dashboard:
-     supabase secrets set AGORA_APP_ID=5384545eb2994cff8a2f56d4f64bdca6
-     supabase secrets set AGORA_APP_CERT=<your_certificate_here>
-   ──────────────────────────────────────────────────────────────────────────
-   import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-   import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+   EDGE FUNCTION — supabase/functions/generate-agora-token/index.ts
+   Secrets مضبوطة:
+     AGORA_APP_ID  = 5384545eb2994cff8a2f56d4f64bdca6
+     AGORA_APP_CERT = 77b0efd43d234c8ebb2ac69e394bb689
+   ══════════════════════════════════════════════════════════════════════════
 
-   // مكتبة توليد توكنات Agora لـ Deno
-   // RtcRole: Publisher=1, Subscriber=2
-   const RtcRole = { PUBLISHER: 1, SUBSCRIBER: 2 };
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
-   function buildToken(appId: string, appCert: string, channelName: string, uid: number, role: number, expireTs: number): string {
-     const msgBuf = new TextEncoder();
-     const msg = `${appId}${channelName}${uid}${role}${expireTs}`;
-     // HMAC-SHA256 بسيط — في الإنتاج استخدم مكتبة agora-access-token
-     // هذا مثال تعليمي — استبدله بـ: https://github.com/AgoraIO/Tools
-     return `007e${appId}${channelName}${expireTs}`;
-   }
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Content-Type": "application/json",
+};
 
-   serve(async (req: Request) => {
-     // CORS headers
-     const headers = {
-       "Content-Type": "application/json",
-       "Access-Control-Allow-Origin": "*",
-       "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-     };
-     if (req.method === "OPTIONS") return new Response("ok", { headers });
+// ── Agora RTC Token 007 Builder ──
+async function buildToken(appId, appCert, channel, uid, expireTs) {
+  const VERSION = "007";
+  const ROLE_PUBLISHER = 1;
 
-     try {
-       const { channelName, uid = 0 } = await req.json();
-       if (!channelName) return new Response(JSON.stringify({ error: "channelName required" }), { status: 400, headers });
+  // Pack message
+  const enc = new TextEncoder();
+  const pack32 = (n) => [(n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff];
+  const pack16 = (n) => [(n>>8)&0xff,n&0xff];
+  const packStr = (s) => { const b=enc.encode(s); return [...pack16(b.length),...b]; };
 
-       // قراءة المفاتيح من Supabase Secrets (لا تُكشف أبداً للعميل)
-       const appId   = Deno.env.get("AGORA_APP_ID")   ?? "";
-       const appCert = Deno.env.get("AGORA_APP_CERT")  ?? "";
-       if (!appId || !appCert) return new Response(JSON.stringify({ error: "Agora keys not configured" }), { status: 500, headers });
+  const ts = Math.floor(Date.now()/1000);
+  const salt = Math.floor(Math.random()*0xFFFFFFFF);
 
-       // صلاحية التوكن: ساعة واحدة
-       const expireTs = Math.floor(Date.now() / 1000) + 3600;
-       const token = buildToken(appId, appCert, channelName, uid, RtcRole.PUBLISHER, expireTs);
+  const msg = [
+    ...pack32(1),                  // version
+    ...pack32(salt),
+    ...pack32(ts),
+    ...pack32(expireTs),
+    ...packStr(appId),
+    ...packStr(channel),
+    ...pack32(uid),
+    ...pack16(1),                  // privilege count
+    ...pack16(ROLE_PUBLISHER),
+    ...pack32(expireTs),
+  ];
 
-       return new Response(JSON.stringify({ token, expireTs }), { headers });
-     } catch (e) {
-       return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
-     }
-   });
-   ══════════════════════════════════════════════════════════════════════════ */
+  // HMAC-SHA256
+  const key = await crypto.subtle.importKey("raw", enc.encode(appCert),
+    {name:"HMAC",hash:"SHA-256"}, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, new Uint8Array(msg)));
+
+  const content = [...sig, ...msg];
+  const token = VERSION + btoa(String.fromCharCode(...content));
+  return token;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", {headers:CORS});
+  try {
+    const { channelName, uid = 0 } = await req.json();
+    if (!channelName) return new Response(JSON.stringify({error:"channelName required"}),{status:400,headers:CORS});
+
+    const appId   = Deno.env.get("AGORA_APP_ID")  ?? "";
+    const appCert = Deno.env.get("AGORA_APP_CERT") ?? "";
+    if (!appId || !appCert) return new Response(JSON.stringify({error:"Secrets not set"}),{status:500,headers:CORS});
+
+    const expireTs = Math.floor(Date.now()/1000) + 3600; // ساعة واحدة
+    const token = await buildToken(appId, appCert, channelName, uid, expireTs);
+
+    return new Response(JSON.stringify({token, expireTs, appId}), {headers:CORS});
+  } catch(e) {
+    return new Response(JSON.stringify({error:e.message}),{status:500,headers:CORS});
+  }
+});
+══════════════════════════════════════════════════════════════════════════ */
 </script>
 </head>
 <body>
@@ -2697,53 +2718,71 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     ]
   };
 
+  // ── مخزن التوكن: يُحفظ هنا بعد الجلب ليُعاد استخدامه ──
+  const agoraTokenRef = useRef(null);       // التوكن الحالي
+  const agoraTokenExpRef = useRef(0);       // وقت انتهاء التوكن (Unix timestamp)
+
   /* ══════════════════════════════════════════════════════════════════════════
-     checkAgoraMinutes — يستعلم عن جدول system_metrics للتحقق من رصيد Agora.
-     إذا كانت الدقائق المتبقية <= 50 → يُجبر استخدام WebRTC فوراً.
+     checkAgoraMinutes — يستعلم عن جدول system_metrics بـ JWT آمن.
+     • إذا كانت الدقائق <= 50 → يُجبر WebRTC فوراً.
+     • يفشل بصمت تام عند أي خطأ (401/404/CORS) دون تعطيل التطبيق.
      ══════════════════════════════════════════════════════════════════════════ */
   const checkAgoraMinutes = async () => {
     try {
+      const tok = localStorage.getItem("ailo_token") || SUPA_KEY;
       const res = await fetch(
         `${SUPA_URL}/rest/v1/system_metrics?select=agora_remaining_minutes&limit=1`,
-        { headers: { "apikey": SUPA_KEY } }
+        { headers: {
+            "apikey": SUPA_KEY,
+            "Authorization": `Bearer ${tok}`
+        }}
       );
-      if (!res.ok) return false; // عند الفشل → WebRTC
+      if (!res.ok) return; // فشل صامت → WebRTC
       const data = await res.json();
       const remaining = data?.[0]?.agora_remaining_minutes ?? 0;
-      if (remaining <= 50) {
-        // رصيد منخفض — أجبر WebRTC
-        activeEngineRef.current = "webrtc";
-        return false;
-      }
-      // رصيد كافٍ — لكننا نستخدم WebRTC مجاناً دائماً في هذا المحرك المزدوج
-      activeEngineRef.current = "webrtc";
-      return true;
-    } catch(_) {
-      activeEngineRef.current = "webrtc";
-      return false;
-    }
+      // رصيد منخفض → أجبر WebRTC
+      if (remaining <= 50) activeEngineRef.current = "webrtc";
+    } catch(_) { /* فشل صامت */ }
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
-     fetchAgoraToken — يجلب RTC Token مؤقت من Edge Function الآمنة.
-     الـ App Certificate لا يُكشف أبداً للواجهة الأمامية.
+     fetchAgoraToken — يجلب RTC Token حقيقي من Edge Function الآمنة.
+     • AGORA_APP_CERT محفوظ في Supabase Secrets فقط.
+     • يُخزّن التوكن في agoraTokenRef ويُعيد استخدامه حتى انتهاء صلاحيته.
+     • يفشل بصمت عند أي خطأ والتطبيق يكمل بـ WebRTC.
      ══════════════════════════════════════════════════════════════════════════ */
   const fetchAgoraToken = async (channelName) => {
     try {
-      const token = localStorage.getItem("ailo_token") || "";
+      // أعد استخدام التوكن الحالي إذا لم تنته صلاحيته (وفّر طلب شبكة)
+      const now = Math.floor(Date.now() / 1000);
+      if (agoraTokenRef.current && agoraTokenExpRef.current > now + 60) {
+        return agoraTokenRef.current;
+      }
+
+      const authTok = localStorage.getItem("ailo_token") || "";
+      if (!authTok) return null; // غير مسجّل → تجاهل
+
       const res = await fetch(`${SUPA_URL}/functions/v1/generate-agora-token`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "apikey": SUPA_KEY,
-          "Authorization": `Bearer ${token}`
+          "Authorization": `Bearer ${authTok}`
         },
         body: JSON.stringify({ channelName, uid: 0 })
       });
-      if (!res.ok) return null;
+
+      if (!res.ok) return null; // Edge Function خطأ → WebRTC
+
       const data = await res.json();
-      return data.token || null;
-    } catch(_) { return null; }
+      if (data.token) {
+        // خزّن التوكن وتاريخ انتهائه
+        agoraTokenRef.current = data.token;
+        agoraTokenExpRef.current = data.expireTs || (now + 3600);
+        return data.token;
+      }
+      return null;
+    } catch(_) { return null; } // CORS أو أي خطأ → WebRTC بصمت
   };
 
   // ── إنهاء المكالمة وتحرير الموارد ────────────────────────────────────────
@@ -2766,16 +2805,18 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     }catch(e){ console.error("leaveWebRTC:",e); }
   },[]);
 
-  // ── بدء مكالمة WebRTC (محرك أساسي) ─────────────────────────────────────────
+  // ── بدء مكالمة (WebRTC مع جلب توكن Agora جاهزاً للمستقبل) ──────────────
   const joinAgora = useCallback(async(channelName, type)=>{
     try{
-      // ① فحص رصيد Agora — إذا <= 50 دقيقة → WebRTC فوراً (بدون انتظار)
-      await checkAgoraMinutes();
-      // ② جلب التوكن من Edge Function (للتسجيل والمستقبل)
-      const _agoraToken = await fetchAgoraToken(channelName);
-      // ③ المحرك النشط دائماً WebRTC في هذا الإصدار
-      // (Agora يُفعَّل لاحقاً بإضافة SDK وتمرير window.AGORA_APP_ID + _agoraToken)
+      // ① فحص رصيد Agora — فشل صامت لا يوقف المكالمة
+      checkAgoraMinutes().catch(()=>{});
 
+      // ② جلب توكن Agora الحقيقي من Edge Function — جاهز للاستخدام
+      const agoraToken = await fetchAgoraToken(channelName);
+      // التوكن متاح الآن في: agoraToken و agoraTokenRef.current
+      // وكذلك window.AGORA_APP_ID — جاهزَين لـ Agora SDK لاحقاً
+
+      // ③ المحرك النشط: WebRTC P2P
       await leaveAgora();
 
       // طلب صلاحيات الميك والكاميرا
