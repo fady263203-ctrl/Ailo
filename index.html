@@ -426,12 +426,11 @@ const WordLinkGame=React.memo(function WordLinkGame({g, userId, partner, darkMod
   const isMyTurn=g.turn===userId;
   const submitLink=async()=>{
     if(!inputVal.trim()||g.turn!==userId) return;
-    const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-      body:JSON.stringify({message:`Is "${inputVal}" a logical connection between the words "${wordA}" and "${wordB}"? Reply only: YES or NO`})});
-    const raw=await res.text();
-    let replyText="NO";
-    try{ const j=JSON.parse(raw); replyText=(j.reply||j.text||raw).toString(); }catch(_){ replyText=raw; }
-    const valid=replyText.trim().toUpperCase().startsWith("Y");
+    let valid=false;
+    try{
+      const reply = await callGeminiDirect(`Is "${inputVal}" a logical connection between the words "${wordA}" and "${wordB}"? Reply only: YES or NO`);
+      valid=reply.trim().toUpperCase().startsWith("Y");
+    }catch(e){}
     const nextIdx=current+1;
     const done=nextIdx>=g.chain.length-1;
     const updated={...g,
@@ -803,13 +802,7 @@ Task: Check for grammar, vocabulary or pronunciation errors.
 If the sentence is CORRECT, reply with exactly: CORRECT
 If there are errors, reply ONLY with this JSON (no extra text):
 {"original":"${text}","corrected":"<corrected sentence>","tip":"<short tip in Arabic, max 10 words>"}`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({message:prompt})
-      });
-      const parsed=await parseAiReply(res);
-      const reply=(parsed.reply||parsed.text||"").trim();
+      const reply = await callGeminiDirect(prompt);
       if(reply==="CORRECT"||reply.startsWith("CORRECT")) return;
       const match=reply.match(/\{[\s\S]*\}/);
       if(match){
@@ -830,13 +823,7 @@ If there are errors, reply ONLY with this JSON (no extra text):
       const prompt=`Generate 3 fun, natural conversation starter questions for two people practicing ${lang} together.
 Return ONLY a JSON array of 3 strings, no other text. Example:
 ["Question 1?","Question 2?","Question 3?"]`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({message:prompt})
-      });
-      const parsed=await parseAiReply(res);
-      const reply=(parsed.reply||parsed.text||"").trim();
+      const reply = await callGeminiDirect(prompt);
       const match=reply.match(/\[[\s\S]*\]/);
       if(match){
         const arr=JSON.parse(match[0]);
@@ -869,20 +856,7 @@ Return ONLY a JSON array of 3 strings, no other text. Example:
   };
 
   const adminCallGemini = async (prompt) => {
-    const token = localStorage.getItem("ailo_token")||"";
-    const res = await fetch(`${SUPA_URL}/functions/v1/ailo-gemini`, {
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "apikey": SUPA_KEY,
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ prompt })
-    });
-    if(!res.ok) throw new Error(`Edge Function error: ${res.status}`);
-    // استخدم parseAiReply للفك الصحيح بدلاً من data.reply مباشرة
-    const parsed = await parseAiReply(res);
-    return parsed.text || parsed.reply || "";
+    return await callGeminiDirect(prompt);
   };
 
   const adminGenerateQuestions = async () => {
@@ -1040,14 +1014,8 @@ Return ONLY a valid JSON array, no markdown. Each object:
   // ══════════════════════════════════════════════════════════════════════════
 
   // ── إعدادات ايلو الصوتية ────────────────────────────────────────────────
-  // مفاتيح ElevenLabs (تُستخدم عبر Supabase proxy لتجاوز CORS)
   const ELEVEN_LABS_API_KEY = "sk_e4aa4ce6cbc6da2951877125f78090bd7be5bdf00e2227e3";
   const AILO_VOICE_ID       = "9EU0h6CVtEDS6vriwwq5";
-  // مفتاح Grok (يُرسل عبر Supabase proxy أيضاً)
-  const GROK_API_KEY        = "xai-yxVX0z1HBkzTfDbnQ2L7aSTNS4MCWY7SFpSCLfXBGQhbxz8c1D2BPFOy0LoXmKbqpSGCCAH3Kdxg";
-
-  // System Prompt لشخصية ايلو
-  const AILO_VOICE_SYSTEM = `أنت ايلو، ذكاء اصطناعي خبير باللغات ولكنك مشاكس، ساخر، ومضحك جداً. وظيفتك هي اختبار لغة المستخدم أو تصحيحها. استخدم توبيخاً خفيفاً وساخراً إذا أخطأ، وامدحه بأسلوب متعجرف إذا أصاب. تذكر: أنت الآن ترد في مكالمة صوتية، لذا يجب أن تكون ردودك قصيرة جداً (جملة أو جملتين كحد أقصى)، سريعة الإيقاع، ولا تستخدم أي رموز تعبيرية في النص لانها ستقرا صوتيا.`;
 
   // حالات الجلسة: idle | listening | thinking | speaking
   const[ailoVoiceStatus,setAiloVoiceStatus]=useState("idle");
@@ -1055,20 +1023,66 @@ Return ONLY a valid JSON array, no markdown. Each object:
   const[ailoLastWords,setAiloLastWords]=useState("");
   const ailoAudioRef=useRef(null);
 
-  // ── دالة Grok عبر ailo-chat proxy (يتجاوز CORS) ────────────────────────
-  // ailo-chat Edge Function تستقبل {message, history, grok_key} وترد بـ {reply}
-  const callGrokViaProxy = async (userText, history=[]) => {
-    // بناء prompt كامل مع السياق ليفهمه ailo-chat
-    const ctx = history.slice(-8).map(m=>`${m.from==="user"?"المستخدم":"ايلو"}: ${m.text}`).join("\n");
-    const fullMsg = `${AILO_VOICE_SYSTEM}\n\n${ctx?`السياق:\n${ctx}\n\n`:""}المستخدم قال: ${userText}`;
-    const res = await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-      method:"POST",
-      headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-      body:JSON.stringify({message:fullMsg})
+  // ══════════════════════════════════════════════════════════════════════════
+  // chatWithAilo — Gemini 1.5 Flash REST API مباشرةً
+  // الشخصية: Pingo-style، ساخرة، لا تتسامح مع الكسل اللغوي
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Gemini Proxy — كل الطلبات تمر عبر Supabase Edge Function ──
+  // المفتاح محفوظ في Supabase Secrets كـ GEMINI_API_KEY — لا يظهر في الكود أبداً
+  const _geminiProxy = async (payload) => {
+    const res = await fetch(`${SUPA_URL}/functions/v1/ailo-gemini`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPA_KEY },
+      body: JSON.stringify(payload)
     });
-    if(!res.ok) throw new Error("proxy "+res.status);
-    const parsed = await parseAiReply(res);
-    return (parsed.reply||parsed.text||"").trim() || "لم أفهم، حاول مجدداً.";
+    if (!res.ok) throw new Error("ailo-gemini proxy " + res.status);
+    const data = await res.json();
+    return data?.text ?? "";
+  };
+
+  const chatWithAilo = async (userMsg, historyMsgs=[], targetLanguage="English", userName="صديقي") => {
+    const systemInstruction = `You are "Ailo" — a witty, highly spontaneous, slightly sassy, and expressive AI language coach. Act like a fun, dramatic friend, NOT a boring AI assistant.
+
+LANGUAGE RULES:
+- The user's target learning language is: ${targetLanguage}
+- You MUST speak ONLY in ${targetLanguage} in all your replies, no exceptions.
+- Do NOT use Arabic in your responses unless you are playfully scolding the user for speaking Arabic.
+
+PLAYFUL SCOLDING:
+- If the user speaks in Arabic to avoid practicing, immediately tease them for being lazy. Example: "Excuse me?! Did you just switch to Arabic?! 😤 Oh no no no, ${userName}! We are NOT doing that today. Now say it in ${targetLanguage}. GO."
+- Then force them back to practice immediately in ${targetLanguage}.
+
+CONVERSATIONAL TESTING:
+- Test the user through natural role-play scenarios (e.g., ordering coffee at a café, checking into a hotel, asking for directions).
+- Keep ALL replies short, punchy, and spoken-style — 1 to 3 sentences MAXIMUM.
+- Be spontaneous and dramatic. React with personality.
+
+SASSY CORRECTIONS:
+- No boring grammar lectures. If the user makes a mistake, correct it instantly with attitude.
+- Example style: "Wait, did you just say 'I goed'? 🤨 Oh no no! It's 'I went'. Anyway, moving on..."
+- After correcting, immediately continue the conversation or role-play.
+
+User's name: ${userName}`;
+
+    const geminiHistory = historyMsgs.slice(-10).map(m=>({
+      role: m.from==="user" ? "user" : "model",
+      parts:[{text: m.text}]
+    }));
+
+    const reply = await _geminiProxy({
+      system_instruction: { parts:[{text: systemInstruction}] },
+      contents: [...geminiHistory, { role:"user", parts:[{text: userMsg}] }],
+      generationConfig: { temperature: 1.0, maxOutputTokens: 300, topP: 0.95 }
+    });
+    return reply || "Hmm, something went wrong. Try again!";
+  };
+
+  // ── دالة Gemini للمهام الأدواتية (تصحيح، ترجمة، توليد أسئلة) ──
+  const callGeminiDirect = async (prompt) => {
+    return await _geminiProxy({
+      contents:[{role:"user",parts:[{text:prompt}]}],
+      generationConfig:{temperature:0.3,maxOutputTokens:500}
+    });
   };
 
   // ── دالة ElevenLabs TTS — تُشغّل الصوت البشري ─────────────────────────
@@ -1120,7 +1134,7 @@ Return ONLY a valid JSON array, no markdown. Each object:
     }
   };
 
-  // ── إرسال النص لـ Grok ثم تشغيل الصوت ──────────────────────────────────
+  // ── إرسال النص لـ Ailo (Gemini) ثم تشغيل الصوت ────────────────────────
   const sendToAiloVoice = async (transcript) => {
     if(!transcript.trim()) return;
     const userMsg = {id:Date.now(), from:"user", text:transcript};
@@ -1129,7 +1143,9 @@ Return ONLY a valid JSON array, no markdown. Each object:
     setAiloVoiceMsgs([...updated]);
     setAiloVoiceStatus("thinking");
     try{
-      const reply = await callGrokViaProxy(transcript, ailoMsgsRef.current.slice(0,-1));
+      const targetLang = load("targetLang","English");
+      const userName   = profile.name || "صديقي";
+      const reply = await chatWithAilo(transcript, ailoMsgsRef.current.slice(0,-1), targetLang, userName);
       const aiMsg = {id:Date.now()+1, from:"ailo", text:reply};
       const final = [...ailoMsgsRef.current, aiMsg];
       ailoMsgsRef.current = final;
@@ -1137,8 +1153,7 @@ Return ONLY a valid JSON array, no markdown. Each object:
       await ailoSpeak(reply);
     }catch(e){
       console.error("sendToAiloVoice:", e);
-      // حتى عند الخطأ — تكلم بصوت
-      const fallbackReply = "يبدو في مشكلة تقنية. اضغط وتحدث مجددا.";
+      const fallbackReply = "Technical issue! Press and speak again.";
       const aiMsg = {id:Date.now()+1, from:"ailo", text:fallbackReply};
       ailoMsgsRef.current = [...ailoMsgsRef.current, aiMsg];
       setAiloVoiceMsgs([...ailoMsgsRef.current]);
@@ -1203,9 +1218,13 @@ Return ONLY a valid JSON array, no markdown. Each object:
     const lang = load("targetLang","English");
     setTimeout(async()=>{
       try{
-        const greeting = await callGrokViaProxy(
-          `ابدأ الجلسة الصوتية. حيّ المستخدم بجملة واحدة مضحكة وساخرة بالعربية، ثم اسأله سؤالاً مفاجئاً باللغة "${lang}" لتقييم مستواه. لا إيموجي.`,
-          []
+        const targetLang = load("targetLang","English");
+        const userName   = profile.name || "صديقي";
+        const greeting = await chatWithAilo(
+          `Start the session. Greet the user with one short dramatic sentence, then immediately ask them a surprise question in ${targetLang} to test their level. No emojis in text, this is a voice call.`,
+          [],
+          targetLang,
+          userName
         );
         const greetMsg = {id:Date.now(), from:"ailo", text:greeting};
         ailoMsgsRef.current=[greetMsg];
@@ -1307,32 +1326,18 @@ Return ONLY a valid JSON array, no markdown. Each object:
   const sendToGemini=async(userMsg)=>{
     setBotTyping(true);
     try{
-      // ── ذاكرة بسيطة: اسم المستخدم + آخر 5 رسائل ──
-      const userName = profile.name || "مستخدم";
-      const userLang = profile.lang || "Arabic";
-      const history = botMsgs.filter(m=>m.id!==1).slice(-5).map(m=>
-        m.from==="me" ? `المستخدم: ${m.text}` : `Ailo: ${m.text}`
-      ).join("\n");
-
-      const systemPrompt=`أنت "Ailo" — رفيق ذكي وودي في تطبيق Ailo لتعلم اللغات. شخصيتك دافئة ومرحة. تتحدث عن أي موضوع — أفلام، موسيقى، ألعاب، رياضة، مشاعر، أو أي شيء. تتحدث بالعربية افتراضياً وتتكيف مع لغة المستخدم. ردودك قصيرة وطبيعية كصديق حقيقي. اسمك Ailo فقط.
-إذا لاحظت أن المستخدم يتعلم لغة أو يسأل عن كلمة أو جملة، ساعده بشكل طبيعي وغير رسمي — كأنك صديق يعلمه عفوياً لا أستاذ في فصل دراسي.
-اسم المستخدم: ${userName}
-لغته الأم: ${userLang}
-${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
-
-      const fullMessage=`${systemPrompt}\n\nالمستخدم: ${userMsg}`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({message:fullMessage})
-      });
-      if(!res.ok) throw new Error(`Server error: ${res.status}`);
-      const parsed=await parseAiReply(res);
-      const reply=(parsed.reply||parsed.text||"حاول مرة أخرى 😊").trim();
+      const userName   = profile.name || "صديقي";
+      const targetLang = load("targetLang","English");
+      // تاريخ المحادثة — آخر 10 رسائل مع تجاهل رسالة الترحيب الافتراضية
+      const historyMsgs = botMsgs.filter(m=>m.id!==1).slice(-10).map(m=>({
+        from: m.from==="me"?"user":"ailo",
+        text: m.text
+      }));
+      const reply = await chatWithAilo(userMsg, historyMsgs, targetLang, userName);
       setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:reply,time:now()}]);
     }catch(e){
       console.error("Ailo chat error:",e.message);
-      setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:"عذراً، حدث خطأ 😕 حاول مرة أخرى",time:now()}]);
+      setBotMsgs(p=>[...p,{id:Date.now()+1,from:"bot",text:"Oops, something went wrong 😬 Try again!",time:now()}]);
     }
     setBotTyping(false);
   };
@@ -1347,9 +1352,7 @@ ${history ? `\nسياق المحادثة السابقة:\n${history}` : ""}`;
 If the sentence/phrase is grammatically CORRECT, reply exactly: CORRECT
 If there are errors, reply ONLY this JSON (no extra text):
 {"original":"${text.replace(/"/g,"'")}","corrected":"<corrected>","tip":"<tip in Arabic max 8 words>"}`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-      const parsed=await parseAiReply(res);
-      const reply=(parsed.reply||parsed.text||"").trim();
+      const reply = await callGeminiDirect(prompt);
       if(reply.startsWith("CORRECT")){ setFriendCorrResult({correct:true}); }
       else{
         const match=reply.match(/\{[\s\S]*\}/);
@@ -1368,9 +1371,7 @@ If there are errors, reply ONLY this JSON (no extra text):
 Each topic should be a short phrase (3-6 words) with a relevant emoji.
 Reply ONLY with a JSON array of 6 strings, no other text. Example:
 ["🌍 Travel dreams","🎬 Favorite movies","🍜 Local cuisine","💡 Life goals","🎵 Music tastes","📚 Books & learning"]`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-      const parsed=await parseAiReply(res);
-      const reply=(parsed.reply||parsed.text||"").trim();
+      const reply = await callGeminiDirect(prompt);
       const match=reply.match(/\[[\s\S]*\]/);
       if(match){ const arr=JSON.parse(match[0]); if(Array.isArray(arr)) setAiTopics(arr.slice(0,6)); }
     }catch(e){}
@@ -1382,9 +1383,7 @@ Reply ONLY with a JSON array of 6 strings, no other text. Example:
     const lang=load("targetLang","English");
     const prompt=`Give ONE short helpful hint (in ${lang}) for guessing the word "${word}". 
 Do NOT reveal the word or any of its letters. Max 10 words. Reply with just the hint.`;
-    const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-    const parsed=await parseAiReply(res);
-    return (parsed.reply||parsed.text||"Think about common everyday objects!").trim();
+    return (await callGeminiDirect(prompt)) || "Think about common everyday objects!";
   };
 
   // ── AI Word Link ──
@@ -1392,11 +1391,11 @@ Do NOT reveal the word or any of its letters. Max 10 words. Reply with just the 
     const lang=load("targetLang","English");
     const prompt=`Generate a word chain of 6 simple ${lang} words (A1/A2 level) connected by categories or associations. 
 Reply ONLY with a JSON array of 6 words. Example: ["Apple","Tree","Forest","Bear","Honey","Bee"]`;
-    const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-    const parsed=await parseAiReply(res);
-    const reply=(parsed.reply||parsed.text||"").trim();
-    const match=reply.match(/\[[\s\S]*\]/);
-    if(match) return JSON.parse(match[0]).slice(0,6);
+    try{
+      const reply = await callGeminiDirect(prompt);
+      const match=reply.match(/\[[\s\S]*\]/);
+      if(match) return JSON.parse(match[0]).slice(0,6);
+    }catch(e){}
     return ["Apple","Tree","Forest","Bear","Honey","Bee"];
   };
 
@@ -1408,11 +1407,11 @@ Reply ONLY with a JSON array of 9 objects. Example:
 [{"word":"Book","emoji":"📚"},{"word":"Sun","emoji":"☀️"},{"word":"Apple","emoji":"🍎"},
 {"word":"Run","emoji":"🏃"},{"word":"Happy","emoji":"😊"},{"word":"Water","emoji":"💧"},
 {"word":"Home","emoji":"🏠"},{"word":"Love","emoji":"❤️"},{"word":"Play","emoji":"🎮"}]`;
-    const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-    const parsed=await parseAiReply(res);
-    const reply=(parsed.reply||parsed.text||"").trim();
-    const match=reply.match(/\[[\s\S]*\]/);
-    if(match) return JSON.parse(match[0]).slice(0,9);
+    try{
+      const reply = await callGeminiDirect(prompt);
+      const match=reply.match(/\[[\s\S]*\]/);
+      if(match) return JSON.parse(match[0]).slice(0,9);
+    }catch(e){}
     return [{word:"Book",emoji:"📚"},{word:"Sun",emoji:"☀️"},{word:"Apple",emoji:"🍎"},{word:"Run",emoji:"🏃"},{word:"Happy",emoji:"😊"},{word:"Water",emoji:"💧"},{word:"Home",emoji:"🏠"},{word:"Love",emoji:"❤️"},{word:"Play",emoji:"🎮"}];
   };
 
@@ -1422,12 +1421,12 @@ Reply ONLY with a JSON array of 9 objects. Example:
     const prompt=`Language teacher. Student used the word "${word}" in this ${lang} sentence: "${sentence}"
 Is the sentence grammatically correct AND does it meaningfully use the word?
 Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
-    const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-    const parsed=await parseAiReply(res);
-    const reply=(parsed.reply||parsed.text||"").trim();
-    if(reply.startsWith("VALID")) return {valid:true};
-    const reason=reply.replace("INVALID:","").trim();
-    return {valid:false,reason};
+    try{
+      const reply = await callGeminiDirect(prompt);
+      if(reply.startsWith("VALID")) return {valid:true};
+      const reason=reply.replace("INVALID:","").trim();
+      return {valid:false,reason};
+    }catch(e){ return {valid:true}; }
   };
   const LANGS_EX=[
     {code:"English", flag:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAABaCAIAAAD8YgW4AAAE3klEQVR4nO2dT0hVWRzHf+8+3Zj4xqeJi2FkpMKoFHIhIw/ctJhXLmSwReOqICMpKAhyJkoqCoVmFBKhF+SqZEiGoEfOQojgEeOiwEKSBKHdI/uDkW8xcXUWJ64He+f+Offc3z33nvNZ3Xs5V8/98jsf3p9zzkv8+10rMKjp6th1dyy5rQoAiiurvQO3nz5bZjUWy/ryhHU8V9vm2L7j47x1bDQPBNKnb+hsb56eON64PQUA5lrpdd+ZT0/myrY0+w4ZNn/o05O5+f3dpYUlAGjcnircP3fx9MFk0u4WRUgmjYunDxbunyMplxaW5vd3l085naqdHO4cv+6Q2pe3719meou5KXJ6+Wz3zOSp+nS16J5Hifp09czkqctnu8lpMTf1MtP75e37b1v+t3dHy+N7u3qyAOCqPN+cH37V02+ulQDgQKblxcyFzvZmcT2PEp3tzS9mLhzItACAuVZ61dP/5vxw2ZZm36HM479SP3xPTt16QGuEQxeJigrrmoekVNYIny5oPJekghrh1gWNsa8wXdlQ5+kfq6MRn7qgMar27Gx7nq/p6vDUAxU04l8XNAYAJLdV7X6QaxoZ9NqVGGtEiC5ojKHRPDlq7D+iNQJCdWExNJo3rt58lDl8o7iyCgBaI2J1AQDFldXM4RtXbz4yAODps+XW7LXZwiKorRHhupgtLLZmr5EPiL6O8XcfPmePjiurkYB0kT06/u7DZ3K6mYJprqupkeB0YZrr1sWt5aaaRgLVBU2Zca2IRhB0QVP+yWOvERxd0NiVWFw1gqYLGoexHDONIOuCxvlpY6MRfF3QuC2rqGskFF3QeBi/EdVIiLqg8faEkdNIuLqg4SmlqGgkdF3QcI5ZyTUiiS5o+J9KWo3IowuaROLHk9w3E+rT1ffGjpERCgDF3BRrhNqwZfoZqUSC1ylh1u2O07R+GrviWMizhcVfz9zhLmQLAUEDQDJp/D7ws1VEpYWlxV9OlC0iGyob6lr+vlW1Z+eW616Ddu5DOlX7x2+OhQwAQ6P56xP/+ClkCzGvq4LQiB8k0QVNYmNjQ8gfCg6+ipYNiT63jDc6aCR00EjooJHQQSORsFnDohGIrmgkdNBI6KCR0EEjoYNGQgeNhA4aCR00EjpoJHTQSOigkdBBI6GDRkIHjYQOGgkdNBI6aCT0vA4kdEUjoYNGQgeNhA4aCR00EhUCd/J0v1enDU0jg439R3z2RMhkeLF7sYqpaA9rRthUNtTtK0z7TxnkW1MDQoJ2v2bEhpqujrbneTLdn8xm50a2NTUEv0G7X2JmQ9PI4O4HOTJmyRIzP12Sc2kef9BB6MLnEjOCnEvzOO8MQhcC14xIuDSPJ+iAdCF8u3WpVvh6C1paXbCQRyMeWkuuCxaSaMRt0FHRBYvQNeIcdOR0wSJcjTi0iKguWISoEbugo64LFqFopHzQsdEFC3yNlLkaM12wQNbI1qDjqgsWaBrZDDr2umCBo5GvR4roggWCRgxQTxcsAtVI4tKfD8Vu0SNke5wQf2YviG2LhkbzmzOVpPqeLfTfMxT+/acBauuChXCNGOq8uvCK2FcjPNtIIPxEaujqoBGiEc/fsMRYFyyEaMRD0CrogoV/jbgNOrpvRkTh802Nq6AV1AULbo04BK2yLljwacQuaK0LFhwa+R84CpjY/j9LzAAAAABJRU5ErkJggg==", fit:"cover", name:"الإنجليزية"},
@@ -1500,12 +1499,7 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
     try{
       const userLang=load("profile",{}).lang||"Arabic";
       const prompt=`Translate the word "${word}" to ${userLang}. Reply with ONLY the translation, no explanation, no punctuation.`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-        method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({message:prompt})
-      });
-      const parsed=await parseAiReply(res);
-      const tr=(parsed.reply||parsed.text||word).trim().slice(0,60);
+      const tr = (await callGeminiDirect(prompt)).trim().slice(0,60);
       tapTranslateCache.current[word]=tr;
       setTapTooltip({word,x,y,translation:tr});
     }catch(e){ setTapTooltip(t=>t?{...t,translation:word}:null); }
@@ -1822,13 +1816,7 @@ Reply ONLY with: VALID or INVALID:<short reason in Arabic>`;
 {"type":"pairs","word":"group","q":"صل","pairs":[["Hello","مرحبا"],["Bye","وداعاً"],["Yes","نعم"],["No","لا"]]},
 {"type":"speech","word":"speaking","sentence":"I would like to visit this place someday"}]
 ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
-      const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
-        body:JSON.stringify({message:prompt})
-      });
-      const parsed=await parseAiReply(res);
-      const raw=parsed.reply||parsed.text||"";
+      const raw = await callGeminiDirect(prompt);
       const match=raw.match(/\[[\s\S]*\]/);
       if(!match) throw new Error("No JSON array found");
       const questions=JSON.parse(match[0]);
@@ -4025,9 +4013,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               try{
                 const lang=load("targetLang","English");
                 const prompt=`Generate 3 fun conversation topics for two people practicing ${lang}. Return ONLY a JSON array of 3 strings.`;
-                const res=await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{method:"POST",headers:{"Content-Type":"application/json","apikey":SUPA_KEY},body:JSON.stringify({message:prompt})});
-                const parsed=await parseAiReply(res);
-                const match=(parsed.reply||"").match(/\[[\s\S]*\]/);
+                const reply = await callGeminiDirect(prompt);
+                const match=reply.match(/\[[\s\S]*\]/);
                 if(match){ const arr=JSON.parse(match[0]); if(Array.isArray(arr)) setAiTopics(arr.slice(0,3)); }
               }catch(_){}
               setTopicsLoading(false); setShowFriendTopics(true);
