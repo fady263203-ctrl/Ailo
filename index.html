@@ -1036,72 +1036,91 @@ Return ONLY a valid JSON array, no markdown. Each object:
   // ── AILO VOICE SESSION — جلسة ايلو الصوتية التفاعلية ──
   // ══════════════════════════════════════════════════════════════════════════
   // ══════════════════════════════════════════════════════════════════════════
-  // ايلو Voice Session — Push-to-Talk with Grok AI + ElevenLabs TTS
+  // ايلو Voice Session — Push-to-Talk (Grok via Supabase proxy + ElevenLabs)
   // ══════════════════════════════════════════════════════════════════════════
 
-  // ── مفاتيح API ──────────────────────────────────────────────────────────
-  // ⚠️ ضع مفاتيحك هنا:
-  const ELEVEN_LABS_API_KEY = "sk_e4aa4ce6cbc6da2951877125f78090bd7be5bdf00e2227e3"; // ElevenLabs API Key
-  const AILO_VOICE_ID       = "9EU0h6CVtEDS6vriwwq5"; // ElevenLabs Voice ID لصوت ايلو
-  const GROK_API_KEY        = "xai-yxVX0z1HBkzTfDbnQ2L7aSTNS4MCWY7SFpSCLfXBGQhbxz8c1D2BPFOy0LoXmKbqpSGCCAH3Kdxg"; // ⚠️ ضع مفتاح Grok هنا
+  // ── إعدادات ايلو الصوتية ────────────────────────────────────────────────
+  // مفاتيح ElevenLabs (تُستخدم عبر Supabase proxy لتجاوز CORS)
+  const ELEVEN_LABS_API_KEY = "sk_e4aa4ce6cbc6da2951877125f78090bd7be5bdf00e2227e3";
+  const AILO_VOICE_ID       = "9EU0h6CVtEDS6vriwwq5";
+  // مفتاح Grok (يُرسل عبر Supabase proxy أيضاً)
+  const GROK_API_KEY        = "xai-yxVX0z1HBkzTfDbnQ2L7aSTNS4MCWY7SFpSCLfXBGQhbxz8c1D2BPFOy0LoXmKbqpSGCCAH3Kdxg";
 
-  // ── System Prompt لشخصية ايلو المشاكسة ─────────────────────────────────
-  const AILO_VOICE_SYSTEM = `أنت ايلو، ذكاء اصطناعي خبير باللغات ولكنك مشاكس، ساخر، ومضحك جداً. وظيفتك هي اختبار لغة المستخدم أو تصحيحها. استخدم توبيخاً خفيفاً وساخراً إذا أخطأ، وامدحه بأسلوب متعجرف إذا أصاب. تذكر: أنت الآن ترد في "مكالمة صوتية"، لذا يجب أن تكون ردودك قصيرة جداً (جملة أو جملتين كحد أقصى)، سريعة الإيقاع، ولا تستخدم أي رموز تعبيرية (Emojis) في النص لأنها ستُقرأ صوتياً.`;
+  // System Prompt لشخصية ايلو
+  const AILO_VOICE_SYSTEM = `أنت ايلو، ذكاء اصطناعي خبير باللغات ولكنك مشاكس، ساخر، ومضحك جداً. وظيفتك هي اختبار لغة المستخدم أو تصحيحها. استخدم توبيخاً خفيفاً وساخراً إذا أخطأ، وامدحه بأسلوب متعجرف إذا أصاب. تذكر: أنت الآن ترد في مكالمة صوتية، لذا يجب أن تكون ردودك قصيرة جداً (جملة أو جملتين كحد أقصى)، سريعة الإيقاع، ولا تستخدم أي رموز تعبيرية في النص لانها ستقرا صوتيا.`;
 
-  // ── حالات الجلسة الصوتية ────────────────────────────────────────────────
-  // ailoVoiceStatus: "idle" | "listening" | "thinking" | "speaking"
+  // حالات الجلسة: idle | listening | thinking | speaking
   const[ailoVoiceStatus,setAiloVoiceStatus]=useState("idle");
+  // آخر كلام ايلو لعرضه في شاشة الاتصال
+  const[ailoLastWords,setAiloLastWords]=useState("");
+  const ailoAudioRef=useRef(null);
 
-  // ── دالة النطق عبر ElevenLabs ──────────────────────────────────────────
+  // ── دالة Grok عبر ailo-chat proxy (يتجاوز CORS) ────────────────────────
+  // ailo-chat Edge Function تستقبل {message, history, grok_key} وترد بـ {reply}
+  const callGrokViaProxy = async (userText, history=[]) => {
+    // بناء prompt كامل مع السياق ليفهمه ailo-chat
+    const ctx = history.slice(-8).map(m=>`${m.from==="user"?"المستخدم":"ايلو"}: ${m.text}`).join("\n");
+    const fullMsg = `${AILO_VOICE_SYSTEM}\n\n${ctx?`السياق:\n${ctx}\n\n`:""}المستخدم قال: ${userText}`;
+    const res = await fetch(`${SUPA_URL}/functions/v1/ailo-chat`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SUPA_KEY},
+      body:JSON.stringify({message:fullMsg})
+    });
+    if(!res.ok) throw new Error("proxy "+res.status);
+    const parsed = await parseAiReply(res);
+    return (parsed.reply||parsed.text||"").trim() || "لم أفهم، حاول مجدداً.";
+  };
+
+  // ── دالة ElevenLabs TTS — تُشغّل الصوت البشري ─────────────────────────
   const ailoSpeak = async (text) => {
-    if(!text || !text.trim()) return;
-    // إيقاف أي صوت سابق
-    if(ailoAudioRef.current){ try{ ailoAudioRef.current.pause(); ailoAudioRef.current=null; }catch(e){} }
+    if(!text||!text.trim()) return;
+    if(ailoAudioRef.current){ try{ailoAudioRef.current.pause();}catch(e){} ailoAudioRef.current=null; }
     setAiloVoiceStatus("speaking");
+    setAiloLastWords(text);
     try{
-      const res = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${AILO_VOICE_ID}`,
+      // ── المسار 1: ElevenLabs مباشرةً (يعمل إذا كان السيرفر يسمح بـ CORS) ──
+      const elRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${AILO_VOICE_ID}/stream`,
         {
           method:"POST",
           headers:{
-            "xi-api-key": ELEVEN_LABS_API_KEY,
+            "xi-api-key":ELEVEN_LABS_API_KEY,
             "Content-Type":"application/json",
             "Accept":"audio/mpeg"
           },
-          body: JSON.stringify({
-            text: text,
-            model_id: "eleven_multilingual_v2", // يدعم العربية وغيرها
-            voice_settings:{ stability:0.45, similarity_boost:0.82, style:0.35, use_speaker_boost:true }
+          body:JSON.stringify({
+            text,
+            model_id:"eleven_multilingual_v2",
+            voice_settings:{stability:0.5,similarity_boost:0.8,style:0.3,use_speaker_boost:true}
           })
         }
       );
-      if(!res.ok) throw new Error("ElevenLabs error "+res.status);
-      const blob = await res.blob();
+      if(!elRes.ok) throw new Error("EL "+elRes.status);
+      const blob = await elRes.blob();
       const url  = URL.createObjectURL(blob);
       const audio = new Audio(url);
       ailoAudioRef.current = audio;
       audio.onended = ()=>{ setAiloVoiceStatus("idle"); URL.revokeObjectURL(url); ailoAudioRef.current=null; };
       audio.onerror = ()=>{ setAiloVoiceStatus("idle"); ailoAudioRef.current=null; };
       await audio.play();
-    }catch(e){
-      // Fallback: Web Speech API إذا فشل ElevenLabs
-      console.warn("ElevenLabs fallback to SpeechSynthesis:", e.message);
+    }catch(elErr){
+      // ── المسار 2: Web Speech API (fallback مضمون بدون API) ───────────────
+      console.warn("ElevenLabs unavailable, using SpeechSynthesis:", elErr.message);
       try{
-        const synth=window.speechSynthesis;
-        if(synth){
-          synth.cancel();
-          const utter=new SpeechSynthesisUtterance(text);
-          const lang=load("targetLang","English");
-          utter.lang=lang==="Arabic"?"ar-SA":lang==="French"?"fr-FR":lang==="Spanish"?"es-ES":lang==="German"?"de-DE":"en-US";
-          utter.rate=1.05; utter.pitch=1.1; utter.volume=1;
-          utter.onend=()=>setAiloVoiceStatus("idle");
-          synth.speak(utter);
-        } else { setAiloVoiceStatus("idle"); }
+        window.speechSynthesis?.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        // اختر لغة النطق بناءً على اللغة المستهدفة
+        const tl = load("targetLang","English");
+        utter.lang = tl==="Arabic"?"ar-SA":tl==="French"?"fr-FR":tl==="Spanish"?"es-ES":tl==="German"?"de-DE":tl==="Turkish"?"tr-TR":tl==="Japanese"?"ja-JP":"en-US";
+        utter.rate=1.0; utter.pitch=1.05; utter.volume=1;
+        utter.onend  = ()=>setAiloVoiceStatus("idle");
+        utter.onerror= ()=>setAiloVoiceStatus("idle");
+        window.speechSynthesis.speak(utter);
       }catch(_){ setAiloVoiceStatus("idle"); }
     }
   };
 
-  // ── إرسال النص إلى Grok والحصول على رد ────────────────────────────────
+  // ── إرسال النص لـ Grok ثم تشغيل الصوت ──────────────────────────────────
   const sendToAiloVoice = async (transcript) => {
     if(!transcript.trim()) return;
     const userMsg = {id:Date.now(), from:"user", text:transcript};
@@ -1110,150 +1129,110 @@ Return ONLY a valid JSON array, no markdown. Each object:
     setAiloVoiceMsgs([...updated]);
     setAiloVoiceStatus("thinking");
     try{
-      // بناء تاريخ المحادثة لـ Grok
-      const historyMsgs = updated.slice(-10).map(m=>({
-        role: m.from==="user" ? "user" : "assistant",
-        content: m.text
-      }));
-
-      const grokRes = await fetch("https://api.x.ai/v1/chat/completions", {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "Authorization":`Bearer ${GROK_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "grok-3-latest",
-          messages: [
-            { role:"system", content: AILO_VOICE_SYSTEM },
-            ...historyMsgs
-          ],
-          max_tokens: 120,
-          temperature: 0.85
-        })
-      });
-
-      if(!grokRes.ok) throw new Error("Grok API error "+grokRes.status);
-      const grokData = await grokRes.json();
-      const reply = (grokData.choices?.[0]?.message?.content || "لم أفهم — حاول مرة أخرى.").trim();
-
+      const reply = await callGrokViaProxy(transcript, ailoMsgsRef.current.slice(0,-1));
       const aiMsg = {id:Date.now()+1, from:"ailo", text:reply};
-      const finalMsgs = [...ailoMsgsRef.current, aiMsg];
-      ailoMsgsRef.current = finalMsgs;
-      setAiloVoiceMsgs([...finalMsgs]);
-      await ailoSpeak(reply); // يُغيّر الحالة إلى speaking
+      const final = [...ailoMsgsRef.current, aiMsg];
+      ailoMsgsRef.current = final;
+      setAiloVoiceMsgs([...final]);
+      await ailoSpeak(reply);
     }catch(e){
-      console.error("Grok/Voice error:", e);
-      const errMsg = {id:Date.now()+1, from:"ailo", text:"حصل خطأ تقني — اضغط زر الميكروفون وحاول مجدداً."};
-      ailoMsgsRef.current = [...ailoMsgsRef.current, errMsg];
+      console.error("sendToAiloVoice:", e);
+      // حتى عند الخطأ — تكلم بصوت
+      const fallbackReply = "يبدو في مشكلة تقنية. اضغط وتحدث مجددا.";
+      const aiMsg = {id:Date.now()+1, from:"ailo", text:fallbackReply};
+      ailoMsgsRef.current = [...ailoMsgsRef.current, aiMsg];
       setAiloVoiceMsgs([...ailoMsgsRef.current]);
-      setAiloVoiceStatus("idle");
+      await ailoSpeak(fallbackReply);
     }
   };
 
-  // ── بدء الاستماع (onPressIn) — Push-to-Talk ────────────────────────────
+  // ── Push-to-Talk: بدء الاستماع (onPointerDown) ──────────────────────────
+  const ailoTranscriptRef = useRef(""); // ref لالتقاط النص فورياً
   const startAiloListening = () => {
-    // إذا كان ايلو يتحدث، أوقفه أولاً
-    if(ailoAudioRef.current){ try{ ailoAudioRef.current.pause(); ailoAudioRef.current=null; }catch(e){} }
+    if(ailoAudioRef.current){ try{ailoAudioRef.current.pause();ailoAudioRef.current=null;}catch(e){} }
     window.speechSynthesis?.cancel();
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!SR){ alert("المتصفح لا يدعم التعرف على الكلام. جرب Chrome أو Edge."); return; }
-    if(ailoSpeechRef.current) try{ ailoSpeechRef.current.stop(); }catch(e){}
-
+    const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){ alert("المتصفح لا يدعم التعرف على الكلام — جرب Chrome"); return; }
+    try{ ailoSpeechRef.current?.stop(); }catch(e){}
+    ailoTranscriptRef.current = "";
     const sr = new SR();
-    sr.continuous = true;      // استمر في الاستماع طالما الزر مضغوط
-    sr.interimResults = true;
-
-    // دعم متعدد اللغات — يتعرف Grok على النص بأي لغة تلقائياً
-    const lang = load("targetLang","English");
-    sr.lang = lang==="Arabic"?"ar-SA":lang==="French"?"fr-FR":lang==="Spanish"?"es-ES":lang==="German"?"de-DE":lang==="Turkish"?"tr-TR":lang==="Japanese"?"ja-JP":lang==="Chinese"?"zh-CN":"en-US";
-
-    sr.onstart  = ()=>{ setAiloVoiceStatus("listening"); setAiloVoiceTranscript(""); };
-    sr.onerror  = (e)=>{ console.warn("SR error:",e.error); setAiloVoiceStatus("idle"); };
-    sr.onend    = ()=>{ /* لا تغيّر الحالة هنا — stopAiloListening يتولى */ };
-    sr.onresult = (e)=>{
-      let interim=""; let final="";
-      for(let i=e.resultIndex;i<e.results.length;i++){
-        const t=e.results[i][0].transcript;
-        if(e.results[i].isFinal) final+=t; else interim+=t;
+    sr.continuous    = true;
+    sr.interimResults= true;
+    const tl = load("targetLang","English");
+    sr.lang = tl==="Arabic"?"ar-SA":tl==="French"?"fr-FR":tl==="Spanish"?"es-ES":tl==="German"?"de-DE":tl==="Turkish"?"tr-TR":tl==="Japanese"?"ja-JP":tl==="Chinese"?"zh-CN":"en-US";
+    sr.onstart  = ()=>{ setAiloVoiceStatus("listening"); setAiloVoiceTranscript(""); ailoTranscriptRef.current=""; };
+    sr.onerror  = (ev)=>{ if(ev.error!=="aborted") setAiloVoiceStatus("idle"); };
+    sr.onend    = ()=>{};
+    sr.onresult = (ev)=>{
+      let fin="",intr="";
+      for(let i=ev.resultIndex;i<ev.results.length;i++){
+        const t=ev.results[i][0].transcript;
+        if(ev.results[i].isFinal) fin+=t; else intr+=t;
       }
-      setAiloVoiceTranscript(final||interim);
+      const txt = fin||intr;
+      ailoTranscriptRef.current = txt; // حفظ فوري في الـ ref
+      setAiloVoiceTranscript(txt);
     };
-
     sr.start();
     ailoSpeechRef.current = sr;
   };
 
-  // ── إيقاف الاستماع (onPressOut) — إرسال الصوت لـ Grok ─────────────────
+  // ── Push-to-Talk: إيقاف الاستماع (onPointerUp) ─────────────────────────
   const stopAiloListening = () => {
-    const transcript = ailoVoiceTranscript; // اقرأ النص المسجّل قبل الإيقاف
+    const transcript = ailoTranscriptRef.current; // اقرأ من الـ ref مباشرةً
     try{ ailoSpeechRef.current?.stop(); }catch(e){}
-    setAiloVoiceStatus("thinking");
-    if(transcript && transcript.trim().length > 1){
+    ailoTranscriptRef.current = "";
+    setAiloVoiceTranscript("");
+    if(transcript && transcript.trim().length>1){
+      setAiloVoiceStatus("thinking");
       sendToAiloVoice(transcript.trim());
     } else {
       setAiloVoiceStatus("idle");
     }
-    setAiloVoiceTranscript("");
   };
 
-  // ── فتح الجلسة الصوتية ─────────────────────────────────────────────────
+  // ── فتح جلسة ايلو الصوتية ──────────────────────────────────────────────
   const openAiloVoiceSession = () => {
-    ailoMsgsRef.current = [];
+    ailoMsgsRef.current=[];
     setAiloVoiceMsgs([]);
     setAiloVoiceTranscript("");
+    setAiloLastWords("");
     setAiloVoiceStatus("thinking");
     setShowAiloVoice(true);
-    if(ailoAudioRef.current){ try{ ailoAudioRef.current.pause(); }catch(e){} ailoAudioRef.current=null; }
+    if(ailoAudioRef.current){ try{ailoAudioRef.current.pause();}catch(e){} ailoAudioRef.current=null; }
     const lang = load("targetLang","English");
-    // ابدأ بتحية ايلو المشاكسة عبر Grok
     setTimeout(async()=>{
       try{
-        const grokRes = await fetch("https://api.x.ai/v1/chat/completions",{
-          method:"POST",
-          headers:{"Content-Type":"application/json","Authorization":`Bearer ${GROK_API_KEY}`},
-          body: JSON.stringify({
-            model:"grok-3-latest",
-            messages:[
-              {role:"system", content: AILO_VOICE_SYSTEM},
-              {role:"user", content:`ابدأ الجلسة بتحية مضحكة ساخرة بالعربية، ثم اطرح على المستخدم سؤالاً مفاجئاً باللغة "${lang}" لتحديد مستواه. جملتان فقط ولا إيموجي.`}
-            ],
-            max_tokens:100, temperature:0.9
-          })
-        });
-        let greeting = "اهلاً يا بطل. جاهز تثبت انك تتقن اللغة؟ قل لي كلمة واحدة بـ "+lang+" الآن.";
-        if(grokRes.ok){
-          const d = await grokRes.json();
-          greeting = (d.choices?.[0]?.message?.content||greeting).trim();
-        }
+        const greeting = await callGrokViaProxy(
+          `ابدأ الجلسة الصوتية. حيّ المستخدم بجملة واحدة مضحكة وساخرة بالعربية، ثم اسأله سؤالاً مفاجئاً باللغة "${lang}" لتقييم مستواه. لا إيموجي.`,
+          []
+        );
         const greetMsg = {id:Date.now(), from:"ailo", text:greeting};
-        ailoMsgsRef.current = [greetMsg];
+        ailoMsgsRef.current=[greetMsg];
         setAiloVoiceMsgs([greetMsg]);
         await ailoSpeak(greeting);
       }catch(e){
-        const fallback = {id:Date.now(), from:"ailo", text:"اهلاً يا بطل. جاهز تثبت انك تتقن اللغة؟ تحدث الآن."};
-        ailoMsgsRef.current = [fallback];
-        setAiloVoiceMsgs([fallback]);
-        await ailoSpeak(fallback.text);
+        const fb="اهلاً يا بطل. جاهز تثبت مستواك؟ تحدث الآن.";
+        const greetMsg={id:Date.now(),from:"ailo",text:fb};
+        ailoMsgsRef.current=[greetMsg];
+        setAiloVoiceMsgs([greetMsg]);
+        await ailoSpeak(fb);
       }
-    }, 300);
+    },300);
   };
 
-  // ── إغلاق الجلسة الصوتية ───────────────────────────────────────────────
+  // ── إغلاق الجلسة ────────────────────────────────────────────────────────
   const closeAiloVoiceSession = () => {
-    try{ ailoSpeechRef.current?.stop(); }catch(e){}
+    try{ailoSpeechRef.current?.stop();}catch(e){}
     window.speechSynthesis?.cancel();
-    if(ailoAudioRef.current){ try{ ailoAudioRef.current.pause(); }catch(e){} ailoAudioRef.current=null; }
+    if(ailoAudioRef.current){ try{ailoAudioRef.current.pause();}catch(e){} ailoAudioRef.current=null; }
     setAiloVoiceStatus("idle");
     setShowAiloVoice(false);
     setAiloVoiceMsgs([]);
-    ailoMsgsRef.current = [];
+    setAiloLastWords("");
+    ailoMsgsRef.current=[];
     setAiloVoiceTranscript("");
   };
-
-  // ref للصوت الحالي من ElevenLabs
-  const ailoAudioRef = useRef(null);
   const[showProfile,setShowProfile]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[showNotif,setShowNotif]=useState(false);
@@ -4692,171 +4671,210 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               </button>
             </div>
 
-            {/* ── Ailo Voice Session Modal (داخل شاشة bot) ── */}
+            {/* ── Ailo Voice Session — شاشة اتصال صوتي حقيقية ── */}
             {showAiloVoice&&(
-              <div style={{position:"fixed",inset:0,zIndex:500,background:"linear-gradient(160deg,#080c18 0%,#0f1428 40%,#14082a 80%,#0c0818 100%)",display:"flex",flexDirection:"column",fontFamily:"'Poppins','Tajawal',system-ui",maxWidth:480,margin:"0 auto",left:0,right:0}}>
-                <div style={{position:"absolute",top:-120,right:-120,width:320,height:320,borderRadius:"50%",background:`radial-gradient(circle,${primary}25 0%,transparent 70%)`,filter:"blur(60px)",pointerEvents:"none"}}/>
-                <div style={{position:"absolute",bottom:-100,left:-80,width:260,height:260,borderRadius:"50%",background:"radial-gradient(circle,rgba(168,85,247,0.2) 0%,transparent 70%)",filter:"blur(50px)",pointerEvents:"none"}}/>
-                {/* Header */}
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 18px",borderBottom:"1px solid rgba(255,255,255,0.07)",flexShrink:0,position:"relative",zIndex:2}}>
-                  <button onClick={closeAiloVoiceSession} style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:50,padding:"6px 14px",color:"#ef4444",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>✕ إنهاء</button>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{width:38,height:38,borderRadius:19,background:`linear-gradient(135deg,${primary},${secondary})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 18px ${glow}`}}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/></svg>
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontWeight:900,fontSize:16,background:`linear-gradient(135deg,${primary},${secondary})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>جلسة ايلو 🎙️</div>
-                      <div style={{fontSize:10,fontWeight:600,color:ailoVoiceStatus==="listening"?"#22c55e":ailoVoiceStatus==="thinking"?"#f59e0b":ailoVoiceStatus==="speaking"?primary:"rgba(255,255,255,0.35)"}}>
-                        {ailoVoiceStatus==="listening"?"🔴 يستمع الآن...":ailoVoiceStatus==="thinking"?"⏳ ايلو يفكر...":ailoVoiceStatus==="speaking"?"🔊 ايلو يتحدث":"● جاهز للمحادثة"}
-                      </div>
-                    </div>
+              <div style={{position:"fixed",inset:0,zIndex:500,
+                background:"linear-gradient(160deg,#06080f 0%,#0c1024 40%,#130820 80%,#080612 100%)",
+                display:"flex",flexDirection:"column",fontFamily:"'Poppins','Tajawal',system-ui",
+                maxWidth:480,margin:"0 auto",left:0,right:0,overflow:"hidden"}}>
+
+                {/* ── خلفية ضوئية متحركة بحسب الحالة ── */}
+                <div style={{position:"absolute",inset:0,pointerEvents:"none",transition:"background 0.6s",
+                  background: ailoVoiceStatus==="speaking"
+                    ? `radial-gradient(ellipse at 50% 35%,${primary}30 0%,transparent 65%)`
+                    : ailoVoiceStatus==="listening"
+                    ? "radial-gradient(ellipse at 50% 35%,rgba(239,68,68,0.22) 0%,transparent 65%)"
+                    : ailoVoiceStatus==="thinking"
+                    ? "radial-gradient(ellipse at 50% 35%,rgba(245,158,11,0.18) 0%,transparent 65%)"
+                    : `radial-gradient(ellipse at 50% 35%,${primary}18 0%,transparent 65%)`}}/>
+
+                {/* ── Header ── */}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                  padding:"14px 18px",flexShrink:0,position:"relative",zIndex:2}}>
+                  <button onClick={closeAiloVoiceSession}
+                    style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",
+                      borderRadius:50,padding:"7px 16px",color:"#ef4444",fontSize:12,fontWeight:700,
+                      cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",
+                      display:"flex",alignItems:"center",gap:6}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    إنهاء
+                  </button>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontWeight:900,fontSize:14,color:"rgba(255,255,255,0.9)",letterSpacing:0.5}}>جلسة ايلو</div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",marginTop:1}}>تقويم لغوي بالذكاء الاصطناعي</div>
                   </div>
                   <div style={{width:72}}/>
                 </div>
-                {/* Messages */}
-                <div style={{flex:1,overflowY:"auto",padding:"16px 14px",display:"flex",flexDirection:"column",gap:12,position:"relative",zIndex:2}}>
-                  {ailoVoiceMsgs.length===0&&!ailoVoiceLoading&&(
-                    <div style={{textAlign:"center",marginTop:60,color:"rgba(255,255,255,0.3)"}}>
-                      <div style={{fontSize:56,marginBottom:14}}>🎤</div>
-                      <div style={{fontSize:15,fontWeight:700,color:"rgba(255,255,255,0.5)",marginBottom:6}}>ايلو جاهز يتحداك!</div>
-                      <div style={{fontSize:12}}>اضغط الزر أدناه وابدأ الحديث</div>
+
+                {/* ── مساحة الاتصال الرئيسية ── */}
+                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+                  justifyContent:"center",position:"relative",zIndex:2,padding:"0 24px",gap:28}}>
+
+                  {/* أفاتار ايلو مع حلقة نبض */}
+                  <div style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {/* حلقات النبض */}
+                    {ailoVoiceStatus==="speaking"&&<>
+                      <div style={{position:"absolute",width:160,height:160,borderRadius:"50%",
+                        border:`2px solid ${primary}30`,
+                        boxShadow:`0 0 0 0 ${primary}40`,
+                        animation:"glowPulse 1.4s ease-in-out infinite"}}/>
+                      <div style={{position:"absolute",width:140,height:140,borderRadius:"50%",
+                        border:`2px solid ${primary}50`,
+                        animation:"glowPulse 1.4s ease-in-out infinite",animationDelay:"0.2s"}}/>
+                    </>}
+                    {ailoVoiceStatus==="listening"&&<>
+                      <div style={{position:"absolute",width:160,height:160,borderRadius:"50%",
+                        border:"2px solid rgba(239,68,68,0.3)",
+                        animation:"glowPulse 0.9s ease-in-out infinite"}}/>
+                      <div style={{position:"absolute",width:140,height:140,borderRadius:"50%",
+                        border:"2px solid rgba(239,68,68,0.5)",
+                        animation:"glowPulse 0.9s ease-in-out infinite",animationDelay:"0.15s"}}/>
+                    </>}
+                    {/* الدائرة الرئيسية */}
+                    <div style={{width:116,height:116,borderRadius:"50%",
+                      background: ailoVoiceStatus==="listening"
+                        ? "linear-gradient(135deg,#ef4444,#b91c1c)"
+                        : `linear-gradient(135deg,${primary},${secondary})`,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      boxShadow: ailoVoiceStatus==="listening"
+                        ? "0 0 40px rgba(239,68,68,0.5),0 8px 32px rgba(239,68,68,0.3)"
+                        : `0 0 40px ${glow},0 8px 32px ${glow}`,
+                      transition:"background 0.4s,box-shadow 0.4s"}}>
+                      {ailoVoiceStatus==="speaking"
+                        ? <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                            <path d="M19.07 4.93a10 10 0 010 14.14"/>
+                            <path d="M15.54 8.46a5 5 0 010 7.07"/>
+                          </svg>
+                        : ailoVoiceStatus==="listening"
+                        ? <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="9" y="2" width="6" height="13" rx="3"/>
+                            <path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/>
+                          </svg>
+                        : ailoVoiceStatus==="thinking"
+                        ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                            {[0,1,2].map(i=><div key={i} style={{width:9,height:9,borderRadius:"50%",background:"white",opacity:0.6+i*0.2}}/>)}
+                          </div>
+                        : <span style={{fontSize:44}}>🤖</span>
+                      }
+                    </div>
+                  </div>
+
+                  {/* اسم ايلو وحالته */}
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontWeight:900,fontSize:22,color:"white",marginBottom:6,letterSpacing:-0.5}}>ايلو</div>
+                    <div style={{fontSize:13,fontWeight:600,letterSpacing:0.3,
+                      color: ailoVoiceStatus==="speaking"  ? "#c4b5fd"
+                           : ailoVoiceStatus==="listening" ? "#fca5a5"
+                           : ailoVoiceStatus==="thinking"  ? "#fcd34d"
+                           : "rgba(255,255,255,0.4)"}}>
+                      {ailoVoiceStatus==="speaking"  ? "● يتحدث الآن"
+                     : ailoVoiceStatus==="listening" ? "● يستمع إليك"
+                     : ailoVoiceStatus==="thinking"  ? "● يفكر في رد..."
+                     : "● جاهز"}
+                    </div>
+                  </div>
+
+                  {/* آخر كلام ايلو — يظهر في الوسط بدلاً من الفقاعات */}
+                  {ailoLastWords&&(
+                    <div style={{maxWidth:"88%",padding:"14px 18px",
+                      borderRadius:18,textAlign:"center",
+                      background:"rgba(255,255,255,0.06)",
+                      border:"1px solid rgba(255,255,255,0.1)",
+                      backdropFilter:"blur(12px)",
+                      fontSize:15,lineHeight:1.7,color:"rgba(255,255,255,0.85)",fontWeight:500}}>
+                      "{ailoLastWords}"
                     </div>
                   )}
-                  {ailoVoiceMsgs.map(m=>(
-                    <div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:m.from==="user"?"flex-end":"flex-start",gap:5}}>
-                      <div style={{maxWidth:"85%",padding:"11px 15px",
-                        borderRadius:m.from==="user"?"18px 18px 4px 18px":"18px 18px 18px 4px",
-                        background:m.from==="user"?`linear-gradient(135deg,${primary},${secondary})`:"rgba(255,255,255,0.08)",
-                        border:m.from==="user"?"none":"1px solid rgba(255,255,255,0.1)",
-                        color:"white",fontSize:14,lineHeight:1.65,fontWeight:m.from==="user"?500:600}}>
-                        {m.text}
-                      </div>
-                      <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",paddingLeft:4,paddingRight:4,fontWeight:600}}>
-                        {m.from==="ailo"?"🤖 ايلو":"أنت"}
-                      </div>
-                    </div>
-                  ))}
-                  {ailoVoiceStatus==="thinking"&&(
-                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"11px 15px",background:"rgba(255,255,255,0.07)",borderRadius:"18px 18px 18px 4px",border:"1px solid rgba(255,255,255,0.1)",maxWidth:"55%",alignSelf:"flex-start"}}>
-                      {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:primary,opacity:0.6+i*0.15}}/>)}
-                    </div>
-                  )}
+
+                  {/* نص المستخدم المسجّل (يظهر فقط أثناء الاستماع) */}
                   {ailoVoiceTranscript&&ailoVoiceStatus==="listening"&&(
-                    <div style={{textAlign:"center",color:"rgba(255,255,255,0.45)",fontSize:12,fontStyle:"italic",padding:"7px 14px",background:"rgba(99,102,241,0.1)",borderRadius:10,border:"1px dashed rgba(99,102,241,0.3)",margin:"0 8px"}}>
-                      🎙️ "{ailoVoiceTranscript}"
+                    <div style={{fontSize:13,color:"rgba(239,68,68,0.7)",fontStyle:"italic",
+                      textAlign:"center",maxWidth:"80%",
+                      padding:"8px 16px",borderRadius:50,
+                      background:"rgba(239,68,68,0.08)",border:"1px dashed rgba(239,68,68,0.3)"}}>
+                      🎙 {ailoVoiceTranscript}
                     </div>
                   )}
                 </div>
-                {/* ── Push-to-Talk Controls ── */}
-                <div style={{padding:"20px",paddingBottom:"calc(26px + env(safe-area-inset-bottom))",display:"flex",flexDirection:"column",alignItems:"center",gap:16,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderTop:"1px solid rgba(255,255,255,0.07)",flexShrink:0,position:"relative",zIndex:2}}>
 
-                  {/* ── Status Badge ── */}
-                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 18px",borderRadius:50,
-                    background: ailoVoiceStatus==="listening" ? "rgba(239,68,68,0.18)"
-                              : ailoVoiceStatus==="thinking"  ? "rgba(245,158,11,0.18)"
-                              : ailoVoiceStatus==="speaking"  ? `${primary}22`
-                              : "rgba(255,255,255,0.07)",
-                    border: `1px solid ${
-                      ailoVoiceStatus==="listening" ? "rgba(239,68,68,0.45)"
-                    : ailoVoiceStatus==="thinking"  ? "rgba(245,158,11,0.45)"
-                    : ailoVoiceStatus==="speaking"  ? primary+"44"
-                    : "rgba(255,255,255,0.12)"}`}}>
-                    <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,
-                      background: ailoVoiceStatus==="listening" ? "#ef4444"
-                                : ailoVoiceStatus==="thinking"  ? "#f59e0b"
-                                : ailoVoiceStatus==="speaking"  ? primary
-                                : "rgba(255,255,255,0.3)"}}/>
-                    <span style={{fontSize:12,fontWeight:700,
-                      color: ailoVoiceStatus==="listening" ? "#fca5a5"
-                           : ailoVoiceStatus==="thinking"  ? "#fcd34d"
-                           : ailoVoiceStatus==="speaking"  ? "#c4b5fd"
-                           : "rgba(255,255,255,0.45)"}}>
-                      {ailoVoiceStatus==="listening" ? "يستمع إليك الآن"
-                     : ailoVoiceStatus==="thinking"  ? "ايلو يفكر في رد..."
-                     : ailoVoiceStatus==="speaking"  ? "ايلو يتحدث"
-                     : "جاهز — اضغط مع الاستمرار للتحدث"}
-                    </span>
+                {/* ── منطقة التحكم السفلية ── */}
+                <div style={{padding:"24px 32px",paddingBottom:"calc(28px + env(safe-area-inset-bottom))",
+                  display:"flex",flexDirection:"column",alignItems:"center",gap:18,
+                  background:"rgba(0,0,0,0.5)",backdropFilter:"blur(20px)",
+                  borderTop:"1px solid rgba(255,255,255,0.06)",
+                  flexShrink:0,position:"relative",zIndex:2}}>
+
+                  {/* تعليمات الضغط */}
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.3)",fontWeight:600,textAlign:"center",letterSpacing:0.3}}>
+                    {ailoVoiceStatus==="idle"
+                      ? "اضغط مع الاستمرار للتحدث ← ارفع إصبعك للإرسال"
+                      : ailoVoiceStatus==="listening"
+                      ? "ارفع إصبعك عند الانتهاء"
+                      : ""}
                   </div>
 
-                  {/* ── Transcript live ── */}
-                  {ailoVoiceTranscript&&ailoVoiceStatus==="listening"&&(
-                    <div style={{fontSize:12,color:"rgba(255,255,255,0.5)",fontStyle:"italic",textAlign:"center",maxWidth:"85%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      "{ailoVoiceTranscript}"
-                    </div>
-                  )}
-
-                  {/* ── زر الميكروفون الكبير (Push-to-Talk) ── */}
+                  {/* زر الميكروفون الرئيسي — Push-to-Talk */}
                   <button
-                    onPointerDown={e=>{ e.preventDefault(); if(ailoVoiceStatus==="idle"||ailoVoiceStatus==="speaking") startAiloListening(); }}
-                    onPointerUp={e=>{ e.preventDefault(); if(ailoVoiceStatus==="listening") stopAiloListening(); }}
-                    onPointerLeave={e=>{ if(ailoVoiceStatus==="listening") stopAiloListening(); }}
+                    onPointerDown={e=>{
+                      e.preventDefault();
+                      if(ailoVoiceStatus==="idle"||ailoVoiceStatus==="speaking") startAiloListening();
+                    }}
+                    onPointerUp={e=>{
+                      e.preventDefault();
+                      if(ailoVoiceStatus==="listening") stopAiloListening();
+                    }}
+                    onPointerLeave={e=>{
+                      if(ailoVoiceStatus==="listening") stopAiloListening();
+                    }}
+                    onPointerCancel={e=>{
+                      if(ailoVoiceStatus==="listening") stopAiloListening();
+                    }}
                     disabled={ailoVoiceStatus==="thinking"}
                     style={{
-                      width:100,height:100,borderRadius:50,
+                      width:88,height:88,borderRadius:44,
                       background: ailoVoiceStatus==="listening"
                         ? "linear-gradient(135deg,#ef4444,#b91c1c)"
-                        : ailoVoiceStatus==="speaking"
-                        ? `linear-gradient(135deg,${primary},${secondary})`
                         : ailoVoiceStatus==="thinking"
-                        ? "rgba(255,255,255,0.1)"
+                        ? "rgba(255,255,255,0.08)"
                         : `linear-gradient(135deg,${primary},${secondary})`,
-                      border: ailoVoiceStatus==="listening"
-                        ? "3px solid rgba(239,68,68,0.6)"
-                        : `3px solid ${primary}55`,
-                      cursor: ailoVoiceStatus==="thinking" ? "not-allowed" : "pointer",
+                      border:"none",
+                      cursor:ailoVoiceStatus==="thinking"?"not-allowed":"pointer",
                       display:"flex",alignItems:"center",justifyContent:"center",
-                      flexShrink:0,
                       boxShadow: ailoVoiceStatus==="listening"
-                        ? "0 0 0 16px rgba(239,68,68,0.12), 0 0 40px rgba(239,68,68,0.5), 0 8px 28px rgba(239,68,68,0.4)"
-                        : ailoVoiceStatus==="speaking"
-                        ? `0 0 0 12px ${primary}18, 0 0 32px ${glow}, 0 8px 24px ${glow}`
-                        : `0 0 28px ${glow}, 0 8px 24px ${glow}`,
-                      opacity: ailoVoiceStatus==="thinking" ? 0.5 : 1,
+                        ? "0 0 0 18px rgba(239,68,68,0.1),0 0 48px rgba(239,68,68,0.45)"
+                        : `0 0 0 10px ${primary}15,0 0 32px ${glow}`,
+                      opacity:ailoVoiceStatus==="thinking"?0.45:1,
                       userSelect:"none",touchAction:"none",WebkitUserSelect:"none",
-                      transition:"box-shadow 0.15s,background 0.15s"}}>
-                    {ailoVoiceStatus==="listening"
-                      ? /* يستمع — أيقونة موجة */
-                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round">
-                          <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/>
-                          <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
-                          <line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
-                          <circle cx="12" cy="12" r="4"/>
-                        </svg>
-                      : ailoVoiceStatus==="thinking"
-                      ? /* يفكر — نقاط */
-                        <div style={{display:"flex",gap:5}}>
-                          {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:primary,opacity:0.7}}/>)}
+                      flexShrink:0}}>
+                    {ailoVoiceStatus==="thinking"
+                      ? <div style={{display:"flex",gap:5}}>
+                          {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:primary}}/>)}
                         </div>
-                      : ailoVoiceStatus==="speaking"
-                      ? /* يتحدث — أيقونة صوت */
-                        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/>
-                        </svg>
-                      : /* جاهز — ميكروفون */
-                        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/>
+                      : <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="2" width="6" height="13" rx="3"/>
+                          <path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/>
                         </svg>
                     }
                   </button>
 
-                  <div style={{fontSize:10,color:"rgba(255,255,255,0.28)",fontWeight:600,textAlign:"center"}}>
-                    {ailoVoiceStatus==="idle" ? "اضغط مع الاستمرار للتحدث، وارفع إصبعك للإرسال" : ""}
-                  </div>
-
-                  {/* ── أزرار ثانوية ── */}
-                  <div style={{display:"flex",gap:10}}>
-                    <button
-                      onClick={()=>{ if(ailoVoiceMsgs.length>0) ailoSpeak(ailoVoiceMsgs[ailoVoiceMsgs.length-1]?.text||""); }}
-                      disabled={ailoVoiceMsgs.length===0||ailoVoiceStatus==="thinking"}
-                      style={{padding:"7px 14px",borderRadius:50,background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.12)",color:"rgba(255,255,255,0.55)",fontSize:11,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:ailoVoiceMsgs.length===0?0.3:1}}>
-                      🔊 أعد التشغيل
-                    </button>
-                    <button
-                      onClick={()=>{ if(ailoAudioRef.current){try{ailoAudioRef.current.pause();ailoAudioRef.current=null;}catch(e){}} window.speechSynthesis?.cancel(); setAiloVoiceStatus("idle"); }}
-                      style={{padding:"7px 14px",borderRadius:50,background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.12)",color:"rgba(255,255,255,0.55)",fontSize:11,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",fontWeight:600,display:"flex",alignItems:"center",gap:5}}>
-                      ⏸ إيقاف
-                    </button>
-                  </div>
+                  {/* زر أعد التشغيل */}
+                  <button
+                    onClick={()=>{ if(ailoLastWords) ailoSpeak(ailoLastWords); }}
+                    disabled={!ailoLastWords||ailoVoiceStatus==="thinking"||ailoVoiceStatus==="speaking"}
+                    style={{padding:"8px 20px",borderRadius:50,
+                      background:"rgba(255,255,255,0.06)",
+                      border:"1px solid rgba(255,255,255,0.1)",
+                      color:"rgba(255,255,255,0.5)",fontSize:12,cursor:"pointer",
+                      fontFamily:"'Poppins','Tajawal',system-ui",fontWeight:600,
+                      display:"flex",alignItems:"center",gap:6,
+                      opacity:!ailoLastWords?0.3:1}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                      <path d="M15.54 8.46a5 5 0 010 7.07"/>
+                    </svg>
+                    أعد تشغيل كلام ايلو
+                  </button>
                 </div>
               </div>
             )}
