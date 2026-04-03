@@ -778,36 +778,36 @@ Return ONLY a JSON array of 3 strings, no other text. Example:
     return parsed.text || parsed.reply || "";
   };
 
-  // ── Grok (xAI) — استدعاء مباشر عبر API ──
+  // ── Grok (xAI) — استدعاء مباشر ──
   const adminCallGrok = async (prompt) => {
-    const GROK_API_KEY = "xai-nGOuSrWnb2YGb5stnqJBBEMrZFgUVBCvFXqwITyiKbzAGBgbfrWFHssPStuyaH2PdqsC1YFpLFkh";
+    const GROK_KEY = "xai-oJKA93OgrdEtSUWxf3n6YEGRixvDtXyRVx0oNnlWFQiE1b8iGJIlKmCzT9mU2pYSbA1ckWdthWXR";
     const res = await fetch("https://api.x.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${GROK_API_KEY}`
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":`Bearer ${GROK_KEY}`
       },
       body: JSON.stringify({
-        model: "grok-3-mini",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.7
+        model:"grok-3-mini",
+        messages:[{role:"user",content:prompt}],
+        temperature:0.7
       })
     });
     if(!res.ok){
       const err = await res.text().catch(()=>"");
-      throw new Error(`Grok API error: ${res.status} — ${err.slice(0,120)}`);
+      throw new Error(`Grok API error: ${res.status} — ${err.slice(0,200)}`);
     }
     const data = await res.json();
     return data?.choices?.[0]?.message?.content?.trim() || "";
   };
 
-  // ── Unified AI caller — يختار المزوّد بناءً على adminAiProvider ──
+  // ── Unified caller — يختار المزوّد بناءً على adminAiProvider ──
   const adminCallAI = (prompt) =>
     adminAiProvider === "grok" ? adminCallGrok(prompt) : adminCallGemini(prompt);
 
   const adminGenerateQuestions = async () => {
     setAdminGenLoading(true);
-    setAdminGenLog([`⏳ جارٍ توليد الأسئلة عبر ${adminAiProvider === "grok" ? "Grok ⚡" : "Gemini 🔮"}...`]);
+    setAdminGenLog([`⏳ جارٍ توليد الأسئلة عبر ${adminAiProvider==="grok"?"Grok ⚡":"Gemini 🔮"}...`]);
     const supa = getSupa();
     if(!supa){ setAdminGenLog(["❌ Supabase غير متصل"]); setAdminGenLoading(false); return; }
     let totalInserted = 0;
@@ -843,7 +843,7 @@ No markdown, no explanation, no backticks. Start directly with [`;
           level: q.level||1,
           question_data: JSON.stringify(q)
         }));
-        const { error, count } = await supa.from("static_questions").insert(rows);
+        const { error } = await supa.from("static_questions").insert(rows);
         if(error){ setAdminGenLog(p=>[...p,`❌ ${cat}: خطأ DB — ${error.message}`]); continue; }
         totalInserted += rows.length;
         setAdminGenLog(p=>[...p,`✅ ${cat}: أُضيف ${rows.length} سؤال (الإجمالي: ${totalInserted})`]);
@@ -858,33 +858,35 @@ No markdown, no explanation, no backticks. Start directly with [`;
   const adminGenerateStickers = async (packType) => {
     setAdminGenLoading(true);
     const packName = packType==="movies" ? "English Movies 🎬" : packType==="status" ? "Status Expressions 😊" : "Arabic Wisdom 🌙";
-    setAdminGenLog([`⏳ جارٍ توليد ستيكرات "${packName}" عبر ${adminAiProvider === "grok" ? "Grok ⚡" : "Gemini 🔮"}...`]);
+    setAdminGenLog([`⏳ جارٍ توليد ستيكرات "${packName}" عبر ${adminAiProvider==="grok"?"Grok ⚡":"Gemini 🔮"}...`]);
     const supa = getSupa();
     if(!supa){ setAdminGenLog(["❌ Supabase غير متصل"]); setAdminGenLoading(false); return; }
     try{
       const prompt = packType==="status"
         ? `Generate 40 short expressive status stickers (like "I'm excited", "I need help", "Thinking...", "On my way", "Be right back").
 Mix Arabic and English. Each sticker max 60 chars with a relevant emoji.
-Return ONLY a JSON array like: [{"text":"🚀 I'm on my way!","trigger_emoji":"🚀"},...]`
+Return ONLY a valid JSON array, no markdown. Each object:
+- "text": the sticker text (max 60 chars)
+- "trigger_emoji": a single relevant emoji
+- "pack_name": "Status Expressions 😊"
+Example: [{"text":"🚀 I'm on my way!","trigger_emoji":"🚀","pack_name":"Status Expressions 😊"}]`
         : packType==="movies"
         ? `Generate 40 fun sticker messages inspired by famous English movies (quotes, reactions, emotions).
-Each sticker must have a matching trigger emoji.
 Return ONLY a valid JSON array, no markdown. Each object:
-- "text": the sticker message (short, max 60 chars, in English or mixed)
-- "trigger_emoji": a single relevant emoji that triggers this sticker
+- "text": the sticker message (short, max 60 chars)
+- "trigger_emoji": a single relevant emoji
 - "pack_name": "English Movies 🎬"
 Example: [{"text":"May the Force be with you ⚡","trigger_emoji":"⚡","pack_name":"English Movies 🎬"}]`
         : `Generate 40 beautiful Arabic wisdom stickers (حكم، أمثال، عبارات تحفيزية).
-كل ستيكر يجب أن يرتبط بإيموجي محدد يُشغّله.
 Return ONLY a valid JSON array, no markdown. Each object:
 - "text": the Arabic wisdom text (max 80 chars)
 - "trigger_emoji": a single relevant emoji
 - "pack_name": "Arabic Wisdom 🌙"
-مثال: [{"text":"من صبر نال ما أراد 🌹","trigger_emoji":"🌹","pack_name":"Arabic Wisdom 🌙"}]`;
+Example: [{"text":"من صبر نال ما أراد 🌹","trigger_emoji":"🌹","pack_name":"Arabic Wisdom 🌙"}]`;
 
       const raw = await adminCallAI(prompt);
       const match = raw.match(/\[[\s\S]*\]/);
-      if(!match){ setAdminGenLog(["❌ لم يُرجع JSON صحيح"]); setAdminGenLoading(false); return; }
+      if(!match){ setAdminGenLog(["❌ لم يُرجع JSON صحيح — تحقق من إعدادات المزوّد"]); setAdminGenLoading(false); return; }
       let stickers;
       try{ stickers = JSON.parse(match[0]); }
       catch(e){ setAdminGenLog(["❌ خطأ في تحليل JSON: "+e.message]); setAdminGenLoading(false); return; }
@@ -905,7 +907,7 @@ Return ONLY a valid JSON array, no markdown. Each object:
       if(uniqueRows.length===0){ setAdminGenLog(["⚠️ جميع الستيكرات موجودة مسبقاً"]); setAdminGenLoading(false); return; }
       const { error } = await supa.from("stickers").insert(uniqueRows);
       if(error){ setAdminGenLog([`❌ خطأ DB: ${error.message}`]); setAdminGenLoading(false); return; }
-      setAdminGenLog([`🎉 أُضيف ${uniqueRows.length} ستيكر جديد في "${packName}" (تخطّى ${rows.length-uniqueRows.length} مكرر)`]);
+      setAdminGenLog([`🎉 أُضيف ${uniqueRows.length} ستيكر في "${packName}" (تخطّى ${rows.length-uniqueRows.length} مكرر)`]);
     }catch(e){
       setAdminGenLog([`❌ خطأ عام: ${e.message}`]);
     }
@@ -1683,11 +1685,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[shortId,setShortId]=useState(()=>load("shortId",""));
   // ── Admin Panel ──
   const[showAdmin,setShowAdmin]=useState(false);
-  const[adminGenType,setAdminGenType]=useState("questions"); // "questions"|"stickers_movies"|"stickers_wisdom"|"stickers_status"
+  const[adminGenType,setAdminGenType]=useState("questions");
   const[adminGenLang,setAdminGenLang]=useState("English");
   const[adminGenLoading,setAdminGenLoading]=useState(false);
   const[adminGenLog,setAdminGenLog]=useState([]);
-  const[adminAiProvider,setAdminAiProvider]=useState("gemini"); // "gemini" | "grok"
+  const[adminAiProvider,setAdminAiProvider]=useState("gemini"); // "gemini"|"grok"
   const isOwner = shortId===OWNER_SHORT_ID;
 
   // Supabase realtime
@@ -2266,11 +2268,15 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     const dbMsgs = await fetchMessages(cid);
     setStreamMessages(dbMsgs);
 
-    // الاشتراك في Broadcast للرسائل الفورية
-    const ch = supa.channel(cid);
+    // ── إنشاء القناة مع إعدادات Broadcast صريحة ──
+    const ch = supa.channel(cid, {
+      config: {
+        broadcast: { self: false, ack: true },
+        presence: { key: myId }
+      }
+    });
     ch.on("broadcast",{event:"direct_msg"},async({payload})=>{
       if(payload.from===myId) return;
-      // Fix #6 & #19: أضف الرسالة مباشرة بدون fetchMessages لمنع الوميض
       const newMsg = {
         id: payload.id || "msg_"+Date.now()+"_"+Math.random().toString(36).slice(2,5),
         text: payload.text || "",
@@ -2283,7 +2289,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       };
       setStreamMessages(prev => [...prev, newMsg]);
       const txt = payload.text||"";
-      // Fix #5: لا تزيد unread للمرسل نفسه
       setConversations(prev=>{
         const updated=prev.map(c=>
           (c.partnerId===partnerId||c.rid===payload.rid)
@@ -2337,7 +2342,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   };
 
   // إرسال رسالة نصية أو صورة
-  const sendStreamMessage = async (text, imageData=null) => {
+  const sendStreamMessage = async (text, imageData=null, audioBlob=null, audioMime="audio/webm") => {
     if(!directChanRef.current){ alert("Connecting... try again in a moment ⏳"); return false; }
     try{
       const msgId = "msg_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
@@ -2348,18 +2353,23 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       let fileUrl = null;
       let msgType = "text";
 
-      if(imageData){
+      if(audioBlob){
+        msgType = "audio";
+        fileUrl = await uploadToStorage(audioBlob, "voice", audioMime);
+        if(!fileUrl){ console.error("Audio upload failed"); return false; }
+      } else if(imageData){
         msgType = "image";
-        // Fix #12: ضغط الصورة قبل الرفع
         const compressed = await compressImage(imageData, 800, 0.7);
         const blob = await fetch(compressed).then(r=>r.blob());
         fileUrl = await uploadToStorage(blob, "photo.jpg", "image/jpeg");
         if(!fileUrl){ alert("Failed to upload image"); return false; }
       }
 
-      // عرض محلي فوري — status="sent" (✓ رمادي)
+      // عرض محلي فوري
       const localMsg = {
-        id: msgId, text: text||"", user:{ id:userId },
+        id: msgId,
+        text: text||"",
+        user:{ id:userId },
         created_at: timeStr,
         attachments: fileUrl?[{type:msgType,image_url:fileUrl,asset_url:fileUrl}]:[],
         readBy:[], _status:"sent"
@@ -2373,13 +2383,19 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         reply_to: replyTo?.text||null, created_at: timeStr
       });
 
-      // Fix #19: إشعار فوري للطرف الثاني مع رابط الملف
+      // إشعار فوري للطرف الثاني
       await directChanRef.current.send({
         type:"broadcast", event:"direct_msg",
-        payload:{ id:msgId, text:text||(fileUrl?msgType==="image"?"📷 صورة":"🎙️ صوت":""), from:userId, rid:roomId, fileUrl:fileUrl||null, type:msgType }
+        payload:{
+          id: msgId,
+          text: text||(msgType==="image"?"📷 صورة":msgType==="audio"?"🎙️ رسالة صوتية":""),
+          from: userId, rid: roomId,
+          fileUrl: fileUrl||null,
+          type: msgType
+        }
       });
 
-      // بعد إرسال ناجح → upgrade إلى delivered (✓✓ رمادي)
+      // upgrade إلى delivered
       setTimeout(()=>{
         setStreamMessages(prev=>prev.map(mm=>
           mm.id===msgId ? {...mm,_status:"delivered"} : mm
@@ -2387,7 +2403,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       }, 800);
 
       // تحديث قائمة المحادثات
-      const txt = text||(fileUrl?"📷 Photo":"");
+      const txt = text||(msgType==="audio"?"🎙️ رسالة صوتية":msgType==="image"?"📷 صورة":"");
       setConversations(prev=>{
         const updated=prev.map(c=>
           (c.partnerId===partnerId||c.rid===roomId)
@@ -5265,48 +5281,25 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                         if(voiceChunksRef.current.length===0){ voiceChunksRef.current=[]; return; }
                         const blob=new Blob(voiceChunksRef.current,{type:mimeType});
                         voiceChunksRef.current=[];
-                        if(blob.size < 100){ return; } // صوت قصير جداً
+                        if(blob.size < 100){ return; }
 
-                        const msgId="msg_"+Date.now();
-                        const timeStr=new Date().toISOString();
-                        const partnerId=partner._uid||"";
-                        const cid="direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+                        // ⑥ عرض محلي مؤقت
                         const localUrl=URL.createObjectURL(blob);
-                        const localMsg={id:msgId,text:"🎙️",user:{id:userId},created_at:timeStr,attachments:[{type:"audio",image_url:localUrl,asset_url:localUrl}],readBy:[],_status:"sent"};
-                        setStreamMessages(prev=>[...prev,localMsg]);
-                        // ⑥ STT بشكل غير حرج
-                        try{
-                          const formData=new FormData();
-                          formData.append("file", blob, "voice."+mimeType.split("/")[1].split(";")[0]);
-                          formData.append("model","whisper-large-v3");
-                          formData.append("language","ar");
-                          const groqRes=await fetch(`${SUPA_URL}/functions/v1/ailo-stt`,{
-                            method:"POST",
-                            headers:{"Authorization":`Bearer ${localStorage.getItem("ailo_token")||""}`, "apikey":SUPA_KEY},
-                            body:formData
-                          });
-                          if(groqRes.ok){
-                            const groqData=await groqRes.json();
-                            const transcript=groqData.text||"";
-                            if(transcript.trim()){
-                              setStreamMessages(prev=>[...prev,{
-                                id:"stt_"+Date.now(), text:"🎙️ "+transcript,
-                                user:{id:userId}, created_at:new Date().toISOString(),
-                                attachments:[], readBy:[], _status:"sent", _stt:true
-                              }]);
-                            }
-                          }
-                        }catch(sttErr){ console.warn("[AUDIO] STT skipped:", sttErr.message); }
-                        // ⑦ رفع للـ Storage وحفظ في DB
-                        try{
-                          const fileUrl=await uploadToStorage(blob,"voice",mimeType);
-                          if(fileUrl){
-                            setStreamMessages(prev=>prev.map(mm=>mm.id===msgId?{...mm,attachments:[{type:"audio",image_url:fileUrl,asset_url:fileUrl}],_status:"delivered"}:mm));
-                            await saveMessageToDB({id:msgId,room_id:cid,user_id:userId,text:"🎙️",type:"audio",file_url:fileUrl,created_at:timeStr});
-                            if(directChanRef.current) await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:msgId,text:"🎙️ رسالة صوتية",from:userId,rid:roomId,fileUrl:fileUrl,type:"audio"}});
-                          }
-                        }catch(err){ console.error("[AUDIO] Upload error:", err.message); }
-                        addXp(3,"صوتية"); setCoins(c=>c+1);
+                        const tempId="tmp_"+Date.now();
+                        setStreamMessages(prev=>[...prev,{
+                          id:tempId,text:"🎙️",user:{id:userId},
+                          created_at:new Date().toISOString(),
+                          attachments:[{type:"audio",image_url:localUrl,asset_url:localUrl}],
+                          readBy:[],_status:"sending"
+                        }]);
+
+                        // ⑦ رفع + حفظ + إرسال Realtime عبر sendStreamMessage
+                        const ok = await sendStreamMessage("🎙️ رسالة صوتية", null, blob, mimeType);
+                        // إزالة الرسالة المؤقتة
+                        setStreamMessages(prev=>prev.filter(m=>m.id!==tempId));
+
+                        if(ok){ addXp(3,"صوتية"); setCoins(c=>c+1); }
+                        else { addNotif("❌","فشل الإرسال","تعذّر رفع الرسالة الصوتية","info"); }
                       };
                       // ⑧ بدء التسجيل — timeslice=250ms يضمن ondataavailable يُطلق بانتظام
                       mr.start(250);
@@ -6368,7 +6361,9 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 <div>
                   <div style={{fontWeight:900,fontSize:16,background:"linear-gradient(135deg,#f59e0b,#fbbf24)",
                     WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Admin Panel</div>
-                  <div style={{fontSize:11,color:muted}}>Gemini API → Supabase Secrets</div>
+                  <div style={{fontSize:11,color:muted}}>
+                    {adminAiProvider==="grok"?"Grok ⚡ — xAI Direct":"Gemini 🔮 — Edge Function"}
+                  </div>
                 </div>
               </div>
               <button onClick={()=>setShowAdmin(false)}
@@ -6376,41 +6371,37 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   border:"none",cursor:"pointer",color:muted,fontSize:18}}>✕</button>
             </div>
 
-            {/* Section: AI Provider Selector */}
+            {/* AI Provider Selector */}
             <div style={{...glass({marginBottom:14,padding:14,border:`1px solid rgba(255,255,255,0.08)`})}}>
-              <div style={{fontSize:11,color:muted,fontWeight:700,marginBottom:10,letterSpacing:"0.04em",textTransform:"uppercase"}}>
-                🤖 محرك الذكاء الاصطناعي
-              </div>
+              <div style={{fontSize:11,color:muted,fontWeight:700,marginBottom:10,
+                letterSpacing:"0.04em",textTransform:"uppercase"}}>🤖 محرك الذكاء الاصطناعي</div>
               <div style={{display:"flex",gap:8}}>
-                {/* Gemini */}
-                <button onClick={()=>setAdminAiProvider("gemini")}
-                  style={{flex:1,padding:"11px 8px",borderRadius:14,cursor:"pointer",
-                    border:`1.5px solid ${adminAiProvider==="gemini"?"#818cf8":"rgba(255,255,255,0.08)"}`,
-                    background:adminAiProvider==="gemini"?"rgba(99,102,241,0.18)":"rgba(255,255,255,0.03)",
-                    transition:"all 0.2s",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-                  <div style={{fontSize:18,marginBottom:4}}>🔮</div>
+                <button onClick={()=>setAdminAiProvider("gemini")} style={{
+                  flex:1,padding:"12px 8px",borderRadius:14,cursor:"pointer",textAlign:"center",
+                  border:`1.5px solid ${adminAiProvider==="gemini"?"#818cf8":"rgba(255,255,255,0.08)"}`,
+                  background:adminAiProvider==="gemini"?"rgba(99,102,241,0.18)":"rgba(255,255,255,0.03)",
+                  transition:"all 0.2s",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                  <div style={{fontSize:20,marginBottom:3}}>🔮</div>
                   <div style={{fontSize:12,fontWeight:800,
-                    color:adminAiProvider==="gemini"?"#818cf8":"rgba(255,255,255,0.4)"}}>Gemini</div>
-                  <div style={{fontSize:9,color:muted,marginTop:2}}>عبر Edge Function</div>
+                    color:adminAiProvider==="gemini"?"#818cf8":"rgba(255,255,255,0.35)"}}>Gemini</div>
+                  <div style={{fontSize:9,color:muted,marginTop:1}}>Edge Function</div>
                 </button>
-                {/* Grok */}
-                <button onClick={()=>setAdminAiProvider("grok")}
-                  style={{flex:1,padding:"11px 8px",borderRadius:14,cursor:"pointer",
-                    border:`1.5px solid ${adminAiProvider==="grok"?"#22d3ee":"rgba(255,255,255,0.08)"}`,
-                    background:adminAiProvider==="grok"?"rgba(34,211,238,0.12)":"rgba(255,255,255,0.03)",
-                    transition:"all 0.2s",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-                  <div style={{fontSize:18,marginBottom:4}}>⚡</div>
+                <button onClick={()=>setAdminAiProvider("grok")} style={{
+                  flex:1,padding:"12px 8px",borderRadius:14,cursor:"pointer",textAlign:"center",
+                  border:`1.5px solid ${adminAiProvider==="grok"?"#22d3ee":"rgba(255,255,255,0.08)"}`,
+                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.12)":"rgba(255,255,255,0.03)",
+                  transition:"all 0.2s",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                  <div style={{fontSize:20,marginBottom:3}}>⚡</div>
                   <div style={{fontSize:12,fontWeight:800,
-                    color:adminAiProvider==="grok"?"#22d3ee":"rgba(255,255,255,0.4)"}}>Grok</div>
-                  <div style={{fontSize:9,color:muted,marginTop:2}}>xAI — grok-3-mini</div>
+                    color:adminAiProvider==="grok"?"#22d3ee":"rgba(255,255,255,0.35)"}}>Grok</div>
+                  <div style={{fontSize:9,color:muted,marginTop:1}}>xAI — grok-3-mini</div>
                 </button>
               </div>
               {adminAiProvider==="grok"&&(
-                <div style={{marginTop:8,padding:"7px 12px",borderRadius:10,
-                  background:"rgba(34,211,238,0.08)",border:"1px solid rgba(34,211,238,0.2)",
+                <div style={{marginTop:8,padding:"6px 12px",borderRadius:10,
+                  background:"rgba(34,211,238,0.07)",border:"1px solid rgba(34,211,238,0.2)",
                   fontSize:10,color:"#67e8f9",display:"flex",alignItems:"center",gap:6}}>
-                  <span>⚡</span>
-                  <span>Grok يعمل مباشرة — أسرع في الاستجابة، لا يحتاج Edge Function</span>
+                  <span>⚡</span><span>Grok يعمل مباشرة — أسرع، لا يحتاج Edge Function</span>
                 </div>
               )}
             </div>
@@ -6418,8 +6409,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             {/* Section: Question Generator */}
             <div style={{...glass({marginBottom:14,padding:16,border:`1px solid rgba(99,102,241,0.3)`})}}>
               <div style={{fontWeight:800,fontSize:13,color:"#818cf8",marginBottom:12,
-                display:"flex",alignItems:"center",gap:6}}>
-                📚 مولّد الأسئلة (150 سؤال)
+                display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+                <span>📚 مولّد الأسئلة (150 سؤال)</span>
+                <span style={{fontSize:10,fontWeight:600,borderRadius:50,padding:"2px 8px",
+                  color:adminAiProvider==="grok"?"#22d3ee":"#818cf8",
+                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.1)":"rgba(99,102,241,0.1)",
+                  border:`1px solid ${adminAiProvider==="grok"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`}}>
+                  {adminAiProvider==="grok"?"⚡ Grok":"🔮 Gemini"}
+                </span>
               </div>
 
               {/* Language picker */}
@@ -6459,11 +6456,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               <div style={{fontWeight:800,fontSize:13,color:"#fbbf24",marginBottom:12,
                 display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                 <span>🎭 مولّد الستيكرات</span>
-                <span style={{fontSize:10,fontWeight:600,
+                <span style={{fontSize:10,fontWeight:600,borderRadius:50,padding:"2px 8px",
                   color:adminAiProvider==="grok"?"#22d3ee":"#818cf8",
-                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.12)":"rgba(99,102,241,0.12)",
-                  border:`1px solid ${adminAiProvider==="grok"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`,
-                  borderRadius:50,padding:"2px 8px"}}>
+                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.1)":"rgba(99,102,241,0.1)",
+                  border:`1px solid ${adminAiProvider==="grok"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`}}>
                   {adminAiProvider==="grok"?"⚡ Grok":"🔮 Gemini"}
                 </span>
               </div>
