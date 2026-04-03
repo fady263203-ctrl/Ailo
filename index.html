@@ -7306,7 +7306,7 @@ Rules:
 
             {/* Status label */}
             <div style={{textAlign:"center",marginBottom:28,zIndex:2,minHeight:24}}>
-              <div style={{color:"rgba(255,255,255,0.7)",fontSize:15,fontWeight:600,transition:"opacity 0.3s",
+              <div style={{fontSize:15,fontWeight:600,transition:"color 0.3s",
                 color:ailoPhase==="error"?"#f87171":ailoPhase==="listening"?"#4ade80":ailoPhase==="speaking"?"#38bdf8":ailoPhase==="thinking"?"#fbbf24":"rgba(255,255,255,0.55)"}}>
                 {label}
               </div>
@@ -7345,6 +7345,11 @@ Rules:
           </div>
         );
       })()}
+
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Ailo));
 </script>
 </body>
 </html>
