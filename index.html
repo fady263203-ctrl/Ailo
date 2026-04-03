@@ -762,44 +762,32 @@ Return ONLY a JSON array of 3 strings, no other text. Example:
     };
   };
 
+  // ── Gemini — عبر ailo-gemini Edge Function ──
   const adminCallGemini = async (prompt) => {
-    const token = localStorage.getItem("ailo_token")||"";
     const res = await fetch(`${SUPA_URL}/functions/v1/ailo-gemini`, {
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
         "apikey": SUPA_KEY,
-        "Authorization": `Bearer ${token}`
+        "Authorization": `Bearer ${SUPA_KEY}`
       },
       body: JSON.stringify({ prompt })
     });
     if(!res.ok){
-      // إذا انتهت الجلسة، جرّب بدون token
-      if(res.status===401){
-        const res2 = await fetch(`${SUPA_URL}/functions/v1/ailo-gemini`, {
-          method:"POST",
-          headers:{ "Content-Type":"application/json", "apikey": SUPA_KEY, "Authorization":`Bearer ${SUPA_KEY}` },
-          body: JSON.stringify({ prompt })
-        });
-        if(!res2.ok) throw new Error(`Edge Function error: ${res2.status}`);
-        const parsed2 = await parseAiReply(res2);
-        return parsed2.text || parsed2.reply || "";
-      }
-      throw new Error(`Edge Function error: ${res.status}`);
+      const err = await res.text().catch(()=>"");
+      throw new Error(`Gemini Edge Function error: ${res.status} — ${err.slice(0,100)}`);
     }
     const parsed = await parseAiReply(res);
     return parsed.text || parsed.reply || "";
   };
 
-  // ── Groq (LPU) — عبر Supabase Edge Function (المفتاح في Supabase Secrets) ──
+  // ── Groq (LPU) — عبر Supabase Edge Function (JWT disabled — apikey فقط) ──
   const adminCallGroq = async (prompt) => {
-    const token = localStorage.getItem("ailo_token")||"";
     const res = await fetch(`${SUPA_URL}/functions/v1/ailo-groq`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "apikey": SUPA_KEY,
-        "Authorization": `Bearer ${token||SUPA_KEY}`
+        "apikey": SUPA_KEY
       },
       body: JSON.stringify({ prompt })
     });
@@ -808,6 +796,7 @@ Return ONLY a JSON array of 3 strings, no other text. Example:
       throw new Error(`Groq Edge Function error: ${res.status} — ${err.slice(0,200)}`);
     }
     const data = await res.json();
+    if(data?.error) throw new Error(data.error);
     return data?.text || data?.reply || "";
   };
 
