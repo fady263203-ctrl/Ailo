@@ -773,41 +773,51 @@ Return ONLY a JSON array of 3 strings, no other text. Example:
       },
       body: JSON.stringify({ prompt })
     });
-    if(!res.ok) throw new Error(`Edge Function error: ${res.status}`);
+    if(!res.ok){
+      // إذا انتهت الجلسة، جرّب بدون token
+      if(res.status===401){
+        const res2 = await fetch(`${SUPA_URL}/functions/v1/ailo-gemini`, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json", "apikey": SUPA_KEY, "Authorization":`Bearer ${SUPA_KEY}` },
+          body: JSON.stringify({ prompt })
+        });
+        if(!res2.ok) throw new Error(`Edge Function error: ${res2.status}`);
+        const parsed2 = await parseAiReply(res2);
+        return parsed2.text || parsed2.reply || "";
+      }
+      throw new Error(`Edge Function error: ${res.status}`);
+    }
     const parsed = await parseAiReply(res);
     return parsed.text || parsed.reply || "";
   };
 
-  // ── Grok (xAI) — استدعاء مباشر ──
-  const adminCallGrok = async (prompt) => {
-    const GROK_KEY = "xai-oJKA93OgrdEtSUWxf3n6YEGRixvDtXyRVx0oNnlWFQiE1b8iGJIlKmCzT9mU2pYSbA1ckWdthWXR";
-    const res = await fetch("https://api.x.ai/v1/chat/completions", {
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "Authorization":`Bearer ${GROK_KEY}`
+  // ── Groq (LPU) — عبر Supabase Edge Function (المفتاح في Supabase Secrets) ──
+  const adminCallGroq = async (prompt) => {
+    const token = localStorage.getItem("ailo_token")||"";
+    const res = await fetch(`${SUPA_URL}/functions/v1/ailo-groq`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPA_KEY,
+        "Authorization": `Bearer ${token||SUPA_KEY}`
       },
-      body: JSON.stringify({
-        model:"grok-3-mini",
-        messages:[{role:"user",content:prompt}],
-        temperature:0.7
-      })
+      body: JSON.stringify({ prompt })
     });
     if(!res.ok){
       const err = await res.text().catch(()=>"");
-      throw new Error(`Grok API error: ${res.status} — ${err.slice(0,200)}`);
+      throw new Error(`Groq Edge Function error: ${res.status} — ${err.slice(0,200)}`);
     }
     const data = await res.json();
-    return data?.choices?.[0]?.message?.content?.trim() || "";
+    return data?.text || data?.reply || "";
   };
 
-  // ── Unified caller — يختار المزوّد بناءً على adminAiProvider ──
+  // ── Unified caller ──
   const adminCallAI = (prompt) =>
-    adminAiProvider === "grok" ? adminCallGrok(prompt) : adminCallGemini(prompt);
+    adminAiProvider==="groq" ? adminCallGroq(prompt) : adminCallGemini(prompt);
 
   const adminGenerateQuestions = async () => {
     setAdminGenLoading(true);
-    setAdminGenLog([`⏳ جارٍ توليد الأسئلة عبر ${adminAiProvider==="grok"?"Grok ⚡":"Gemini 🔮"}...`]);
+    setAdminGenLog([`⏳ جارٍ توليد الأسئلة عبر ${adminAiProvider==="groq"?"Groq ⚡":"Gemini 🔮"}...`]);
     const supa = getSupa();
     if(!supa){ setAdminGenLog(["❌ Supabase غير متصل"]); setAdminGenLoading(false); return; }
     let totalInserted = 0;
@@ -858,7 +868,7 @@ No markdown, no explanation, no backticks. Start directly with [`;
   const adminGenerateStickers = async (packType) => {
     setAdminGenLoading(true);
     const packName = packType==="movies" ? "English Movies 🎬" : packType==="status" ? "Status Expressions 😊" : "Arabic Wisdom 🌙";
-    setAdminGenLog([`⏳ جارٍ توليد ستيكرات "${packName}" عبر ${adminAiProvider==="grok"?"Grok ⚡":"Gemini 🔮"}...`]);
+    setAdminGenLog([`⏳ جارٍ توليد ستيكرات "${packName}" عبر ${adminAiProvider==="groq"?"Groq ⚡":"Gemini 🔮"}...`]);
     const supa = getSupa();
     if(!supa){ setAdminGenLog(["❌ Supabase غير متصل"]); setAdminGenLoading(false); return; }
     try{
@@ -886,7 +896,7 @@ Example: [{"text":"من صبر نال ما أراد 🌹","trigger_emoji":"🌹"
 
       const raw = await adminCallAI(prompt);
       const match = raw.match(/\[[\s\S]*\]/);
-      if(!match){ setAdminGenLog(["❌ لم يُرجع JSON صحيح — تحقق من إعدادات المزوّد"]); setAdminGenLoading(false); return; }
+      if(!match){ setAdminGenLog(["❌ لم يُرجع JSON صحيح"]); setAdminGenLoading(false); return; }
       let stickers;
       try{ stickers = JSON.parse(match[0]); }
       catch(e){ setAdminGenLog(["❌ خطأ في تحليل JSON: "+e.message]); setAdminGenLoading(false); return; }
@@ -897,7 +907,7 @@ Example: [{"text":"من صبر نال ما أراد 🌹","trigger_emoji":"🌹"
         pack_name: s.pack_name||packName,
         category: packType
       }));
-      // منع تكرار الستيكرات
+      // منع التكرار
       const existingTexts = new Set();
       try{
         const { data: existing } = await supa.from("stickers").select("text").eq("pack_name", packName);
@@ -1685,11 +1695,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   const[shortId,setShortId]=useState(()=>load("shortId",""));
   // ── Admin Panel ──
   const[showAdmin,setShowAdmin]=useState(false);
-  const[adminGenType,setAdminGenType]=useState("questions");
+  const[adminGenType,setAdminGenType]=useState("questions"); // "questions"|"stickers_movies"|"stickers_wisdom"|"stickers_status"
   const[adminGenLang,setAdminGenLang]=useState("English");
   const[adminGenLoading,setAdminGenLoading]=useState(false);
   const[adminGenLog,setAdminGenLog]=useState([]);
-  const[adminAiProvider,setAdminAiProvider]=useState("gemini"); // "gemini"|"grok"
+  const[adminAiProvider,setAdminAiProvider]=useState("groq"); // "gemini"|"groq"
   const isOwner = shortId===OWNER_SHORT_ID;
 
   // Supabase realtime
@@ -2268,13 +2278,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     const dbMsgs = await fetchMessages(cid);
     setStreamMessages(dbMsgs);
 
-    // ── إنشاء القناة مع إعدادات Broadcast صريحة ──
-    const ch = supa.channel(cid, {
-      config: {
-        broadcast: { self: false, ack: true },
-        presence: { key: myId }
-      }
-    });
+    // الاشتراك في Broadcast للرسائل الفورية
+    const ch = supa.channel(cid);
     ch.on("broadcast",{event:"direct_msg"},async({payload})=>{
       if(payload.from===myId) return;
       const newMsg = {
@@ -2285,10 +2290,13 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         attachments: payload.fileUrl
           ? [{ type: payload.type||"image", image_url: payload.fileUrl, asset_url: payload.fileUrl }]
           : [],
-        readBy: [], _status: "delivered"
+        readBy: [], _status: "delivered",
+        // ✅ الرد يظهر للطرف المستلم
+        _replyTo: payload._replyTo||null
       };
       setStreamMessages(prev => [...prev, newMsg]);
       const txt = payload.text||"";
+      // Fix #5: لا تزيد unread للمرسل نفسه
       setConversations(prev=>{
         const updated=prev.map(c=>
           (c.partnerId===partnerId||c.rid===payload.rid)
@@ -2342,22 +2350,21 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   };
 
   // إرسال رسالة نصية أو صورة
-  const sendStreamMessage = async (text, imageData=null, audioBlob=null, audioMime="audio/webm") => {
+  const sendStreamMessage = async (text, imageData=null) => {
     if(!directChanRef.current){ alert("Connecting... try again in a moment ⏳"); return false; }
     try{
       const msgId = "msg_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
       const timeStr = new Date().toISOString();
       const partnerId = partner._uid||"";
       const cid = "direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+      // ✅ حفظ قيمة الرد قبل إعادة الضبط
+      const replyToText = replyTo?.text||null;
+      const replyToId   = replyTo?.id||null;
 
       let fileUrl = null;
       let msgType = "text";
 
-      if(audioBlob){
-        msgType = "audio";
-        fileUrl = await uploadToStorage(audioBlob, "voice", audioMime);
-        if(!fileUrl){ console.error("Audio upload failed"); return false; }
-      } else if(imageData){
+      if(imageData){
         msgType = "image";
         const compressed = await compressImage(imageData, 800, 0.7);
         const blob = await fetch(compressed).then(r=>r.blob());
@@ -2365,45 +2372,47 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
         if(!fileUrl){ alert("Failed to upload image"); return false; }
       }
 
-      // عرض محلي فوري
+      // عرض محلي فوري — status="sent"
       const localMsg = {
-        id: msgId,
-        text: text||"",
-        user:{ id:userId },
+        id: msgId, text: text||"", user:{ id:userId },
         created_at: timeStr,
         attachments: fileUrl?[{type:msgType,image_url:fileUrl,asset_url:fileUrl}]:[],
-        readBy:[], _status:"sent"
+        readBy:[], _status:"sent",
+        // ✅ الرد يظهر محلياً فوراً
+        _replyTo: replyToText||null
       };
       setStreamMessages(prev=>[...prev,localMsg]);
+      // ✅ مسح شريط الرد فوراً
+      setReplyTo(null);
 
       // حفظ في Database
       await saveMessageToDB({
         id: msgId, room_id: cid, user_id: userId,
         text: text||"", type: msgType, file_url: fileUrl,
-        reply_to: replyTo?.text||null, created_at: timeStr
+        reply_to: replyToText, created_at: timeStr
       });
 
-      // إشعار فوري للطرف الثاني
+      // ✅ إرسال _replyTo في الـ payload للطرف الآخر
       await directChanRef.current.send({
         type:"broadcast", event:"direct_msg",
         payload:{
           id: msgId,
-          text: text||(msgType==="image"?"📷 صورة":msgType==="audio"?"🎙️ رسالة صوتية":""),
-          from: userId, rid: roomId,
+          text: text||(fileUrl?msgType==="image"?"📷 صورة":"🎙️ صوت":""),
+          from: userId,
+          rid: roomId,
           fileUrl: fileUrl||null,
-          type: msgType
+          type: msgType,
+          _replyTo: replyToText||null
         }
       });
 
-      // upgrade إلى delivered
       setTimeout(()=>{
         setStreamMessages(prev=>prev.map(mm=>
           mm.id===msgId ? {...mm,_status:"delivered"} : mm
         ));
       }, 800);
 
-      // تحديث قائمة المحادثات
-      const txt = text||(msgType==="audio"?"🎙️ رسالة صوتية":msgType==="image"?"📷 صورة":"");
+      const txt = text||(fileUrl?"📷 Photo":"");
       setConversations(prev=>{
         const updated=prev.map(c=>
           (c.partnerId===partnerId||c.rid===roomId)
@@ -5281,25 +5290,48 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                         if(voiceChunksRef.current.length===0){ voiceChunksRef.current=[]; return; }
                         const blob=new Blob(voiceChunksRef.current,{type:mimeType});
                         voiceChunksRef.current=[];
-                        if(blob.size < 100){ return; }
+                        if(blob.size < 100){ return; } // صوت قصير جداً
 
-                        // ⑥ عرض محلي مؤقت
+                        const msgId="msg_"+Date.now();
+                        const timeStr=new Date().toISOString();
+                        const partnerId=partner._uid||"";
+                        const cid="direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
                         const localUrl=URL.createObjectURL(blob);
-                        const tempId="tmp_"+Date.now();
-                        setStreamMessages(prev=>[...prev,{
-                          id:tempId,text:"🎙️",user:{id:userId},
-                          created_at:new Date().toISOString(),
-                          attachments:[{type:"audio",image_url:localUrl,asset_url:localUrl}],
-                          readBy:[],_status:"sending"
-                        }]);
-
-                        // ⑦ رفع + حفظ + إرسال Realtime عبر sendStreamMessage
-                        const ok = await sendStreamMessage("🎙️ رسالة صوتية", null, blob, mimeType);
-                        // إزالة الرسالة المؤقتة
-                        setStreamMessages(prev=>prev.filter(m=>m.id!==tempId));
-
-                        if(ok){ addXp(3,"صوتية"); setCoins(c=>c+1); }
-                        else { addNotif("❌","فشل الإرسال","تعذّر رفع الرسالة الصوتية","info"); }
+                        const localMsg={id:msgId,text:"🎙️",user:{id:userId},created_at:timeStr,attachments:[{type:"audio",image_url:localUrl,asset_url:localUrl}],readBy:[],_status:"sent"};
+                        setStreamMessages(prev=>[...prev,localMsg]);
+                        // ⑥ STT بشكل غير حرج
+                        try{
+                          const formData=new FormData();
+                          formData.append("file", blob, "voice."+mimeType.split("/")[1].split(";")[0]);
+                          formData.append("model","whisper-large-v3");
+                          formData.append("language","ar");
+                          const groqRes=await fetch(`${SUPA_URL}/functions/v1/ailo-stt`,{
+                            method:"POST",
+                            headers:{"Authorization":`Bearer ${localStorage.getItem("ailo_token")||""}`, "apikey":SUPA_KEY},
+                            body:formData
+                          });
+                          if(groqRes.ok){
+                            const groqData=await groqRes.json();
+                            const transcript=groqData.text||"";
+                            if(transcript.trim()){
+                              setStreamMessages(prev=>[...prev,{
+                                id:"stt_"+Date.now(), text:"🎙️ "+transcript,
+                                user:{id:userId}, created_at:new Date().toISOString(),
+                                attachments:[], readBy:[], _status:"sent", _stt:true
+                              }]);
+                            }
+                          }
+                        }catch(sttErr){ console.warn("[AUDIO] STT skipped:", sttErr.message); }
+                        // ⑦ رفع للـ Storage وحفظ في DB
+                        try{
+                          const fileUrl=await uploadToStorage(blob,"voice",mimeType);
+                          if(fileUrl){
+                            setStreamMessages(prev=>prev.map(mm=>mm.id===msgId?{...mm,attachments:[{type:"audio",image_url:fileUrl,asset_url:fileUrl}],_status:"delivered"}:mm));
+                            await saveMessageToDB({id:msgId,room_id:cid,user_id:userId,text:"🎙️",type:"audio",file_url:fileUrl,created_at:timeStr});
+                            if(directChanRef.current) await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:msgId,text:"🎙️ رسالة صوتية",from:userId,rid:roomId,fileUrl:fileUrl,type:"audio"}});
+                          }
+                        }catch(err){ console.error("[AUDIO] Upload error:", err.message); }
+                        addXp(3,"صوتية"); setCoins(c=>c+1);
                       };
                       // ⑧ بدء التسجيل — timeslice=250ms يضمن ondataavailable يُطلق بانتظام
                       mr.start(250);
@@ -6362,7 +6394,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   <div style={{fontWeight:900,fontSize:16,background:"linear-gradient(135deg,#f59e0b,#fbbf24)",
                     WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Admin Panel</div>
                   <div style={{fontSize:11,color:muted}}>
-                    {adminAiProvider==="grok"?"Grok ⚡ — xAI Direct":"Gemini 🔮 — Edge Function"}
+                    {adminAiProvider==="groq"?"Groq ⚡ — LLaMA 3.3 70B":"Gemini 🔮 — Edge Function"}
                   </div>
                 </div>
               </div>
@@ -6376,6 +6408,16 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               <div style={{fontSize:11,color:muted,fontWeight:700,marginBottom:10,
                 letterSpacing:"0.04em",textTransform:"uppercase"}}>🤖 محرك الذكاء الاصطناعي</div>
               <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setAdminAiProvider("groq")} style={{
+                  flex:1,padding:"12px 8px",borderRadius:14,cursor:"pointer",textAlign:"center",
+                  border:`1.5px solid ${adminAiProvider==="groq"?"#22d3ee":"rgba(255,255,255,0.08)"}`,
+                  background:adminAiProvider==="groq"?"rgba(34,211,238,0.12)":"rgba(255,255,255,0.03)",
+                  transition:"all 0.2s",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                  <div style={{fontSize:20,marginBottom:3}}>⚡</div>
+                  <div style={{fontSize:12,fontWeight:800,
+                    color:adminAiProvider==="groq"?"#22d3ee":"rgba(255,255,255,0.35)"}}>Groq</div>
+                  <div style={{fontSize:9,color:muted,marginTop:1}}>LLaMA 3.3 — أسرع</div>
+                </button>
                 <button onClick={()=>setAdminAiProvider("gemini")} style={{
                   flex:1,padding:"12px 8px",borderRadius:14,cursor:"pointer",textAlign:"center",
                   border:`1.5px solid ${adminAiProvider==="gemini"?"#818cf8":"rgba(255,255,255,0.08)"}`,
@@ -6386,22 +6428,12 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     color:adminAiProvider==="gemini"?"#818cf8":"rgba(255,255,255,0.35)"}}>Gemini</div>
                   <div style={{fontSize:9,color:muted,marginTop:1}}>Edge Function</div>
                 </button>
-                <button onClick={()=>setAdminAiProvider("grok")} style={{
-                  flex:1,padding:"12px 8px",borderRadius:14,cursor:"pointer",textAlign:"center",
-                  border:`1.5px solid ${adminAiProvider==="grok"?"#22d3ee":"rgba(255,255,255,0.08)"}`,
-                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.12)":"rgba(255,255,255,0.03)",
-                  transition:"all 0.2s",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-                  <div style={{fontSize:20,marginBottom:3}}>⚡</div>
-                  <div style={{fontSize:12,fontWeight:800,
-                    color:adminAiProvider==="grok"?"#22d3ee":"rgba(255,255,255,0.35)"}}>Grok</div>
-                  <div style={{fontSize:9,color:muted,marginTop:1}}>xAI — grok-3-mini</div>
-                </button>
               </div>
-              {adminAiProvider==="grok"&&(
+              {adminAiProvider==="groq"&&(
                 <div style={{marginTop:8,padding:"6px 12px",borderRadius:10,
                   background:"rgba(34,211,238,0.07)",border:"1px solid rgba(34,211,238,0.2)",
                   fontSize:10,color:"#67e8f9",display:"flex",alignItems:"center",gap:6}}>
-                  <span>⚡</span><span>Grok يعمل مباشرة — أسرع، لا يحتاج Edge Function</span>
+                  ⚡ Groq يعمل مباشرة — لا يحتاج Edge Function — أسرع بكثير
                 </div>
               )}
             </div>
@@ -6412,10 +6444,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                 <span>📚 مولّد الأسئلة (150 سؤال)</span>
                 <span style={{fontSize:10,fontWeight:600,borderRadius:50,padding:"2px 8px",
-                  color:adminAiProvider==="grok"?"#22d3ee":"#818cf8",
-                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.1)":"rgba(99,102,241,0.1)",
-                  border:`1px solid ${adminAiProvider==="grok"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`}}>
-                  {adminAiProvider==="grok"?"⚡ Grok":"🔮 Gemini"}
+                  color:adminAiProvider==="groq"?"#22d3ee":"#818cf8",
+                  background:adminAiProvider==="groq"?"rgba(34,211,238,0.1)":"rgba(99,102,241,0.1)",
+                  border:`1px solid ${adminAiProvider==="groq"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`}}>
+                  {adminAiProvider==="groq"?"⚡ Groq":"🔮 Gemini"}
                 </span>
               </div>
 
@@ -6440,14 +6472,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 onClick={()=>{ if(!adminGenLoading) adminGenerateQuestions(); }}
                 disabled={adminGenLoading}
                 style={{...btnP({width:"100%",fontSize:13,
-                  background:adminAiProvider==="grok"
+                  background:adminAiProvider==="groq"
                     ?"linear-gradient(135deg,#0891b2,#22d3ee)"
                     :"linear-gradient(135deg,#6366f1,#8b5cf6)",
                   opacity:adminGenLoading?0.6:1})}}
               >
                 {adminGenLoading
-                  ?`⏳ جارٍ التوليد عبر ${adminAiProvider==="grok"?"Grok":"Gemini"}...`
-                  :`⚡ توليد 150 سؤال — ${adminAiProvider==="grok"?"Grok":"Gemini"}`}
+                  ?`⏳ جارٍ التوليد عبر ${adminAiProvider==="groq"?"Groq":"Gemini"}...`
+                  :`⚡ توليد 150 سؤال — ${adminAiProvider==="groq"?"Groq":"Gemini"}`}
               </button>
             </div>
 
@@ -6457,10 +6489,10 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                 <span>🎭 مولّد الستيكرات</span>
                 <span style={{fontSize:10,fontWeight:600,borderRadius:50,padding:"2px 8px",
-                  color:adminAiProvider==="grok"?"#22d3ee":"#818cf8",
-                  background:adminAiProvider==="grok"?"rgba(34,211,238,0.1)":"rgba(99,102,241,0.1)",
-                  border:`1px solid ${adminAiProvider==="grok"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`}}>
-                  {adminAiProvider==="grok"?"⚡ Grok":"🔮 Gemini"}
+                  color:adminAiProvider==="groq"?"#22d3ee":"#818cf8",
+                  background:adminAiProvider==="groq"?"rgba(34,211,238,0.1)":"rgba(99,102,241,0.1)",
+                  border:`1px solid ${adminAiProvider==="groq"?"rgba(34,211,238,0.3)":"rgba(99,102,241,0.3)"}`}}>
+                  {adminAiProvider==="groq"?"⚡ Groq":"🔮 Gemini"}
                 </span>
               </div>
               <div style={{display:"flex",gap:8}}>
@@ -6485,7 +6517,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                   🌙 حكمة عربية
                 </button>
               </div>
-              {/* FIX 12: Status Expressions Pack */}
               <div style={{marginTop:8}}>
                 <button
                   onClick={()=>{ if(!adminGenLoading) adminGenerateStickers("status"); }}
