@@ -771,7 +771,7 @@ Return ONLY a JSON array of 3 strings, no other text. Example:
         "apikey": SUPA_KEY,
         "Authorization": `Bearer ${SUPA_KEY}`
       },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ message: prompt })
     });
     if(!res.ok){
       const err = await res.text().catch(()=>"");
