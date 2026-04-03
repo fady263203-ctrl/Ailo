@@ -2671,9 +2671,9 @@ Rules:
             const { data, error } = await supa.auth.getUser(token);
             // ✅ token منتهي أو غير صالح → تسجيل خروج تلقائي
             if(error || !data?.user){
-              console.warn("Session expired. Logging out.");
+              console.warn("Session expired. Continuing as guest.");
               localStorage.removeItem("ailo_token");
-              setAppScreen("login");
+              // استمر كـ guest بدلاً من إعادة تسجيل الدخول
               return;
             }
             // الجلسة صالحة → استرجع كل البيانات
@@ -2714,9 +2714,8 @@ Rules:
       try{
         const { data, error } = await supa.auth.getUser(storedToken);
         if(error || !data?.user){
-          // Token منتهي — تسجيل خروج تلقائي
+          // Token منتهي — استمر كـ guest
           localStorage.removeItem("ailo_token");
-          setAppScreen("login");
         }
         // التوكن صالح — لا حاجة لأي إجراء
       }catch(e){}
