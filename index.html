@@ -1720,19 +1720,38 @@ Rules:
     }
   };
 
+  // ── Ailo Talk: TTS via speechSynthesis fallback ──
+  const ailoSpeakFallback=(text)=>{
+    return new Promise((resolve)=>{
+      if(!window.speechSynthesis){ resolve(); return; }
+      window.speechSynthesis.cancel();
+      const utt=new SpeechSynthesisUtterance(text);
+      // detect language: Arabic if most chars are Arabic
+      const arabicRatio=(text.match(/[\u0600-\u06FF]/g)||[]).length/Math.max(text.length,1);
+      utt.lang = arabicRatio>0.3 ? "ar-SA" : "en-US";
+      utt.rate=0.92; utt.pitch=1.05; utt.volume=1;
+      utt.onend=()=>resolve();
+      utt.onerror=()=>resolve();
+      window.speechSynthesis.speak(utt);
+    });
+  };
+
   const ailoProcess=async(blob)=>{
     setAiloPhase("thinking");
     try{
       // 1) STT — Groq Whisper (direct)
+      // Detect best file extension from mime
+      const mime=blob.type||"audio/webm";
+      const ext=mime.includes("mp4")?"m4a":mime.includes("ogg")?"ogg":mime.includes("wav")?"wav":"webm";
       const fd=new FormData();
-      fd.append("file",blob,"audio.webm");
-      fd.append("model","whisper-large-v3");
+      fd.append("file",blob,`audio.${ext}`);
+      fd.append("model","whisper-large-v3-turbo");
       const sttRes=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",{
         method:"POST",
         headers:{"Authorization":`Bearer ${_GROQ}`},
         body:fd
       });
-      if(!sttRes.ok){ const e=await sttRes.text(); throw new Error("STT "+sttRes.status+": "+e.slice(0,120)); }
+      if(!sttRes.ok){ const e=await sttRes.text(); throw new Error("STT "+sttRes.status+": "+e.slice(0,200)); }
       const sttData=await sttRes.json();
       const transcript=(sttData.text||"").trim();
       if(!transcript){ setAiloPhase("idle"); return; }
@@ -1742,9 +1761,9 @@ Rules:
       const llmRes=await fetch("https://api.groq.com/openai/v1/chat/completions",{
         method:"POST",
         headers:{"Authorization":`Bearer ${_GROQ}`,"Content-Type":"application/json"},
-        body:JSON.stringify({model:"llama3-8b-8192",messages:msgs,max_tokens:220,temperature:0.82})
+        body:JSON.stringify({model:"llama-3.1-8b-instant",messages:msgs,max_tokens:220,temperature:0.82})
       });
-      if(!llmRes.ok){ const e=await llmRes.text(); throw new Error("LLM "+llmRes.status+": "+e.slice(0,120)); }
+      if(!llmRes.ok){ const e=await llmRes.text(); throw new Error("LLM "+llmRes.status+": "+e.slice(0,200)); }
       const llmData=await llmRes.json();
       const reply=(llmData.choices?.[0]?.message?.content||"").trim();
       if(!reply){ setAiloPhase("idle"); return; }
@@ -1752,62 +1771,101 @@ Rules:
       // save history (keep last 8 turns)
       setAiloHistory(h=>[...h,{role:"user",content:transcript},{role:"assistant",content:reply}].slice(-16));
 
-      // 3) TTS — Cartesia (direct, bytes endpoint)
+      // 3) TTS — try Cartesia first, fallback to speechSynthesis
       setAiloPhase("speaking");
-      const ttsRes=await fetch("https://api.cartesia.ai/tts/bytes",{
-        method:"POST",
-        headers:{
-          "X-API-Key":_CKEY,
-          "Cartesia-Version":"2024-06-10",
-          "Content-Type":"application/json"
-        },
-        body:JSON.stringify({
-          model_id:"sonic-multilingual",
-          transcript:reply,
-          voice:{mode:"id",id:_CVID},
-          output_format:{container:"wav",encoding:"pcm_f32le",sample_rate:44100}
-        })
-      });
-      if(!ttsRes.ok){ const e=await ttsRes.text(); throw new Error("TTS "+ttsRes.status+": "+e.slice(0,120)); }
-      const ttsBlob=await ttsRes.blob();
-      const url=URL.createObjectURL(ttsBlob);
-      const audio=new Audio(url);
-      ailoAudioRef.current=audio;
-      audio.onended=()=>{ URL.revokeObjectURL(url); ailoAudioRef.current=null; setAiloPhase("idle"); };
-      audio.onerror=()=>{ setAiloPhase("idle"); };
-      await audio.play();
+      let ttsOk=false;
+      try{
+        const ttsRes=await fetch("https://api.cartesia.ai/tts/bytes",{
+          method:"POST",
+          headers:{
+            "X-API-Key":_CKEY,
+            "Cartesia-Version":"2024-06-10",
+            "Content-Type":"application/json"
+          },
+          body:JSON.stringify({
+            model_id:"sonic-multilingual",
+            transcript:reply,
+            voice:{mode:"id",id:_CVID},
+            output_format:{container:"wav",encoding:"pcm_f32le",sample_rate:44100}
+          })
+        });
+        if(ttsRes.ok){
+          const ttsBlob=await ttsRes.blob();
+          if(ttsBlob.size>1000){
+            const url=URL.createObjectURL(ttsBlob);
+            const audio=new Audio(url);
+            ailoAudioRef.current=audio;
+            await new Promise((res,rej)=>{
+              audio.onended=()=>{ URL.revokeObjectURL(url); ailoAudioRef.current=null; res(); };
+              audio.onerror=(e)=>{ URL.revokeObjectURL(url); rej(e); };
+              audio.play().catch(rej);
+            });
+            ttsOk=true;
+          }
+        }
+      }catch(ttsErr){
+        console.warn("[AiloTalk] Cartesia failed, fallback to speechSynthesis:",ttsErr.message);
+      }
+      // Fallback: Web Speech API
+      if(!ttsOk){
+        await ailoSpeakFallback(reply);
+      }
+      setAiloPhase("idle");
     }catch(err){
       console.error("[AiloTalk]",err);
-      setAiloErr(err.message||"خطأ غير معروف");
+      // Show friendly error
+      const msg=err.message||"";
+      const friendly=msg.includes("STT")?"تعذّر فهم الصوت — تحدث بوضوح أكثر":
+                     msg.includes("LLM")?"تعذّر الاتصال بـ AI — تحقق من الإنترنت":
+                     msg.includes("getUserMedia")||msg.includes("NotAllowed")?"يرجى السماح بالوصول للميكروفون":
+                     "خطأ مؤقت — حاول مرة أخرى";
+      setAiloErr(friendly);
       setAiloPhase("error");
-      setTimeout(()=>setAiloPhase("idle"),3000);
+      setTimeout(()=>setAiloPhase("idle"),3500);
     }
   };
 
   const ailoPointerDown=async()=>{
-    if(ailoPhase==="thinking"||ailoPhase==="listening") return;
+    if(ailoPhase==="thinking"||ailoPhase==="listening"||ailoPhase==="speaking") return;
     ailoStopAudio();
+    if(window.speechSynthesis) window.speechSynthesis.cancel();
     setAiloPhase("idle");
     setAiloErr("");
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":
-                 MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":
-                 MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"audio/ogg";
-      const mr=new MediaRecorder(stream,{mimeType:mime});
+      if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+        throw new Error("NotSupported");
+      }
+      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+      // Pick best supported mime — Safari needs audio/mp4, Chrome prefers webm
+      const mimeOrder=[
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4;codecs=mp4a",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+        "audio/ogg",
+      ];
+      const mime=mimeOrder.find(m=>{ try{ return MediaRecorder.isTypeSupported(m); }catch(_){ return false; } })||"";
+      const mrOpts=mime?{mimeType:mime}:{};
+      const mr=new MediaRecorder(stream,mrOpts);
+      const usedMime=mr.mimeType||mime||"audio/webm";
       ailoChunksRef.current=[];
-      mr.ondataavailable=e=>{ if(e.data.size>0) ailoChunksRef.current.push(e.data); };
+      mr.ondataavailable=e=>{ if(e.data&&e.data.size>0) ailoChunksRef.current.push(e.data); };
       mr.onstop=()=>{
         stream.getTracks().forEach(t=>t.stop());
-        const blob=new Blob(ailoChunksRef.current,{type:mime});
-        if(blob.size>1000) ailoProcess(blob);
+        const blob=new Blob(ailoChunksRef.current,{type:usedMime});
+        if(blob.size>500) ailoProcess(blob);
         else setAiloPhase("idle");
       };
       mr.start(250);
       ailoRecRef.current=mr;
       setAiloPhase("listening");
     }catch(err){
-      setAiloErr("تعذّر الوصول للميكروفون");
+      const msg=err.message||"";
+      const friendly=msg.includes("NotAllowed")||msg.includes("Permission")?"امنح التطبيق صلاحية الميكروفون":
+                     msg.includes("NotSupported")||msg.includes("NotFound")?"متصفحك لا يدعم هذه الميزة":
+                     "تعذّر الوصول للميكروفون";
+      setAiloErr(friendly);
       setAiloPhase("error");
       setTimeout(()=>setAiloPhase("idle"),2500);
     }
@@ -7216,7 +7274,7 @@ Rules:
 
             {/* Close + Title */}
             <div style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",zIndex:2}}>
-              <button onClick={()=>{ ailoStopAudio(); ailoPointerUp(); setShowAiloTalk(false); setAiloPhase("idle"); }}
+              <button onClick={()=>{ ailoStopAudio(); if(window.speechSynthesis) window.speechSynthesis.cancel(); ailoPointerUp(); setShowAiloTalk(false); setAiloPhase("idle"); }}
                 style={{width:44,height:44,borderRadius:22,background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.12)",color:"white",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
                 ✕
               </button>
@@ -7226,7 +7284,7 @@ Rules:
                   {ailoHistory.length===0?"NEW SESSION":`${Math.floor(ailoHistory.length/2)} turns`}
                 </div>
               </div>
-              <button onClick={()=>{ ailoStopAudio(); ailoPointerUp(); setAiloHistory([]); setAiloPhase("idle"); }}
+              <button onClick={()=>{ ailoStopAudio(); if(window.speechSynthesis) window.speechSynthesis.cancel(); ailoPointerUp(); setAiloHistory([]); setAiloPhase("idle"); }}
                 style={{width:44,height:44,borderRadius:22,background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.5)",fontSize:11,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",fontWeight:700}}>
                 Reset
               </button>
