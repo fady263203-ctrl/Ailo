@@ -553,7 +553,7 @@ function CommunityQuestion({primary,border,muted,text,darkMode,btnP,glass,getSup
                       created_at:new Date().toISOString()
                     });
                     setCqDone(true);
-                    addXp(10,"مساهمة مجتمعية");
+                    addXpDaily("community_question",10,"مساهمة مجتمعية");
                   }
                 }catch(e){ alert("حدث خطأ، حاول مجدداً"); }
                 setCqSending(false);
@@ -2038,6 +2038,11 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   const addXp=useCallback((amt,label)=>{
     const multiplied = xpDouble ? amt*2 : amt;
+    // حماية من التكرار السريع جداً لنفس الحدث (debounce 300ms)
+    const dedupeKey="ailo_xp_debounce_"+label;
+    const lastTime=parseInt(sessionStorage.getItem(dedupeKey)||"0");
+    if(Date.now()-lastTime<300){ return; }
+    sessionStorage.setItem(dedupeKey,Date.now());
     setTotalXp(x=>{
       const oldLvl=getLvl(x).level;
       const newXp=x+multiplied;
@@ -2048,6 +2053,24 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     setXpPopup({amt:multiplied,label});
     setTimeout(()=>setXpPopup(null),2000);
   },[]);
+
+  // ── addXpOnce: يمنح XP مرة واحدة فقط مدى الحياة لكل مفتاح ──
+  const addXpOnce=useCallback((key,amt,label)=>{
+    const grantedKey="ailo_xp_once_"+key;
+    if(localStorage.getItem(grantedKey)) return;
+    localStorage.setItem(grantedKey,"1");
+    addXp(amt,label);
+  },[addXp]);
+
+  // ── addXpDaily: يمنح XP مرة واحدة في اليوم لكل مفتاح ──
+  const addXpDaily=useCallback((key,amt,label)=>{
+    const today=new Date().toDateString();
+    const grantedKey="ailo_xp_daily_"+key;
+    if(localStorage.getItem(grantedKey)===today) return;
+    localStorage.setItem(grantedKey,today);
+    addXp(amt,label);
+  },[addXp]);
+
 
   // Update quest progress
   const updateQuest=(key,inc=1)=>{
@@ -2265,14 +2288,14 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       setCallStatus("idle");
       addNotif("📞","انتهت المكالمة","أنهى شريكك المكالمة","call");
       setScreen("home");
-      addXp(30,"مكالمة");
+      addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة");
     });
     ch.subscribe();
     roomRef.current = ch;
   };
 
   const acceptMatch = () => {
-    addXp(10,"مطابقة");
+    addXpDaily("matching",10,"مطابقة");
     const supa = getSupa();
     if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
     const rid = roomId || "ailo_"+Date.now();
@@ -3613,7 +3636,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                 const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
                 setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
               }
-              addXp(30,"مكالمة"); setCoins(c=>c+10);
+              addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة"); setCoins(c=>c+10);
             }
             setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
             setCallStatus("idle");
@@ -7427,7 +7450,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               save("userPreferences",prefs);
               setUserPreferences(prefs);
               setShowOnboarding(false);
-              addXp(20,"إكمال الإعداد");
+              addXpOnce("onboarding_setup",20,"إكمال الإعداد");
               addNotif("🎉","تم الإعداد!","تجربتك جاهزة — ابدأ تمرينك الأول الآن 🚀","quest");
               // حفظ في Supabase
               try{
