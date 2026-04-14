@@ -553,7 +553,7 @@ function CommunityQuestion({primary,border,muted,text,darkMode,btnP,glass,getSup
                       created_at:new Date().toISOString()
                     });
                     setCqDone(true);
-                    addXpDaily("community_question",10,"مساهمة مجتمعية");
+                    addXp(10,"مساهمة مجتمعية");
                   }
                 }catch(e){ alert("حدث خطأ، حاول مجدداً"); }
                 setCqSending(false);
@@ -677,6 +677,7 @@ function Ailo(){
   const[tab,setTab]=useState("home");
   const[screen,setScreen]=useState("home");
   const[callType,setCallType]=useState("text");
+  const[callOrigin,setCallOrigin]=useState("home"); // "home" | "chat" — من أين بُدئت المكالمة
   const[showCallCorrection,setShowCallCorrection]=useState(false);
   const[showConvoStarters,setShowConvoStarters]=useState(false);
   // ── AI Call Features ──
@@ -2038,11 +2039,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
 
   const addXp=useCallback((amt,label)=>{
     const multiplied = xpDouble ? amt*2 : amt;
-    // حماية من التكرار السريع جداً لنفس الحدث (debounce 300ms)
-    const dedupeKey="ailo_xp_debounce_"+label;
-    const lastTime=parseInt(sessionStorage.getItem(dedupeKey)||"0");
-    if(Date.now()-lastTime<300){ return; }
-    sessionStorage.setItem(dedupeKey,Date.now());
     setTotalXp(x=>{
       const oldLvl=getLvl(x).level;
       const newXp=x+multiplied;
@@ -2053,24 +2049,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
     setXpPopup({amt:multiplied,label});
     setTimeout(()=>setXpPopup(null),2000);
   },[]);
-
-  // ── addXpOnce: يمنح XP مرة واحدة فقط مدى الحياة لكل مفتاح ──
-  const addXpOnce=useCallback((key,amt,label)=>{
-    const grantedKey="ailo_xp_once_"+key;
-    if(localStorage.getItem(grantedKey)) return;
-    localStorage.setItem(grantedKey,"1");
-    addXp(amt,label);
-  },[addXp]);
-
-  // ── addXpDaily: يمنح XP مرة واحدة في اليوم لكل مفتاح ──
-  const addXpDaily=useCallback((key,amt,label)=>{
-    const today=new Date().toDateString();
-    const grantedKey="ailo_xp_daily_"+key;
-    if(localStorage.getItem(grantedKey)===today) return;
-    localStorage.setItem(grantedKey,today);
-    addXp(amt,label);
-  },[addXp]);
-
 
   // Update quest progress
   const updateQuest=(key,inc=1)=>{
@@ -2281,21 +2259,27 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
       // رسالة نظام: انتهت المكالمة
       addCallSystemMsg("📞","انتهت المكالمة","أنهى شريكك المكالمة");
       try{ await leaveAgora(); }catch(e){}
-      const supa2=getSupa();
-      if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
       setMicOn(true); setCamOn(true);
       setRemoteMicOff(false); setRemoteCamOff(false);
       setCallStatus("idle");
       addNotif("📞","انتهت المكالمة","أنهى شريكك المكالمة","call");
-      setScreen("home");
-      addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة");
+      addXp(30,"مكالمة");
+      // إذا بدأت من الدردشة العشوائية → ابقَ في القناة وعُد للـ chat
+      if(callOrigin==="chat"){
+        setCallOrigin("home");
+        setScreen("chat");
+      } else {
+        const supa2=getSupa();
+        if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
+        setScreen("home");
+      }
     });
     ch.subscribe();
     roomRef.current = ch;
   };
 
   const acceptMatch = () => {
-    addXpDaily("matching",10,"مطابقة");
+    addXp(10,"مطابقة");
     const supa = getSupa();
     if(lobbyRef.current && supa){ supa.removeChannel(lobbyRef.current); lobbyRef.current=null; }
     const rid = roomId || "ailo_"+Date.now();
@@ -3619,30 +3603,56 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             addCallSystemMsg(callType==="video"?"📹":"🎙️","مكالمة ملغاة");
             if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
             await leaveAgora();
-            const supa2=getSupa();
-            if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
-            const dur=fmt(callTime);
-            if(callStatus==="connected"){
-              // رسالة نظام: انتهت المكالمة + مدتها
-              addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
-              const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
-              setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
-              setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
-              updateQuest("calls");
-              const today=new Date().toDateString();
-              const lastDay=load("last_call_day","");
-              if(lastDay!==today){
-                const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
-                const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
-                setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
+            // إذا بدأت المكالمة من الدردشة العشوائية → لا تُغلق القناة، عُد للدردشة
+            if(callOrigin==="chat"){
+              const dur=fmt(callTime);
+              if(callStatus==="connected"){
+                addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
+                const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
+                setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
+                setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
+                updateQuest("calls");
+                const today=new Date().toDateString();
+                const lastDay=load("last_call_day","");
+                if(lastDay!==today){
+                  const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+                  const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
+                  setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
+                }
+                addXp(30,"مكالمة"); setCoins(c=>c+10);
               }
-              addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة"); setCoins(c=>c+10);
+              setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
+              setCallStatus("idle");
+              try{callSpeechRef.current?.stop();}catch(_){}
+              setCallListening(false); setCallTranscript(""); setCallCorrection(null);
+              setCallOrigin("home");
+              setScreen("chat"); // ← العودة للدردشة العشوائية
+            } else {
+              const supa2=getSupa();
+              if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
+              const dur=fmt(callTime);
+              if(callStatus==="connected"){
+                // رسالة نظام: انتهت المكالمة + مدتها
+                addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
+                const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
+                setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
+                setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
+                updateQuest("calls");
+                const today=new Date().toDateString();
+                const lastDay=load("last_call_day","");
+                if(lastDay!==today){
+                  const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+                  const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
+                  setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
+                }
+                addXp(30,"مكالمة"); setCoins(c=>c+10);
+              }
+              setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
+              setCallStatus("idle");
+              try{callSpeechRef.current?.stop();}catch(_){}
+              setCallListening(false); setCallTranscript(""); setCallCorrection(null);
+              setScreen("home");
             }
-            setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
-            setCallStatus("idle");
-            try{callSpeechRef.current?.stop();}catch(_){}
-            setCallListening(false); setCallTranscript(""); setCallCorrection(null);
-            setScreen("home");
           }},
           ...(callType==="video"?[
             {icon:camOn?Ic.video("white",22):Ic.video("#ef4444",22), label:camOn?"كاميرا":"مغلق", active:camOn, action:toggleCam},
@@ -3760,7 +3770,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
           <div style={{display:"flex",gap:6}}>
             <button onClick={async()=>{
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
-              setCallType("voice"); setCallStatus("outgoing"); setCallTime(0);
+              setCallType("voice"); setCallStatus("outgoing"); setCallTime(0); setCallOrigin("chat");
               setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
               setScreen("call");
               addCallSystemMsg("🎙️","Voice call","Waiting for answer...");
@@ -3771,7 +3781,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
             }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.phone(primary,16)}</button>
             <button onClick={async()=>{
               const targetId = partner._uid; if(!targetId){ alert("لا يوجد معرّف للشريك"); return; }
-              setCallType("video"); setCallStatus("outgoing"); setCallTime(0);
+              setCallType("video"); setCallStatus("outgoing"); setCallTime(0); setCallOrigin("chat");
               setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
               setScreen("call");
               addCallSystemMsg("📹","Video call","Waiting for answer...");
@@ -7325,6 +7335,8 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
                     setCallType(d.callType);
                     setCallStatus("connected");
                     setCallTime(0);
+                    // إذا كنا في الدردشة العشوائية → سجّل الأصل لنعود إليها بعد الإنهاء
+                    setCallOrigin(screen==="chat" ? "chat" : "home");
                     setShowCallCorrection(false); setShowConvoStarters(false); setCallCorrection(null); setCallTranscript(""); setAiStarters([]); try{callSpeechRef.current?.stop();}catch(_){} setCallListening(false);
                     setScreen("call");
                     setTimeout(async()=>{
@@ -7450,7 +7462,7 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
               save("userPreferences",prefs);
               setUserPreferences(prefs);
               setShowOnboarding(false);
-              addXpOnce("onboarding_setup",20,"إكمال الإعداد");
+              addXp(20,"إكمال الإعداد");
               addNotif("🎉","تم الإعداد!","تجربتك جاهزة — ابدأ تمرينك الأول الآن 🚀","quest");
               // حفظ في Supabase
               try{
