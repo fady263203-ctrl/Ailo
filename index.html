@@ -3559,144 +3559,238 @@ User said: "${userMsg}"`;
   );
 
   // ── CALL ──────────────────────────────────────────────────────────────────
+  // ── دالة إنهاء المكالمة (مشتركة) ──────────────────────────────────────
+  const doEndCall = async () => {
+    if(isBotMatch||partner._isBot){
+      if(botReplyRef.current){clearTimeout(botReplyRef.current);botReplyRef.current=null;}
+      await leaveAgora();
+      setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
+      setCallStatus("idle");try{callSpeechRef.current?.stop();}catch(_){}
+      setCallListening(false);setCallTranscript("");setCallCorrection(null);
+      if(callStatus==="connected"){
+        const dur=fmt(callTime);
+        addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
+        addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة"); setCoins(c=>c+10);
+        updateQuest("calls");
+      }
+      setIsBotMatch(false);setMatched(false);
+      setPartner({name:"",av:"",country:""});setMessages([]);
+      setScreen("home"); return;
+    }
+    if(callStatus==="outgoing" && roomId){
+      const supa0=getSupa();
+      if(supa0){
+        const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
+        if(targetId){
+          try{const ib=supa0.channel("inbox_"+targetId);await ib.subscribe();await ib.send({type:"broadcast",event:"missed_call",payload:{callType,from:{name:profile.name,av:profile.avatar,userId}}});supa0.removeChannel(ib);}catch(e){}
+          sendPushNotif(targetId,callType==="video"?`📹 مكالمة فيديو فائتة من ${profile.name}`:`🎙️ مكالمة صوتية فائتة من ${profile.name}`,"اضغط للرد","call",{callType});
+        }
+      }
+    }
+    addCallSystemMsg(callType==="video"?"📹":"🎙️","مكالمة ملغاة");
+    if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
+    await leaveAgora();
+    const supa2=getSupa();
+    if(roomRef.current&&supa2){try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null;}
+    const dur=fmt(callTime);
+    if(callStatus==="connected"){
+      addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
+      const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
+      setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
+      setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
+      updateQuest("calls");
+      const today=new Date().toDateString(); const lastDay=load("last_call_day","");
+      if(lastDay!==today){const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);const newStreak=lastDay===yesterday.toDateString()?streak+1:1;setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);}
+      addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة"); setCoins(c=>c+10);
+    }
+    setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
+    setCallStatus("idle");try{callSpeechRef.current?.stop();}catch(_){}
+    setCallListening(false);setCallTranscript("");setCallCorrection(null);
+    setScreen("home");
+  };
+
   if(screen==="call") return(
-    <div style={{background:darkMode?"#060612":bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Poppins','Tajawal',system-ui",position:"relative",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 30%,${primary}22 0%,transparent 70%)`,pointerEvents:"none"}}/>
-      {/* Remote audio — مخفي يشغّل الصوت في مكالمات الصوت */}
+    <div style={{background:"#08090f",minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",fontFamily:"'Poppins','Tajawal',system-ui",position:"relative",overflow:"hidden",color:"white"}}>
+
+      {/* ── Audio (hidden) ── */}
       <audio ref={remoteAudioRef} autoPlay playsInline style={{display:"none"}}/>
-      {/* Remote video — WebRTC */}
-      {callType==="video" && <video ref={remoteVideoElRef} autoPlay playsInline style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",background:"#111",zIndex:0}}/>}
-      {/* Remote cam off overlay */}
+
+      {/* ── VIDEO BG ── */}
+      {callType==="video" && (
+        <video ref={remoteVideoElRef} autoPlay playsInline style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",background:"#0a0a0a",zIndex:0}}/>
+      )}
+
+      {/* ── VOICE BG: animated gradient orbs ── */}
+      {callType!=="video" && (<>
+        <div style={{position:"absolute",inset:0,background:"linear-gradient(160deg,#0d0f1e 0%,#0a0c18 50%,#080910 100%)",zIndex:0}}/>
+        <div style={{position:"absolute",top:"-10%",left:"20%",width:340,height:340,borderRadius:"50%",background:`radial-gradient(circle,${primary}26 0%,transparent 70%)`,filter:"blur(40px)",animation:"floatOrb 7s ease-in-out infinite",zIndex:0}}/>
+        <div style={{position:"absolute",top:"30%",right:"-10%",width:260,height:260,borderRadius:"50%",background:"radial-gradient(circle,rgba(168,85,247,0.18) 0%,transparent 70%)",filter:"blur(48px)",animation:"floatOrb 9s ease-in-out infinite",animationDelay:"2s",zIndex:0}}/>
+        <div style={{position:"absolute",bottom:"10%",left:"-5%",width:220,height:220,borderRadius:"50%",background:"radial-gradient(circle,rgba(34,197,94,0.1) 0%,transparent 70%)",filter:"blur(40px)",animation:"floatOrb 11s ease-in-out infinite",animationDelay:"4s",zIndex:0}}/>
+      </>)}
+
+      {/* ── Video cam-off overlay ── */}
       {callType==="video" && remoteCamOff && (
-        <div style={{position:"absolute",inset:0,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"#111"}}>
+        <div style={{position:"absolute",inset:0,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(160deg,#0d0f1e,#0a0c18)"}}>
           <div style={{textAlign:"center"}}>
-            <div style={{width:80,height:80,borderRadius:40,overflow:"hidden",margin:"0 auto 10px",border:`2px solid ${primary}`}}>
-              {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:56,lineHeight:"80px",display:"block"}}>{partner.av||"🌍"}</span>}
+            <div style={{width:100,height:100,borderRadius:50,overflow:"hidden",margin:"0 auto 12px",border:`3px solid ${primary}`,boxShadow:`0 0 40px ${primary}44`}}>
+              {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:68,lineHeight:"100px",display:"block"}}>{partner.av||"🌍"}</span>}
             </div>
-            <div style={{color:"#aaa",fontSize:13}}>أوقف الكاميرا</div>
+            <div style={{color:"rgba(255,255,255,0.5)",fontSize:13,fontWeight:600}}>أوقف الكاميرا</div>
           </div>
         </div>
       )}
-      {/* Header with status indicators */}
-      <div style={{padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:4}}>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          {callStatus==="connected"&&<div style={{background:"rgba(239,68,68,0.15)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:5}}><div style={{width:6,height:6,borderRadius:3,background:"#ef4444",animation:"dot0 1s ease-in-out infinite"}}/><span style={{fontSize:11,color:"#ef4444",fontWeight:700}}>LIVE</span></div>}
-          <div style={{background:"rgba(34,197,94,0.15)",borderRadius:50,padding:"4px 12px",display:"flex",alignItems:"center",gap:5}}>{Ic.shield("#22c55e",12)}<span style={{fontSize:11,color:"#22c55e",fontWeight:600}}>مشفر</span></div>
-          {remoteMicOff && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}>{Ic.micOff("#ef4444",12)}<span style={{fontSize:10,color:"#ef4444"}}>كتم الصوت</span></div>}
-          {remoteCamOff && callType==="video" && <div style={{background:"rgba(239,68,68,0.2)",borderRadius:50,padding:"4px 10px",display:"flex",alignItems:"center",gap:4}}><svg width="10" height="10" viewBox="0 0 24 24" fill="rgba(239,68,68,0.2)" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/><line x1="1" y1="1" x2="23" y2="23"/></svg><span style={{fontSize:10,color:"#ef4444"}}>أوقف الكاميرا</span></div>}
+
+      {/* ── TOP STATUS BAR ── */}
+      <div style={{position:"relative",zIndex:6,padding:"env(safe-area-inset-top,14px) 18px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"linear-gradient(to bottom,rgba(0,0,0,0.72) 0%,transparent 100%)"}}>
+        {/* Left: indicators */}
+        <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+          {callStatus==="connected"&&(
+            <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,0.18)",border:"1px solid rgba(239,68,68,0.35)",borderRadius:50,padding:"3px 10px"}}>
+              <div style={{width:6,height:6,borderRadius:3,background:"#ef4444",animation:"dot0 1s ease-in-out infinite"}}/>
+              <span style={{fontSize:10,color:"#ef4444",fontWeight:800,letterSpacing:1}}>LIVE</span>
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(34,197,94,0.12)",border:"1px solid rgba(34,197,94,0.25)",borderRadius:50,padding:"3px 10px"}}>
+            {Ic.shield("#22c55e",11)}
+            <span style={{fontSize:10,color:"#22c55e",fontWeight:700}}>مشفر</span>
+          </div>
+          {remoteMicOff&&(
+            <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,0.14)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:50,padding:"3px 9px"}}>
+              {Ic.micOff("#ef4444",10)}
+              <span style={{fontSize:10,color:"#ef4444",fontWeight:600}}>كتم</span>
+            </div>
+          )}
         </div>
-        <div style={{fontWeight:800,fontSize:18,letterSpacing:2,color:callStatus==="connected"?"#22c55e":primary}}>
-          {callStatus==="outgoing" ? "Calling..." : fmt(callTime)}
+        {/* Right: timer */}
+        <div style={{background:"rgba(0,0,0,0.45)",backdropFilter:"blur(12px)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:50,padding:"5px 14px"}}>
+          <span style={{fontSize:14,fontWeight:800,letterSpacing:3,color:callStatus==="connected"?"#4ade80":"rgba(255,255,255,0.7)",fontVariantNumeric:"tabular-nums"}}>
+            {callStatus==="outgoing"?"Calling…":fmt(callTime)}
+          </span>
         </div>
       </div>
-      {/* Voice call partner display */}
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>
-        {callType!=="video" && <div style={{textAlign:"center"}}>
-          {/* Avatar with pulse ring */}
-          <div style={{position:"relative",width:120,height:120,margin:"0 auto 16px"}}>
-            {callStatus==="outgoing" && <>
-              <div style={{position:"absolute",inset:-16,borderRadius:"50%",border:`2px solid ${primary}44`,animation:"dot0 1.6s ease-in-out infinite"}}/>
-              <div style={{position:"absolute",inset:-28,borderRadius:"50%",border:`2px solid ${primary}22`,animation:"dot0 1.6s ease-in-out infinite",animationDelay:"0.4s"}}/>
-            </>}
-            <div style={{width:120,height:120,borderRadius:60,overflow:"hidden",border:`3px solid ${callStatus==="connected"?"#22c55e":primary}`,boxShadow:`0 0 30px ${callStatus==="connected"?"#22c55e44":primary+"44"}`,transition:"border-color 0.5s,box-shadow 0.5s"}}>
-              {partner.av?.startsWith("http")?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:80,lineHeight:"120px",display:"block"}}>{partner.av||"🌍"}</span>}
+
+      {/* ── VOICE CALL CENTER CONTENT ── */}
+      {callType!=="video" && (
+        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:2,gap:0,paddingBottom:20}}>
+
+          {/* Avatar */}
+          <div style={{position:"relative",marginBottom:22}}>
+            {/* Pulse rings */}
+            {callStatus==="outgoing"&&[1,2,3].map(i=>(
+              <div key={i} style={{position:"absolute",inset:-i*18,borderRadius:"50%",border:`1.5px solid ${primary}${["40","28","14"][i-1]}`,animation:`atRing ${1.2+i*0.3}s ease-out infinite`,animationDelay:`${(i-1)*0.4}s`,zIndex:0}}/>
+            ))}
+            {callStatus==="connected"&&[1,2].map(i=>(
+              <div key={i} style={{position:"absolute",inset:-i*16,borderRadius:"50%",border:`1.5px solid rgba(74,222,128,${["0.25","0.1"][i-1]})`,animation:`atRing ${2+i*0.5}s ease-out infinite`,animationDelay:`${(i-1)*0.6}s`,zIndex:0}}/>
+            ))}
+            <div style={{position:"relative",width:140,height:140,borderRadius:70,overflow:"hidden",border:`3px solid ${callStatus==="connected"?"#4ade80":primary}`,boxShadow:`0 0 0 6px ${callStatus==="connected"?"rgba(74,222,128,0.12)":primary+"18"}, 0 20px 60px rgba(0,0,0,0.6)`,transition:"border-color 0.5s,box-shadow 0.5s",zIndex:1}}>
+              {partner.av?.startsWith("http")
+                ?<img src={partner.av} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:88,background:"linear-gradient(135deg,rgba(99,102,241,0.15),rgba(168,85,247,0.1))"}}>{partner.av||"🌍"}</div>
+              }
             </div>
           </div>
-          <div style={{fontSize:24,fontWeight:800,color:"white",marginBottom:8}}>{partner.name}</div>
-          {/* Call status label */}
-          {callStatus==="outgoing"
-            ? <div style={{color:primary,fontSize:14,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                <span>{callType==="video"?"📹 مكالمة فيديو صادرة":"🎙️ مكالمة صوتية صادرة"}</span>
-              </div>
-            : <div style={{color:"#22c55e",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                <div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e",animation:"dot0 1.2s ease-in-out infinite"}}/>
-                <span>متصل</span>
-                {remoteMicOff && <span style={{color:"#ef4444",fontSize:12}}>• كتم الصوت 🔇</span>}
-              </div>
-          }
-          {/* Ringing dots - only when outgoing */}
-          {callStatus==="outgoing" && <div style={{marginTop:16,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:4,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.2}s`}}/>)}
-          </div>}
-        </div>}
-      </div>
 
-      {/* ── AI Correction + Conversation Starters Overlay ── */}
-      <div style={{position:"absolute",top:callType==="video"?96:210,left:0,right:0,zIndex:5,padding:"0 14px",display:"flex",flexDirection:"column",gap:10}}>
-
-        {/* ── شريط التعرف على الكلام (Transcript Live) ── */}
-        {callListening&&callTranscript&&(
-          <div style={{background:"rgba(99,102,241,0.18)",border:"1px solid rgba(99,102,241,0.4)",borderRadius:14,padding:"8px 14px",backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:7,height:7,borderRadius:4,background:"#818cf8",animation:"dot0 0.8s ease-in-out infinite",flexShrink:0}}/>
-            <p style={{fontSize:12,color:"rgba(255,255,255,0.85)",margin:0,fontStyle:"italic",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>"{callTranscript}"</p>
-            {callCorrLoading&&<div style={{width:14,height:14,borderRadius:7,border:"2px solid rgba(129,140,248,0.5)",borderTopColor:"#818cf8",animation:"spin 0.7s linear infinite",flexShrink:0}}/>}
+          {/* Name + country */}
+          <div style={{textAlign:"center",marginBottom:10}}>
+            <div style={{fontSize:26,fontWeight:900,color:"white",letterSpacing:"-0.4px",marginBottom:4}}>
+              {partner.name}
+              {(isBotMatch||partner._isBot)&&<span style={{fontSize:11,background:`${primary}22`,color:"#818cf8",borderRadius:50,padding:"2px 9px",marginRight:7,fontWeight:700,verticalAlign:"middle"}}>AI</span>}
+            </div>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.45)",fontWeight:500}}>🌍 {partner.country}</div>
           </div>
-        )}
 
-        {/* ── بطاقة التصحيح الذكي ── */}
-        {showCallCorrection&&callCorrection&&(
-          <div style={{background:"rgba(234,179,8,0.12)",border:"1px solid rgba(234,179,8,0.38)",borderRadius:18,padding:"11px 14px",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",animation:"bubbleIn 0.25s cubic-bezier(0.34,1.56,0.64,1)"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:11,color:"#fbbf24",fontWeight:700,marginBottom:5,display:"flex",alignItems:"center",gap:5}}>
-                  <span>✏️ تصحيح قواعدي</span>
-                  {callCorrLoading&&<div style={{width:10,height:10,borderRadius:5,border:"1.5px solid rgba(251,191,36,0.4)",borderTopColor:"#fbbf24",animation:"spin 0.7s linear infinite"}}/>}
+          {/* Status pill */}
+          <div style={{marginBottom:24}}>
+            {callStatus==="outgoing"
+              ? <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(99,102,241,0.14)",border:`1px solid ${primary}30`,borderRadius:50,padding:"7px 18px"}}>
+                  <span style={{fontSize:12,color:primary,fontWeight:700}}>{callType==="video"?"📹 مكالمة فيديو":"🎙️ مكالمة صوتية"}</span>
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    {[0,1,2].map(i=><div key={i} style={{width:5,height:5,borderRadius:3,background:primary,animationName:`dot${i}`,animationDuration:"1.2s",animationIterationCount:"infinite",animationDelay:`${i*0.22}s`}}/>)}
+                  </div>
                 </div>
-                {/* الجملة الأصلية مشطوبة */}
-                <div style={{fontSize:11,color:"rgba(255,255,255,0.45)",marginBottom:3,textDecoration:"line-through"}}>"{callCorrection.original}"</div>
-                {/* الجملة الصحيحة */}
-                <div style={{fontSize:13,color:"#fde68a",fontWeight:600}}>"<span style={{textDecoration:"underline"}}>{callCorrection.corrected}</span>"</div>
-                {/* نصيحة سريعة */}
-                {callCorrection.tip&&<div style={{fontSize:10,color:"rgba(253,230,138,0.65)",marginTop:4}}>💡 {callCorrection.tip}</div>}
+              : <div style={{display:"flex",alignItems:"center",gap:7,background:"rgba(74,222,128,0.12)",border:"1px solid rgba(74,222,128,0.28)",borderRadius:50,padding:"7px 18px"}}>
+                  <div style={{width:7,height:7,borderRadius:4,background:"#4ade80",animation:"dot0 1.4s ease-in-out infinite"}}/>
+                  <span style={{fontSize:12,color:"#4ade80",fontWeight:700}}>متصل الآن</span>
+                  {remoteMicOff&&<span style={{fontSize:11,color:"#f87171",fontWeight:600}}>• مكتوم 🔇</span>}
+                </div>
+            }
+          </div>
+
+          {/* Waveform bars (voice animation) */}
+          {callStatus==="connected"&&(
+            <div style={{display:"flex",alignItems:"center",gap:3,height:32,marginBottom:8}}>
+              {[4,8,14,20,14,8,20,14,8,14,20,8,4].map((h,i)=>(
+                <div key={i} style={{width:3,borderRadius:2,background:`${primary}90`,height:h,animationName:`dot${i%3}`,animationDuration:`${0.7+i*0.07}s`,animationIterationCount:"infinite",animationTimingFunction:"ease-in-out",animationDelay:`${i*0.06}s`}}/>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── VIDEO CENTER (empty flex spacer) ── */}
+      {callType==="video" && <div style={{flex:1,zIndex:2}}/>}
+
+      {/* ── AI OVERLAYS (transcript / correction / starters) ── */}
+      <div style={{position:"absolute",top:callType==="video"?90:200,left:0,right:0,zIndex:7,padding:"0 14px",display:"flex",flexDirection:"column",gap:9}}>
+
+        {/* Transcript pill */}
+        {callListening&&callTranscript&&(
+          <div style={{display:"flex",alignItems:"center",gap:9,background:"rgba(99,102,241,0.2)",border:"1px solid rgba(99,102,241,0.45)",borderRadius:14,padding:"9px 14px",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
+            <div style={{width:7,height:7,borderRadius:4,background:"#818cf8",animation:"dot0 0.8s ease-in-out infinite",flexShrink:0}}/>
+            <p style={{fontSize:12,color:"rgba(255,255,255,0.88)",margin:0,fontStyle:"italic",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>"{callTranscript}"</p>
+            {callCorrLoading&&<div style={{width:14,height:14,borderRadius:7,border:"2px solid rgba(129,140,248,0.4)",borderTopColor:"#818cf8",animation:"spin 0.7s linear infinite",flexShrink:0}}/>}
+          </div>
+        )}
+
+        {/* Grammar correction card */}
+        {showCallCorrection&&callCorrection&&(
+          <div style={{background:"rgba(15,10,5,0.7)",border:"1px solid rgba(234,179,8,0.45)",borderRadius:20,padding:"13px 15px",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",animation:"bubbleIn 0.25s cubic-bezier(0.34,1.56,0.64,1)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:26,height:26,borderRadius:13,background:"rgba(234,179,8,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>✏️</div>
+                <span style={{fontSize:11,color:"#fbbf24",fontWeight:800,letterSpacing:0.3}}>تصحيح قواعدي</span>
+                {callCorrLoading&&<div style={{width:10,height:10,borderRadius:5,border:"1.5px solid rgba(251,191,36,0.4)",borderTopColor:"#fbbf24",animation:"spin 0.7s linear infinite"}}/>}
               </div>
-              <button onClick={()=>setShowCallCorrection(false)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.35)",fontSize:16,padding:"0 0 0 10px",flexShrink:0,lineHeight:1,fontFamily:"'Poppins','Tajawal',system-ui"}}>✕</button>
+              <button onClick={()=>setShowCallCorrection(false)} style={{background:"rgba(255,255,255,0.07)",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:13,width:24,height:24,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Poppins','Tajawal',system-ui"}}>✕</button>
             </div>
-            <div style={{display:"flex",gap:8,marginTop:9}}>
-              <button onClick={()=>setShowCallCorrection(false)} style={{fontSize:11,background:"rgba(234,179,8,0.22)",color:"#fde68a",padding:"5px 14px",borderRadius:50,border:"1px solid rgba(234,179,8,0.45)",cursor:"pointer",fontWeight:700,fontFamily:"'Poppins','Tajawal',system-ui"}}>حسناً ✓</button>
-              <button onClick={()=>setShowCallCorrection(false)} style={{fontSize:11,background:"none",border:"none",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",padding:"5px 8px"}}>تجاهل</button>
+            <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.18)",borderRadius:10,padding:"7px 11px",marginBottom:7,fontSize:12,color:"rgba(255,255,255,0.4)",textDecoration:"line-through"}}>"{callCorrection.original}"</div>
+            <div style={{background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.22)",borderRadius:10,padding:"7px 11px",marginBottom:7,fontSize:13,color:"#86efac",fontWeight:700}}>"{callCorrection.corrected}"</div>
+            {callCorrection.tip&&<div style={{fontSize:11,color:"rgba(253,230,138,0.6)",marginBottom:11}}>💡 {callCorrection.tip}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setShowCallCorrection(false)} style={{flex:1,fontSize:12,background:"rgba(234,179,8,0.18)",color:"#fde68a",padding:"7px 0",borderRadius:50,border:"1px solid rgba(234,179,8,0.4)",cursor:"pointer",fontWeight:800,fontFamily:"'Poppins','Tajawal',system-ui"}}>حسناً ✓</button>
+              <button onClick={()=>setShowCallCorrection(false)} style={{fontSize:12,background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",padding:"7px 16px",borderRadius:50}}>تجاهل</button>
             </div>
           </div>
         )}
 
-        {/* ── حالة "لا يوجد خطأ" بعد التحليل ── */}
+        {/* No error pill */}
         {callListening&&!callCorrLoading&&!callCorrection&&callTranscript&&(
-          <div style={{alignSelf:"center",background:"rgba(34,197,94,0.12)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:50,padding:"5px 14px",display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✅ جملة صحيحة!</span>
+          <div style={{alignSelf:"center",background:"rgba(34,197,94,0.14)",border:"1px solid rgba(34,197,94,0.32)",borderRadius:50,padding:"6px 16px",display:"flex",alignItems:"center",gap:6,animation:"bubbleIn 0.2s ease"}}>
+            <span style={{fontSize:11,color:"#4ade80",fontWeight:700}}>✅ جملة صحيحة!</span>
           </div>
         )}
 
-        {/* ── زر محفزات المحادثة + اللوحة ── */}
+        {/* Conversation starters */}
         {callStatus==="connected"&&(
           <>
-            <button
-              onClick={()=>{
-                const next=!showConvoStarters;
-                setShowConvoStarters(next);
-                if(next&&aiStarters.length===0) generateAiStarters();
-              }}
-              style={{alignSelf:"center",background:"rgba(255,255,255,0.1)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:50,padding:"7px 18px",color:"rgba(255,255,255,0.8)",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",gap:7,transition:"all 0.15s"}}>
+            <button onClick={()=>{const next=!showConvoStarters;setShowConvoStarters(next);if(next&&aiStarters.length===0) generateAiStarters();}}
+              style={{alignSelf:"center",background:"rgba(255,255,255,0.09)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",border:"1px solid rgba(255,255,255,0.14)",borderRadius:50,padding:"7px 18px",color:"rgba(255,255,255,0.75)",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",gap:7,transition:"all 0.15s"}}>
               💬 محفزات المحادثة {showConvoStarters?"▲":"▼"}
             </button>
-
             {showConvoStarters&&(
-              <div style={{background:"rgba(11,17,32,0.88)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:20,padding:"13px 15px",animation:"bubbleIn 0.22s cubic-bezier(0.34,1.56,0.64,1)"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <span style={{fontSize:10,color:"rgba(255,255,255,0.38)",fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>Conversation Starters · AI</span>
-                  <button onClick={()=>{setAiStarters([]);generateAiStarters();}} disabled={startersLoading} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(99,102,241,0.8)",fontSize:11,fontWeight:700,fontFamily:"'Poppins','Tajawal',system-ui",padding:0,display:"flex",alignItems:"center",gap:4}}>
-                    {startersLoading
-                      ?<div style={{width:12,height:12,borderRadius:6,border:"1.5px solid rgba(99,102,241,0.4)",borderTopColor:"#6366f1",animation:"spin 0.7s linear infinite"}}/>
-                      :<>🔄 جديدة</>}
+              <div style={{background:"rgba(8,10,20,0.9)",backdropFilter:"blur(28px)",WebkitBackdropFilter:"blur(28px)",border:"1px solid rgba(255,255,255,0.09)",borderRadius:22,padding:"14px 16px",animation:"bubbleIn 0.22s cubic-bezier(0.34,1.56,0.64,1)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <span style={{fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:700,textTransform:"uppercase",letterSpacing:1.2}}>Starters · AI</span>
+                  <button onClick={()=>{setAiStarters([]);generateAiStarters();}} disabled={startersLoading} style={{background:"rgba(99,102,241,0.14)",border:"1px solid rgba(99,102,241,0.3)",borderRadius:50,padding:"4px 12px",cursor:"pointer",color:"#818cf8",fontSize:11,fontWeight:700,fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",gap:5}}>
+                    {startersLoading?<div style={{width:11,height:11,borderRadius:6,border:"1.5px solid rgba(99,102,241,0.4)",borderTopColor:"#6366f1",animation:"spin 0.7s linear infinite"}}/>:<>🔄 جديدة</>}
                   </button>
                 </div>
-
                 {startersLoading
-                  ? [1,2,3].map(i=>(
-                    <div key={i} style={{height:16,background:"rgba(255,255,255,0.06)",borderRadius:8,marginBottom:i<3?8:0,animation:"shimmer 1.4s infinite"}}/>
-                  ))
-                  : (aiStarters.length?aiStarters:CONVO_STARTERS_DEFAULT).map((q,i)=>(
-                    <div key={i} style={{display:"flex",gap:9,alignItems:"flex-start",marginBottom:i<2?9:0}}>
-                      <span style={{color:"#6366f1",fontWeight:800,fontSize:13,flexShrink:0,marginTop:1,width:16}}>{i+1}.</span>
-                      <p style={{fontSize:12,color:"rgba(255,255,255,0.78)",margin:0,lineHeight:1.55}}>{q}</p>
+                  ?[1,2,3].map(i=><div key={i} style={{height:15,background:"rgba(255,255,255,0.06)",borderRadius:8,marginBottom:i<3?9:0,animation:"shimmer 1.4s infinite"}}/>)
+                  :(aiStarters.length?aiStarters:CONVO_STARTERS_DEFAULT).map((q,i)=>(
+                    <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:i<2?10:0,padding:"8px 10px",background:"rgba(255,255,255,0.04)",borderRadius:12,border:"1px solid rgba(255,255,255,0.06)"}}>
+                      <span style={{color:primary,fontWeight:900,fontSize:12,flexShrink:0,width:18}}>{i+1}.</span>
+                      <p style={{fontSize:12,color:"rgba(255,255,255,0.75)",margin:0,lineHeight:1.6}}>{q}</p>
                     </div>
                   ))
                 }
@@ -3706,223 +3800,176 @@ User said: "${userMsg}"`;
         )}
       </div>
 
-      {/* Local video preview — WebRTC */}
+      {/* ── LOCAL VIDEO PIP ── */}
       {callType==="video" && (
-        <div style={{position:"absolute",bottom:120,left:16,width:90,height:120,borderRadius:16,border:`2px solid ${camOn?primary:"#ef4444"}`,overflow:"hidden",boxShadow:`0 0 20px ${glow}`,zIndex:4,background:"#111"}}>
-          <video ref={localVideoElRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",display:camOn?"block":"none"}}/>
-          {!camOn && <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#aaa",fontSize:11}}>كاميرا مغلقة</div>}
+        <div style={{position:"absolute",bottom:186,right:14,width:86,height:116,borderRadius:18,border:`2px solid ${camOn?primary+"80":"rgba(239,68,68,0.6)"}`,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,0.6)",zIndex:6,background:"#0a0a0a",cursor:"pointer"}}
+          onClick={()=>{const el=localVideoElRef.current;if(el){const tmp=el.style.transform;el.style.transform=tmp.includes("scaleX(-1)")?"":"scaleX(-1)";}}}
+        >
+          <video ref={localVideoElRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",display:camOn?"block":"none",transform:"scaleX(-1)"}}/>
+          {!camOn&&<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(239,68,68,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <span style={{fontSize:9,color:"rgba(255,255,255,0.35)",fontWeight:600}}>مغلق</span>
+          </div>}
         </div>
       )}
-      {/* Controls */}
-      <div style={{padding:"20px 30px 44px",display:"flex",justifyContent:"center",gap:18,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:4}}>
-        {[
-          {icon:micOn?Ic.mic("white",22):Ic.micOff("white",22), label:micOn?"كتم":"تشغيل", active:micOn, action:toggleMic},
-          {icon:Ic.endCall("white",24), label:callStatus==="outgoing"?"إلغاء":"إنهاء", end:true, action:async()=>{
-            // ── إنهاء مكالمة البوت ──────────────────────────────────────────
-            if(isBotMatch||partner._isBot){
-              if(botReplyRef.current){clearTimeout(botReplyRef.current);botReplyRef.current=null;}
-              await leaveAgora();
-              setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
-              setCallStatus("idle");try{callSpeechRef.current?.stop();}catch(_){}
-              setCallListening(false);setCallTranscript("");setCallCorrection(null);
-              if(callStatus==="connected"){
-                const dur=fmt(callTime);
-                addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
-                addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة"); setCoins(c=>c+10);
-                updateQuest("calls");
-              }
-              setIsBotMatch(false);setMatched(false);
-              setPartner({name:"",av:"",country:""});setMessages([]);
-              setScreen("home");
-              return;
-            }
-            // إشعار مكالمة فائتة إذا كانت لم تُرد بعد
-            if(callStatus==="outgoing" && roomId){
-              const supa0=getSupa();
-              if(supa0){
-                const targetId=(()=>{const _p=roomId.replace("direct_","").split("__");const _m=userId.replace(/-/g,"");return _p.find(p=>p!==_m)||"";})();
-                if(targetId){
-                  // إرسال إشعار مكالمة فائتة عبر inbox
-                  try{
-                    const ib=supa0.channel("inbox_"+targetId);
-                    await ib.subscribe();
-                    await ib.send({type:"broadcast",event:"missed_call",payload:{
-                      callType, from:{name:profile.name,av:profile.avatar,userId}
-                    }});
-                    supa0.removeChannel(ib);
-                  }catch(e){}
-                  // Push notification مكالمة فائتة
-                  sendPushNotif(targetId,
-                    callType==="video"?`📹 مكالمة فيديو فائتة من ${profile.name}`:`🎙️ مكالمة صوتية فائتة من ${profile.name}`,
-                    "اضغط للرد","call",{callType}
-                  );
-                }
-              }
-            }
-            // رسالة نظام: مكالمة ملغاة
-            addCallSystemMsg(callType==="video"?"📹":"🎙️","مكالمة ملغاة");
-            if(roomRef.current) roomRef.current.send({type:"broadcast",event:"call_end",payload:{}});
-            await leaveAgora();
-            const supa2=getSupa();
-            if(roomRef.current&&supa2){ try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null; }
-            const dur=fmt(callTime);
-            if(callStatus==="connected"){
-              // رسالة نظام: انتهت المكالمة + مدتها
-              addCallSystemMsg(callType==="video"?"📹":"🎙️",`${callType==="video"?"مكالمة فيديو":"مكالمة صوتية"} — ${dur}`,"انتهت المكالمة");
-              const entry={id:Date.now(),partner:partner.name,lang:"—",dur,date:new Date().toLocaleDateString("en",{month:"short",day:"numeric"}),type:callType,xp:30};
-              setCallHistory(h=>{const nh=[entry,...h.slice(0,19)];save("callhist",nh);return nh;});
-              setStats(s=>{const ns={...s,callsTotal:s.callsTotal+1};checkBadges(ns);return ns;});
-              updateQuest("calls");
-              const today=new Date().toDateString();
-              const lastDay=load("last_call_day","");
-              if(lastDay!==today){
-                const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
-                const newStreak=lastDay===yesterday.toDateString()?streak+1:1;
-                setStreak(newStreak);save("streak",newStreak);save("last_call_day",today);
-              }
-              addXpDaily("call_end_"+new Date().toDateString(),30,"مكالمة"); setCoins(c=>c+10);
-            }
-            setMicOn(true); setCamOn(true); setRemoteMicOff(false); setRemoteCamOff(false);
-            setCallStatus("idle");
-            try{callSpeechRef.current?.stop();}catch(_){}
-            setCallListening(false); setCallTranscript(""); setCallCorrection(null);
-            setScreen("home");
-          }},
-          ...(callType==="video"?[
-            {icon:camOn?Ic.video("white",22):Ic.video("#ef4444",22), label:camOn?"كاميرا":"مغلق", active:camOn, action:toggleCam},
-            {icon:Ic.flip("white",18), label:"تبديل", active:true, action:async()=>{
-              if(!localStreamRef.current) return;
-              const newFront = !frontCam;
-              setFrontCam(newFront);
-              try{
-                // إيقاف مسار الفيديو الحالي
-                localStreamRef.current.getVideoTracks().forEach(t=>t.stop());
-                // فتح كاميرا جديدة بالاتجاه المطلوب
-                const newStream = await navigator.mediaDevices.getUserMedia({
-                  video:{ facingMode: newFront ? "user" : "environment" },
-                  audio: false
-                });
-                const newVideoTrack = newStream.getVideoTracks()[0];
-                // استبدال المسار في RTCPeerConnection
-                if(pcRef.current){
-                  const sender = pcRef.current.getSenders().find(s=>s.track?.kind==="video");
-                  if(sender) await sender.replaceTrack(newVideoTrack);
-                }
-                // تحديث localStream
-                const audioTrack = localStreamRef.current.getAudioTracks()[0];
-                const combined = new MediaStream([newVideoTrack, ...(audioTrack?[audioTrack]:[])]);
-                localStreamRef.current = combined;
-                if(localVideoElRef.current) localVideoElRef.current.srcObject = combined;
-              }catch(e){ console.error("flipCam:",e); }
-            }},
-          ]:[]),
-        ].map((b,i)=>(
-          <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
-            <button onClick={b.action} style={{width:b.end?64:54,height:b.end?64:54,borderRadius:b.end?32:27,background:b.end?"linear-gradient(135deg,#ef4444,#dc2626)":b.active?`rgba(255,255,255,0.18)`:"rgba(239,68,68,0.75)",border:`1.5px solid ${b.end?"transparent":b.active?"rgba(255,255,255,0.25)":"transparent"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",boxShadow:b.end?"0 6px 28px rgba(239,68,68,0.55), 0 1px 0 rgba(255,255,255,0.15) inset":undefined,transition:"all 0.15s"}}
-              onPointerDown={e=>e.currentTarget.style.transform="scale(0.92)"}
+
+      {/* ── BOTTOM SHEET CONTROLS ── */}
+      <div style={{position:"relative",zIndex:6,background:"linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.75) 100%)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",borderTop:"1px solid rgba(255,255,255,0.07)",paddingBottom:"calc(28px + env(safe-area-inset-bottom))"}}>
+
+        {/* ── Primary controls row ── */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,padding:"20px 24px 14px"}}>
+
+          {/* Mic */}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            <button onClick={toggleMic}
+              style={{width:56,height:56,borderRadius:28,background:micOn?"rgba(255,255,255,0.12)":"rgba(239,68,68,0.22)",border:`1.5px solid ${micOn?"rgba(255,255,255,0.18)":"rgba(239,68,68,0.5)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(12px)",transition:"all 0.18s"}}
+              onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"}
               onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
-            >{b.icon}</button>
-            <span style={{color:"rgba(255,255,255,0.5)",fontSize:10,fontWeight:600}}>{b.label}</span>
+            >{micOn?Ic.mic("white",22):Ic.micOff("#f87171",22)}</button>
+            <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontWeight:600}}>{micOn?"كتم":"صوت"}</span>
           </div>
-        ))}
-        {/* end controls */}
-      </div>
-      {/* Secondary Controls Row */}
-      <div style={{display:"flex",justifyContent:"center",gap:28,paddingBottom:36,paddingTop:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(10px)",zIndex:4,marginTop:-8}}>
-        {/* زر الاستماع الذكي */}
-        <button
-          onClick={()=>{ callListening ? stopCallListening() : startCallListening(); }}
-          style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-          <div style={{width:38,height:38,borderRadius:19,
-            background:callListening?"rgba(99,102,241,0.35)":"rgba(255,255,255,0.1)",
-            display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,
-            border:`1px solid ${callListening?"rgba(99,102,241,0.7)":"rgba(255,255,255,0.12)"}`,
-            boxShadow:callListening?"0 0 14px rgba(99,102,241,0.45)":undefined,
-            transition:"all 0.2s"}}>
-            {callListening
-              ?<div style={{width:10,height:10,borderRadius:5,background:"#818cf8",animation:"dot0 0.8s ease-in-out infinite"}}/>
-              :<span>🎙️</span>}
+
+          {/* End call — larger, centered */}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            <button onClick={doEndCall}
+              style={{width:68,height:68,borderRadius:34,background:"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 32px rgba(239,68,68,0.55), 0 2px 0 rgba(255,255,255,0.12) inset",transition:"all 0.18s"}}
+              onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"}
+              onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+            >{Ic.endCall("white",26)}</button>
+            <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontWeight:600}}>{callStatus==="outgoing"?"إلغاء":"إنهاء"}</span>
           </div>
-          <span style={{color:callListening?"#818cf8":"rgba(255,255,255,0.45)",fontSize:10,fontWeight:600,transition:"color 0.2s"}}>
-            {callListening?"يستمع...":"تصحيح AI"}
-          </span>
-        </button>
 
-        {/* زر Friendship */}
-        <button onClick={async()=>{
-          addNotif("🫶🏻","طلب صداقة","تم الإرسال!","quest");
-          if(isBotMatch||partner._isBot){
-            setTimeout(()=>addNotif("🫶🏻",partner.name+" replied","🫶🏻 Aww, that's sweet! Friends! 😊","msg"),1500);
-          } else {
-            // إرسال 🫶🏻 للدردشة الخاصة المباشرة وليس الغرفة العشوائية
-            const heart="🫶🏻"; const t=now();
-            const partnerId=partner._uid||"";
-            if(partnerId){
-              try{
-                const supa=getSupa();
-                const cid="direct_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
-                // حفظ في قاعدة البيانات
-                const msgId="msg_friend_"+Date.now();
-                await saveMessageToDB({id:msgId,room_id:cid,user_id:userId,text:heart,type:"text",created_at:new Date().toISOString()});
-                // إرسال عبر Direct Channel
-                if(directChanRef.current){
-                  await directChanRef.current.send({type:"broadcast",event:"direct_msg",payload:{id:msgId,text:heart,from:userId,rid:cid}});
-                } else if(supa){
-                  // إنشاء قناة مؤقتة لإرسال الرسالة
-                  const dc=supa.channel("direct_"+cid);
-                  await dc.subscribe();
-                  await dc.send({type:"broadcast",event:"direct_msg",payload:{id:msgId,text:heart,from:userId,rid:cid}});
-                  supa.removeChannel(dc);
-                }
-                // إشعار Push للشريك
-                sendPushNotif(partnerId,"🫶🏻 طلب صداقة",`${profile.name} أرسل لك طلب صداقة`,"msg",{});
-              }catch(e){ console.warn("Friendship msg error:",e); }
-            }
-          }
-        }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-          <div style={{width:38,height:38,borderRadius:19,background:"rgba(236,72,153,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,border:"1px solid rgba(236,72,153,0.4)",boxShadow:"0 0 10px rgba(236,72,153,0.25)"}}>🫶🏻</div>
-          <span style={{color:"rgba(236,72,153,0.8)",fontSize:10,fontWeight:700}}>Friendship</span>
-        </button>
+          {/* Camera (video only) */}
+          {callType==="video" && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+              <button onClick={toggleCam}
+                style={{width:56,height:56,borderRadius:28,background:camOn?"rgba(255,255,255,0.12)":"rgba(239,68,68,0.22)",border:`1.5px solid ${camOn?"rgba(255,255,255,0.18)":"rgba(239,68,68,0.5)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(12px)",transition:"all 0.18s"}}
+                onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"}
+                onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+              >{camOn?Ic.video("white",22):Ic.video("#f87171",22)}</button>
+              <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontWeight:600}}>{camOn?"كاميرا":"مغلق"}</span>
+            </div>
+          )}
 
-        {/* زر Skip */}
-        <button onClick={async()=>{
-          // حفظ الإجراء وعرض تأكيد
-          setPendingSkipAction(async()=>{
-            if(botReplyRef.current){clearTimeout(botReplyRef.current);botReplyRef.current=null;}
+          {/* Flip cam (video only) */}
+          {callType==="video" && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+              <button onClick={async()=>{
+                if(!localStreamRef.current) return;
+                const newFront=!frontCam; setFrontCam(newFront);
+                try{
+                  localStreamRef.current.getVideoTracks().forEach(t=>t.stop());
+                  const newStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:newFront?"user":"environment"},audio:false});
+                  const newVT=newStream.getVideoTracks()[0];
+                  if(pcRef.current){const s=pcRef.current.getSenders().find(s=>s.track?.kind==="video");if(s)await s.replaceTrack(newVT);}
+                  const at=localStreamRef.current.getAudioTracks()[0];
+                  const combined=new MediaStream([newVT,...(at?[at]:[])]);
+                  localStreamRef.current=combined;
+                  if(localVideoElRef.current)localVideoElRef.current.srcObject=combined;
+                }catch(e){console.error("flipCam:",e);}
+              }}
+                style={{width:56,height:56,borderRadius:28,background:"rgba(255,255,255,0.12)",border:"1.5px solid rgba(255,255,255,0.18)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(12px)",transition:"all 0.18s"}}
+                onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"}
+                onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+              >{Ic.flip("white",20)}</button>
+              <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontWeight:600}}>تبديل</span>
+            </div>
+          )}
+
+          {/* Speaker (voice only placeholder) */}
+          {callType!=="video" && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+              <button style={{width:56,height:56,borderRadius:28,background:"rgba(255,255,255,0.12)",border:"1.5px solid rgba(255,255,255,0.18)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(12px)",transition:"all 0.18s"}}
+                onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"}
+                onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+              </button>
+              <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontWeight:600}}>مكبر</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Secondary row: AI + Friendship + Skip + Report ── */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,paddingBottom:6,paddingTop:0}}>
+
+          {/* AI Correction — real users only */}
+          {!(isBotMatch||partner._isBot)&&(
+            <button onClick={()=>{ callListening ? stopCallListening() : startCallListening(); }}
+              style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+              <div style={{width:42,height:42,borderRadius:21,background:callListening?"rgba(99,102,241,0.28)":"rgba(255,255,255,0.08)",border:`1.5px solid ${callListening?"rgba(99,102,241,0.65)":"rgba(255,255,255,0.1)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,boxShadow:callListening?"0 0 16px rgba(99,102,241,0.45)":undefined,transition:"all 0.2s"}}>
+                {callListening?<div style={{width:9,height:9,borderRadius:5,background:"#818cf8",animation:"dot0 0.8s ease-in-out infinite"}}/>:<span>🎙️</span>}
+              </div>
+              <span style={{fontSize:10,color:callListening?"#818cf8":"rgba(255,255,255,0.38)",fontWeight:600,transition:"color 0.2s"}}>{callListening?"يستمع...":"تصحيح AI"}</span>
+            </button>
+          )}
+
+          {/* Friendship */}
+          <button onClick={async()=>{
             if(isBotMatch||partner._isBot){
-              await leaveAgora();
-              setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
-              setCallStatus("idle");setCallListening(false);setCallTranscript("");setCallCorrection(null);
-              setIsBotMatch(false);setMatched(false);
-              setPartner({name:"",av:"",country:""});setMessages([]);
-              const lang=load("targetLang","English");
-              doSearch(callType||"voice",lang);
+              addNotif("🫶🏻","طلب صداقة","تم الإرسال!","quest");
+              setTimeout(()=>addNotif("🫶🏻",partner.name+" replied","🫶🏻 Aww, that's sweet! Friends! 😊","msg"),1500);
             } else {
-              try{if(roomRef.current)roomRef.current.send({type:"broadcast",event:"call_skip",payload:{}});}catch(e){}
-              await leaveAgora();
-              const supa2=getSupa();
-              if(roomRef.current&&supa2){try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null;}
-              setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
-              setCallStatus("idle");setCallListening(false);setCallTranscript("");setCallCorrection(null);
-              setPartner({name:"",av:"",country:""});setMessages([]);
-              setScreen("matching");
+              const partnerId=partner._uid||"";
+              if(!partnerId){ addNotif("⚠️","خطأ","لا يوجد معرّف للشريك","info"); return; }
+              try{
+                const supa=getSupa(); const msgId="msg_friend_"+Date.now();
+                const cid="req_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+                if(supa){
+                  await supa.from("messages").insert({id:msgId,room_id:cid,user_id:userId,text:"🫶🏻",type:"friend_request",created_at:new Date().toISOString()});
+                  const inbox=supa.channel("inbox_"+partnerId);
+                  await inbox.subscribe();
+                  await inbox.send({type:"broadcast",event:"friend_request",payload:{from:{userId,name:profile.name,av:profile.avatar},msgId,cid}});
+                  supa.removeChannel(inbox);
+                }
+                sendPushNotif(partnerId,"🫶🏻 طلب صداقة",`${profile.name} أرسل لك طلب صداقة`,"msg",{});
+                addNotif("🫶🏻","طلب صداقة","تم الإرسال إلى طلبات المراسلة!","quest");
+              }catch(e){ console.warn("Friendship msg error:",e); addNotif("⚠️","خطأ","فشل إرسال الطلب","info"); }
             }
-            addNotif("⏭️","تخطي","جاري البحث عن شخص جديد...","info");
-          });
-          setShowSkipConfirm(true);
-        }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-          <div style={{width:38,height:38,borderRadius:19,background:"rgba(245,158,11,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,border:"1px solid rgba(245,158,11,0.35)"}}>⏭️</div>
-          <span style={{color:"rgba(245,158,11,0.8)",fontSize:10,fontWeight:700}}>Skip</span>
-        </button>
+          }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+            <div style={{width:42,height:42,borderRadius:21,background:"rgba(236,72,153,0.16)",border:"1.5px solid rgba(236,72,153,0.35)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,boxShadow:"0 0 12px rgba(236,72,153,0.2)",transition:"all 0.2s"}}>🫶🏻</div>
+            <span style={{fontSize:10,color:"rgba(236,72,153,0.75)",fontWeight:600}}>صداقة</span>
+          </button>
 
-        {/* زر بلاغ — مخفي للبوتات */}
-        {!(isBotMatch||partner._isBot)&&(
-        <button style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-          <div style={{width:38,height:38,borderRadius:19,background:"rgba(255,255,255,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,border:"1px solid rgba(255,255,255,0.12)"}}>🚩</div>
-          <span style={{color:"rgba(255,255,255,0.45)",fontSize:10,fontWeight:600}}>Report</span>
-        </button>
-        )}
+          {/* Skip */}
+          <button onClick={()=>{
+            setPendingSkipAction(async()=>{
+              if(botReplyRef.current){clearTimeout(botReplyRef.current);botReplyRef.current=null;}
+              if(isBotMatch||partner._isBot){
+                await leaveAgora();
+                setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
+                setCallStatus("idle");setCallListening(false);setCallTranscript("");setCallCorrection(null);
+                setIsBotMatch(false);setMatched(false);
+                setPartner({name:"",av:"",country:""});setMessages([]);
+                const lang=load("targetLang","English"); doSearch(callType||"voice",lang);
+              } else {
+                try{if(roomRef.current)roomRef.current.send({type:"broadcast",event:"call_skip",payload:{}});}catch(e){}
+                await leaveAgora();
+                const supa2=getSupa();
+                if(roomRef.current&&supa2){try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null;}
+                setMicOn(true);setCamOn(true);setRemoteMicOff(false);setRemoteCamOff(false);
+                setCallStatus("idle");setCallListening(false);setCallTranscript("");setCallCorrection(null);
+                setPartner({name:"",av:"",country:""});setMessages([]);
+                setScreen("matching");
+              }
+              addNotif("⏭️","تخطي","جاري البحث عن شخص جديد...","info");
+            });
+            setShowSkipConfirm(true);
+          }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+            <div style={{width:42,height:42,borderRadius:21,background:"rgba(245,158,11,0.15)",border:"1.5px solid rgba(245,158,11,0.32)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,transition:"all 0.2s"}}>⏭️</div>
+            <span style={{fontSize:10,color:"rgba(245,158,11,0.7)",fontWeight:600}}>تخطي</span>
+          </button>
+
+          {/* Report — real users only */}
+          {!(isBotMatch||partner._isBot)&&(
+            <button style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+              <div style={{width:42,height:42,borderRadius:21,background:"rgba(255,255,255,0.06)",border:"1.5px solid rgba(255,255,255,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🚩</div>
+              <span style={{fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:600}}>بلاغ</span>
+            </button>
+          )}
+        </div>
       </div>
+
       <style>{CSS}</style>
     </div>
   );
@@ -4004,17 +4051,29 @@ User said: "${userMsg}"`;
             }} style={{width:34,height:34,borderRadius:17,background:`${primary}18`,border:`1px solid ${primary}30`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Ic.video(primary,16)}</button>
             </>}
             {/* 🫶 Friendship */}
-            <button onClick={()=>{
-              const heart="🫶🏻"; const t=now();
-              const nm={id:Date.now(),from:"me",text:heart,time:t,status:"sent"};
-              setMessages(p=>[...p,nm]);
+            <button onClick={async()=>{
               if(isBotMatch||partner._isBot){
-                setTimeout(()=>{setMessages(p=>p.map(m=>m.id===nm.id?{...m,status:"read"}:m));},400);
+                addNotif("🫶🏻","طلب صداقة","تم الإرسال!","quest");
                 setTimeout(()=>{setMessages(p=>[...p,{id:Date.now()+1,from:"partner",text:"🫶🏻 Thank you! That's so sweet!",time:now(),status:"read"}]);},2000);
-              } else if(roomRef.current){
-                try{roomRef.current.send({type:"broadcast",event:"msg",payload:{text:heart,time:t}});}catch(e){}
+              } else {
+                // إرسال 🫶🏻 إلى صندوق طلبات مراسلة الشريك
+                const partnerId=partner._uid||"";
+                if(!partnerId){ addNotif("⚠️","خطأ","لا يوجد معرّف للشريك","info"); return; }
+                try{
+                  const supa=getSupa();
+                  const msgId="msg_friend_"+Date.now();
+                  const cid="req_"+[userId,partnerId].sort().join("__").replace(/[^a-zA-Z0-9_]/g,"").slice(0,60);
+                  if(supa){
+                    await supa.from("messages").insert({id:msgId,room_id:cid,user_id:userId,text:"🫶🏻",type:"friend_request",created_at:new Date().toISOString()});
+                    const inbox=supa.channel("inbox_"+partnerId);
+                    await inbox.subscribe();
+                    await inbox.send({type:"broadcast",event:"friend_request",payload:{from:{userId,name:profile.name,av:profile.avatar},msgId,cid}});
+                    supa.removeChannel(inbox);
+                  }
+                  sendPushNotif(partnerId,"🫶🏻 طلب صداقة",`${profile.name} أرسل لك طلب صداقة`,"msg",{});
+                  addNotif("🫶🏻","طلب صداقة","تم الإرسال إلى طلبات المراسلة!","quest");
+                }catch(e){ console.warn("Friendship msg error:",e); addNotif("⚠️","خطأ","فشل إرسال الطلب","info"); }
               }
-              addNotif("🫶🏻","طلب صداقة","تم الإرسال!","quest");
             }} style={{width:32,height:32,borderRadius:16,background:"rgba(236,72,153,0.15)",border:"1px solid rgba(236,72,153,0.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>🫶🏻</button>
             {/* ⏭ Skip */}
             <button onClick={()=>{
@@ -4148,8 +4207,8 @@ User said: "${userMsg}"`;
           <div ref={msgEnd}/>
         </div>
 
-        {/* FIX 18: Ailo Tools Panel - random chat */}
-        {showAiloMenuR&&(
+        {/* FIX 18: Ailo Tools Panel - random chat - مستخدمون حقيقيون فقط */}
+        {showAiloMenuR&&!(isBotMatch||partner._isBot)&&(
           <div style={{padding:"10px 12px",background:darkMode?"rgba(9,14,28,0.97)":"rgba(255,255,255,0.98)",borderTop:`1px solid ${border}`,display:"flex",flexWrap:"wrap",gap:8}}>
             {/* AI Topics */}
             <button onClick={async()=>{
@@ -4227,11 +4286,11 @@ User said: "${userMsg}"`;
             e.target.value="";
           }}/>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {/* زر أدوات Ailo - الدردشة العشوائية */}
-            <button onClick={()=>setShowAiloMenuR(p=>!p)}
+            {/* زر أدوات Ailo - الدردشة العشوائية مع مستخدمين حقيقيين فقط */}
+            {!(isBotMatch||partner._isBot)&&<button onClick={()=>setShowAiloMenuR(p=>!p)}
               style={{width:38,height:38,borderRadius:10,background:showAiloMenuR?`linear-gradient(135deg,${primary},${secondary})`:`${primary}18`,border:`1px solid ${showAiloMenuR?primary:border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.2s"}}>
               <span style={{fontSize:16}}>🦌</span>
-            </button>
+            </button>}
             <button onClick={()=>{if(fileRef.current){fileRef.current.accept="image/*";fileRef.current.click();}}} style={{background:"none",border:"none",cursor:"pointer",opacity:0.7,display:"flex"}}>{Ic.image(muted)}</button>
             {/* زر الستيكرات - الدردشة العشوائية */}
             <button onClick={async()=>{
