@@ -709,6 +709,103 @@ function Ailo(){
 
   const[accentKey,setAccentKeyRaw]=useState(()=>load("accent","gray"));
   const setAccentKey=(v)=>{ setAccentKeyRaw(v); save("accent",v); };
+
+  // ── EULA ──────────────────────────────────────────────────────────────────
+  const[eulaAccepted,setEulaAcceptedRaw]=useState(()=>load("eula_accepted",false));
+  const setEulaAccepted=(v)=>{ setEulaAcceptedRaw(v); save("eula_accepted",v); };
+
+  // ── Report System ──────────────────────────────────────────────────────────
+  const TELEGRAM_BOT_TOKEN="8749922192:AAHgOE1WAhZGIsIQMsJb7Jk92hxxwFX4nb0";
+  const TELEGRAM_CHAT_ID="793181061";
+  const[showReportModal,setShowReportModal]=useState(false);
+  const[reportReason,setReportReason]=useState("");
+  const[reportLoading,setReportLoading]=useState(false);
+
+  const sendTelegramMessage=async(text)=>{
+    try{
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({chat_id:TELEGRAM_CHAT_ID,text,parse_mode:"HTML"})
+      });
+    }catch(e){ console.warn("Telegram send failed:",e); }
+  };
+
+  const handleBlockUser=()=>{
+    setShowReportModal(false);
+    // إنهاء المكالمة فوراً
+    doEndCall();
+    addNotif("🚫","تم الحظر","تم حظر هذا المستخدم وإنهاء الاتصال فوراً","info");
+    alert("✅ تم حظر المستخدم بنجاح وإنهاء الاتصال");
+  };
+
+  const handleReport=async()=>{
+    if(!reportReason){ return; }
+    setReportLoading(true);
+    const supa=getSupa();
+    const reportedId=partner?._uid||partner?.name||"unknown";
+    const reporterId=userId||"anonymous";
+    const now=new Date().toISOString();
+
+    try{
+      // حفظ البلاغ في Supabase
+      if(supa){
+        // جلب عدد البلاغات الحالية على هذا المستخدم (آخر 24 ساعة من 3 أشخاص مختلفين)
+        const since=new Date(Date.now()-24*60*60*1000).toISOString();
+        const{data:existingReports}=await supa
+          .from("user_reports")
+          .select("reporter_id,strike_count")
+          .eq("reported_id",reportedId)
+          .gte("created_at",since);
+
+        // تحقق البلاغات من أشخاص مختلفين فقط
+        const uniqueReporters=new Set((existingReports||[]).map(r=>r.reporter_id));
+        uniqueReporters.add(reporterId);
+        const strikeCount=uniqueReporters.size;
+
+        // إدراج البلاغ الجديد
+        await supa.from("user_reports").insert({
+          reported_id:reportedId,
+          reporter_id:reporterId,
+          reason:reportReason,
+          strike_count:strikeCount,
+          created_at:now
+        });
+
+        // تطبيق قاعدة الضربات الثلاث
+        if(strikeCount===1){
+          // البلاغ الأول: حفظ فقط
+          await sendTelegramMessage(
+            `⚠️ <b>بلاغ جديد</b>\nالمُبلَّغ عنه: <code>${reportedId}</code>\nالسبب: ${reportReason}\nمن: <code>${reporterId}</code>\nالضربة: 1/3 — لا عقوبة بعد`
+          );
+        } else if(strikeCount===2){
+          // البلاغ الثاني: تنبيه صامت
+          await supa.from("users").update({flagged:true}).eq("id",reportedId).catch(()=>{});
+          await sendTelegramMessage(
+            `🚩 <b>تنبيه صامت</b>\nالمُبلَّغ عنه: <code>${reportedId}</code>\nالسبب: ${reportReason}\nالضربة: 2/3 — تم رفع علامة تحذير`
+          );
+        } else if(strikeCount>=3){
+          // البلاغ الثالث: حظر تلقائي
+          await supa.from("users").update({banned:true,banned_at:now,ban_reason:"three_strikes"}).eq("id",reportedId).catch(()=>{});
+          await sendTelegramMessage(
+            `🚨 <b>حظر تلقائي!</b>\nتم حظر المستخدم: <code>${reportedId}</code>\nالسبب: تراكم 3 بلاغات خلال 24 ساعة\nآخر سبب: ${reportReason}\nالمُبلِّغ الأخير: <code>${reporterId}</code>`
+          );
+        }
+      } else {
+        // بدون Supabase — أرسل للتيليجرام فقط
+        await sendTelegramMessage(
+          `⚠️ <b>بلاغ جديد (بدون DB)</b>\nالمُبلَّغ عنه: <code>${reportedId}</code>\nالسبب: ${reportReason}\nمن: <code>${reporterId}</code>`
+        );
+      }
+    }catch(err){
+      console.error("Report error:",err);
+    }
+
+    setReportLoading(false);
+    setShowReportModal(false);
+    setReportReason("");
+    addNotif("📩","تم إرسال البلاغ","شكراً، سيراجعه الفريق قريباً","info");
+  };
   const SUPA_URL=_SUPA_URL;
   const SUPA_KEY=_SUPA_KEY;
 
@@ -1882,64 +1979,6 @@ ${reviewWords?`راجع هذه الكلمات أيضاً: ${reviewWords}`:""}`;
   // ── Notifications system ──
   const[notifications,setNotifications]=useState(()=>load("notifications",[]));
   useEffect(()=>{ save("notifications", notifications); },[notifications]);
-
-  // ── EULA & Report System ──
-  const[eulaAccepted,setEulaAcceptedRaw]=useState(()=>{ try{ return !!localStorage.getItem("ailo_eula_accepted"); }catch(e){return false;} });
-  const setEulaAccepted=(v)=>{ setEulaAcceptedRaw(v); if(v){ try{localStorage.setItem("ailo_eula_accepted","1");}catch(e){} } };
-  const[showReportModal,setShowReportModal]=useState(false);
-  const[reportTarget,setReportTarget]=useState(null); // {userId, name, msgId, contextMsgs}
-  const[reportReason,setReportReason]=useState("");
-  const[reportSending,setReportSending]=useState(false);
-  const[showCallReportModal,setShowCallReportModal]=useState(false);
-  const[callReportReason,setCallReportReason]=useState("");
-  const[callReportSending,setCallReportSending]=useState(false);
-  const[showFriendOptionsMenu,setShowFriendOptionsMenu]=useState(false);
-  const REPORT_REASONS=["محتوى جنسي/عري","عنف أو إيذاء","مضايقة وإزعاج","كلام مسيء/شتائم","محتوى غير لائق آخر"];
-  const DEVICE_ID=(()=>{ try{ let d=localStorage.getItem("ailo_device_id"); if(!d){d="dev_"+Date.now()+"_"+Math.random().toString(36).slice(2,9);localStorage.setItem("ailo_device_id",d);} return d; }catch(e){return "unknown";} })();
-
-  // ── دالة إرسال البلاغ للـ Edge Function ──
-  const submitReport = async({reportedUserId, reportedName, reason, contextMessages, evidenceUrl=null, reportType="text"})=>{
-    try{
-      const token=localStorage.getItem("ailo_token")||SUPA_KEY;
-      const payload={
-        reporter_id: userId,
-        reporter_device_id: DEVICE_ID,
-        reported_user_id: reportedUserId,
-        reported_name: reportedName,
-        reason,
-        context_messages: contextMessages||[],
-        evidence_url: evidenceUrl,
-        report_type: reportType
-      };
-      // حفظ في جدول reports مباشرةً
-      const supa=getSupa();
-      if(supa){
-        await supa.from("reports").insert({
-          reporter_id: userId,
-          reported_id: reportedUserId,
-          reason,
-          context: JSON.stringify(contextMessages||[]),
-          evidence_url: evidenceUrl,
-          report_type: reportType,
-          status: "pending"
-        }).catch(()=>{});
-      }
-      // إرسال للـ Edge Function للتحليل بالذكاء الاصطناعي
-      fetch(`${SUPA_URL}/functions/v1/ailo-moderation`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SUPA_KEY,"Authorization":`Bearer ${token}`},
-        body:JSON.stringify(payload)
-      }).catch(()=>{});
-    }catch(e){}
-  };
-
-  // ── حظر مستخدم وإضافته لجدول user_blocks ──
-  const blockUserDB = async(targetId)=>{
-    try{
-      const supa=getSupa(); if(!supa) return;
-      await supa.from("user_blocks").insert({blocker_id:userId, blocked_id:targetId}).catch(()=>{});
-    }catch(e){}
-  };
 
   // ✅ طلب صلاحية الإشعارات عند بدء التطبيق
   useEffect(()=>{
@@ -3583,46 +3622,19 @@ User said: "${userMsg}"`;
             <div style={{marginBottom:14}}><div style={{color:"rgba(255,255,255,0.45)",fontSize:12,marginBottom:7,fontWeight:600}}>البريد الإلكتروني</div><input value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} placeholder="example@email.com" type="email" style={aInp}/></div>
             <div style={{marginBottom:isReg?14:22}}><div style={{color:"rgba(255,255,255,0.45)",fontSize:12,marginBottom:7,fontWeight:600}}>كلمة المرور</div><input value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} placeholder={isReg?"6 أحرف على الأقل":"••••••••"} type="password" style={aInp} onKeyDown={e=>e.key==="Enter"&&handle()}/></div>
             {isReg&&<div style={{marginBottom:22}}><div style={{color:"rgba(255,255,255,0.45)",fontSize:12,marginBottom:7,fontWeight:600}}>لغتي الأم</div><select value={authForm.lang} onChange={e=>setAuthForm(f=>({...f,lang:e.target.value}))} style={{...aInp,appearance:"none"}}>{["Arabic","English","French","Spanish","German","Chinese","Japanese","Turkish"].map(l=><option key={l} value={l} style={{background:"#0f1428"}}>{l}</option>)}</select></div>}
-
-            {/* ── EULA Checkbox — يظهر في التسجيل فقط ── */}
-            {isReg&&(
-              <div onClick={()=>setEulaAccepted(!eulaAccepted)} style={{
-                display:"flex",alignItems:"flex-start",gap:12,marginBottom:20,
-                padding:"12px 14px",borderRadius:14,cursor:"pointer",
-                background: eulaAccepted?"rgba(99,102,241,0.12)":"rgba(255,255,255,0.04)",
-                border:`1.5px solid ${eulaAccepted?"rgba(99,102,241,0.5)":"rgba(255,255,255,0.1)"}`,
-                transition:"all 0.25s",userSelect:"none",WebkitUserSelect:"none"
-              }}>
-                <div style={{
-                  width:20,height:20,borderRadius:6,flexShrink:0,marginTop:1,
-                  background:eulaAccepted?"linear-gradient(135deg,#6366f1,#8b5cf6)":"transparent",
-                  border:`2px solid ${eulaAccepted?"#6366f1":"rgba(255,255,255,0.25)"}`,
-                  display:"flex",alignItems:"center",justifyContent:"center",
-                  transition:"all 0.2s",boxShadow:eulaAccepted?"0 0 12px rgba(99,102,241,0.5)":undefined
-                }}>
-                  {eulaAccepted&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                </div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",lineHeight:1.7,flex:1}}>
-                  أوافق على <span style={{color:"#818cf8",fontWeight:700}}>شروط الاستخدام (EULA)</span> وأقر بأنه{" "}
-                  <span style={{color:"#ef4444",fontWeight:700}}>لا يوجد أي تسامح مع المحتوى المسيء أو العنف أو العري.</span>
-                  {" "}سيتم حظر المخالفين نهائياً.
-                </div>
-              </div>
-            )}
-
             {authError&&<div style={{background:authError.startsWith("✅")?"rgba(34,197,94,0.12)":authError.startsWith("⚠️")||authError.startsWith("📧")?"rgba(245,158,11,0.12)":"rgba(239,68,68,0.12)",border:`1.5px solid ${authError.startsWith("✅")?"rgba(34,197,94,0.35)":authError.startsWith("⚠️")||authError.startsWith("📧")?"rgba(245,158,11,0.35)":"rgba(239,68,68,0.35)"}`,borderRadius:12,padding:"11px 15px",color:authError.startsWith("✅")?"#86efac":authError.startsWith("⚠️")||authError.startsWith("📧")?"#fcd34d":"#fca5a5",fontSize:13,marginBottom:showResendBtn?8:14,textAlign:"center",letterSpacing:"0.01em"}}>{authError}</div>}
             {showResendBtn&&<button onClick={resendConfirmation} disabled={resendLoading} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid rgba(245,158,11,0.4)",background:"rgba(245,158,11,0.1)",color:"#fcd34d",fontWeight:700,fontSize:13,cursor:resendLoading?"not-allowed":"pointer",fontFamily:"'Poppins','Tajawal',system-ui",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6,opacity:resendLoading?0.6:1,transition:"all 0.2s"}}>
               {resendLoading?<><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> جاري الإرسال...</>:"📨 إعادة إرسال رابط التأكيد"}
             </button>}
-            <button onClick={handle} disabled={authLoading||(isReg&&!eulaAccepted)} className="ripple" style={{
+            <button onClick={handle} disabled={authLoading} className="ripple" style={{
               width:"100%",padding:15,borderRadius:14,border:"none",
-              background: (isReg&&!eulaAccepted)?"rgba(99,102,241,0.25)":"linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)",
+              background:"linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)",
               color:"white",fontWeight:900,fontSize:16,
-              cursor:(authLoading||(isReg&&!eulaAccepted))?"not-allowed":"pointer",
+              cursor:authLoading?"not-allowed":"pointer",
               fontFamily:"'Poppins','Tajawal',system-ui",
-              boxShadow:(isReg&&!eulaAccepted)?undefined:"0 4px 28px rgba(99,102,241,0.5), 0 1px 0 rgba(255,255,255,0.15) inset",
+              boxShadow:"0 4px 28px rgba(99,102,241,0.5), 0 1px 0 rgba(255,255,255,0.15) inset",
               display:"flex",alignItems:"center",justifyContent:"center",gap:10,
-              opacity:(authLoading||(isReg&&!eulaAccepted))?0.5:1,
+              opacity:authLoading?0.7:1,
               letterSpacing:"0.02em",transition:"all 0.2s"
             }}>
               {authLoading?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span><span>جاري التحقق...</span></>:isReg?"إنشاء الحساب ✓":"تسجيل الدخول →"}
@@ -3785,13 +3797,26 @@ User said: "${userMsg}"`;
             </div>
           )}
         </div>
-        {/* Right: Red Shield Report Button */}
-        {callSource==="random"&&(
-          <button onClick={()=>{setCallReportReason("");setShowCallReportModal(true);}}
-            style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,0.18)",border:"1.5px solid rgba(239,68,68,0.45)",borderRadius:50,padding:"5px 12px",cursor:"pointer",transition:"all 0.2s"}}
-            onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"} onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6z"/></svg>
-            <span style={{fontSize:10,color:"#ef4444",fontWeight:800,letterSpacing:"0.04em"}}>إبلاغ</span>
+
+        {/* Center: Red Shield Report Button */}
+        {callStatus==="connected"&&!(isBotMatch||partner._isBot)&&(
+          <button onClick={()=>setShowReportModal(true)} style={{
+            width:42,height:42,borderRadius:21,
+            background:"linear-gradient(135deg,rgba(220,38,38,0.85),rgba(153,27,27,0.9))",
+            border:"1.5px solid rgba(239,68,68,0.6)",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            cursor:"pointer",
+            boxShadow:"0 0 18px rgba(239,68,68,0.45), 0 2px 8px rgba(0,0,0,0.5)",
+            transition:"all 0.2s",
+            animation:"glowPulse 2.5s ease-in-out infinite"
+          }}
+            onPointerDown={e=>e.currentTarget.style.transform="scale(0.91)"}
+            onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+            title="إبلاغ / حظر"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="rgba(255,255,255,0.4)" strokeWidth="0.5">
+              <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+            </svg>
           </button>
         )}
         {/* Right: timer */}
@@ -4095,95 +4120,136 @@ User said: "${userMsg}"`;
 
           {/* Report — real users only */}
           {!(isBotMatch||partner._isBot)&&(
-            <button onClick={()=>{setCallReportReason("");setShowCallReportModal(true);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-              <div style={{width:42,height:42,borderRadius:21,background:"rgba(239,68,68,0.14)",border:"1.5px solid rgba(239,68,68,0.35)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 12px rgba(239,68,68,0.2)",transition:"all 0.2s"}}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6z"/></svg>
-              </div>
-              <span style={{fontSize:10,color:"rgba(239,68,68,0.75)",fontWeight:600}}>إبلاغ</span>
+            <button onClick={()=>setShowReportModal(true)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
+              <div style={{width:42,height:42,borderRadius:21,background:"rgba(239,68,68,0.18)",border:"1.5px solid rgba(239,68,68,0.45)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,boxShadow:"0 0 12px rgba(239,68,68,0.25)",transition:"all 0.2s"}}>🚩</div>
+              <span style={{fontSize:10,color:"rgba(239,68,68,0.75)",fontWeight:700}}>بلاغ</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* ── CALL REPORT MODAL ── */}
-      {showCallReportModal&&(
-        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(18px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setShowCallReportModal(false)}>
-          <div style={{width:"100%",maxWidth:480,background:"rgba(14,18,32,0.97)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:"24px 24px 0 0",padding:24,animation:"popIn 0.3s cubic-bezier(0.34,1.56,0.64,1)"}} onClick={e=>e.stopPropagation()}>
-            <div style={{width:36,height:4,borderRadius:2,background:"rgba(255,255,255,0.12)",margin:"0 auto 18px"}}/>
-            {/* Header */}
-            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
-              <div style={{width:44,height:44,borderRadius:22,background:"rgba(239,68,68,0.18)",border:"1.5px solid rgba(239,68,68,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6z"/></svg>
+      {/* ══════════════════════════════════════════════════════════════
+           🛡️  REPORT MODAL — نافذة الإبلاغ والحظر الزجاجية
+      ══════════════════════════════════════════════════════════════ */}
+      {showReportModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",zIndex:999,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom,0)"}}>
+          <div style={{
+            width:"100%",maxWidth:480,
+            background:"rgba(14,6,6,0.92)",
+            backdropFilter:"blur(28px) saturate(160%)",
+            WebkitBackdropFilter:"blur(28px) saturate(160%)",
+            border:"1.5px solid rgba(239,68,68,0.25)",
+            borderRadius:"28px 28px 0 0",
+            padding:"28px 22px 36px",
+            boxShadow:"0 -12px 60px rgba(239,68,68,0.15), 0 -2px 0 rgba(239,68,68,0.3)",
+            animation:"atSlideUp 0.32s cubic-bezier(0.34,1.2,0.64,1)"
+          }}>
+            {/* ── رأس النافذة ── */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:44,height:44,borderRadius:22,
+                  background:"linear-gradient(135deg,rgba(220,38,38,0.9),rgba(153,27,27,0.85))",
+                  border:"1.5px solid rgba(239,68,68,0.5)",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  boxShadow:"0 0 20px rgba(239,68,68,0.4)"
+                }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="none">
+                    <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div style={{fontWeight:900,fontSize:16,color:"white",letterSpacing:"-0.3px"}}>إبلاغ / حظر</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:1}}>المستخدم: <span style={{color:"rgba(239,68,68,0.8)",fontWeight:700}}>{partner.name||"مجهول"}</span></div>
+                </div>
               </div>
-              <div>
-                <div style={{fontWeight:900,fontSize:16,color:"white"}}>إبلاغ عن المستخدم</div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,0.4)"}}>{partner.name}</div>
-              </div>
+              <button onClick={()=>setShowReportModal(false)} style={{width:32,height:32,borderRadius:16,background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Poppins','Tajawal',system-ui"}}>✕</button>
             </div>
 
-            {/* Block Button */}
-            <button onClick={async()=>{
-              setShowCallReportModal(false);
-              // إنهاء المكالمة فوراً
-              const uid=partner._uid||"";
-              if(uid){ setBlocked(b=>{const nb=[...b,uid];save("blocked",nb);return nb;}); await blockUserDB(uid); }
-              addNotif("🚫","تم الحظر",`تم حظر ${partner.name} بنجاح`,"info");
-              await doEndCall();
-            }} style={{width:"100%",padding:"13px",borderRadius:14,background:"rgba(239,68,68,0.12)",border:"1.5px solid rgba(239,68,68,0.35)",color:"#ef4444",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:14,transition:"all 0.2s"}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-              حظر المستخدم وإنهاء المكالمة
+            {/* ── زر الحظر الفوري ── */}
+            <button onClick={handleBlockUser} style={{
+              width:"100%",padding:"15px 20px",borderRadius:16,marginBottom:16,
+              background:"linear-gradient(135deg,rgba(239,68,68,0.22),rgba(153,27,27,0.18))",
+              border:"1.5px solid rgba(239,68,68,0.45)",
+              display:"flex",alignItems:"center",gap:14,cursor:"pointer",
+              transition:"all 0.2s",
+              boxShadow:"0 4px 20px rgba(239,68,68,0.12)",
+              fontFamily:"'Poppins','Tajawal',system-ui"
+            }}
+              onPointerDown={e=>e.currentTarget.style.transform="scale(0.97)"}
+              onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+            >
+              <div style={{width:40,height:40,borderRadius:20,background:"rgba(239,68,68,0.2)",border:"1.5px solid rgba(239,68,68,0.4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>🚫</div>
+              <div style={{textAlign:"right",flex:1}}>
+                <div style={{fontWeight:800,fontSize:14,color:"#fca5a5"}}>حظر المستخدم فوراً</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,0.38)",marginTop:2}}>ينهي المكالمة ويمنع الظهور مجدداً</div>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(239,68,68,0.6)" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
 
-            {/* Report Section */}
-            <div style={{marginBottom:14}}>
-              <div style={{fontSize:12,color:"rgba(255,255,255,0.45)",fontWeight:700,marginBottom:10}}>سبب الإبلاغ</div>
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {REPORT_REASONS.map(r=>(
-                  <button key={r} onClick={()=>setCallReportReason(r)}
-                    style={{padding:"11px 14px",borderRadius:12,border:`1.5px solid ${callReportReason===r?"#ef4444":"rgba(255,255,255,0.1)"}`,background:callReportReason===r?"rgba(239,68,68,0.12)":"rgba(255,255,255,0.04)",color:callReportReason===r?"#ef4444":"rgba(255,255,255,0.65)",fontWeight:callReportReason===r?700:400,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",textAlign:"right",transition:"all 0.2s",display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:16,height:16,borderRadius:8,border:`2px solid ${callReportReason===r?"#ef4444":"rgba(255,255,255,0.2)"}`,background:callReportReason===r?"#ef4444":"transparent",flexShrink:0,transition:"all 0.2s"}}/>
-                    {r}
+            {/* ── فاصل ── */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+              <div style={{flex:1,height:1,background:"rgba(255,255,255,0.07)"}}/>
+              <span style={{fontSize:10,color:"rgba(255,255,255,0.28)",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase"}}>أو أرسل بلاغاً</span>
+              <div style={{flex:1,height:1,background:"rgba(255,255,255,0.07)"}}/>
+            </div>
+
+            {/* ── قائمة أسباب البلاغ ── */}
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",fontWeight:700,marginBottom:10,letterSpacing:"0.04em"}}>اختر سبب البلاغ:</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[
+                  {key:"nudity",label:"عري / محتوى جنسي",icon:"🔞"},
+                  {key:"violence",label:"عنف أو تهديد",icon:"⚠️"},
+                  {key:"harassment",label:"مضايقة وإزعاج",icon:"😡"},
+                  {key:"spam",label:"بريد مزعج / إعلانات",icon:"📢"},
+                  {key:"hate",label:"خطاب كراهية",icon:"🤬"},
+                  {key:"other",label:"سبب آخر",icon:"📋"},
+                ].map(r=>(
+                  <button key={r.key} onClick={()=>setReportReason(r.key)} style={{
+                    padding:"11px 10px",borderRadius:13,
+                    background:reportReason===r.key?"rgba(239,68,68,0.2)":"rgba(255,255,255,0.05)",
+                    border:`1.5px solid ${reportReason===r.key?"rgba(239,68,68,0.55)":"rgba(255,255,255,0.08)"}`,
+                    cursor:"pointer",textAlign:"right",
+                    fontFamily:"'Poppins','Tajawal',system-ui",
+                    transition:"all 0.15s",
+                    display:"flex",alignItems:"center",gap:8
+                  }}>
+                    <span style={{fontSize:16,flexShrink:0}}>{r.icon}</span>
+                    <span style={{fontSize:11,fontWeight:reportReason===r.key?800:500,color:reportReason===r.key?"#fca5a5":"rgba(255,255,255,0.55)",lineHeight:1.3}}>{r.label}</span>
+                    {reportReason===r.key&&<svg style={{marginRight:"auto",flexShrink:0}} width="13" height="13" viewBox="0 0 24 24" fill="#ef4444" stroke="none"><path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"/></svg>}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Snapshot note for video */}
-            {callType==="video"&&callReportReason&&(
-              <div style={{fontSize:11,color:"rgba(245,158,11,0.7)",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:6}}>
-                📷 سيتم التقاط صورة من الفيديو كدليل تلقائياً
-              </div>
-            )}
-
-            <button disabled={!callReportReason||callReportSending} onClick={async()=>{
-              if(!callReportReason) return;
-              setCallReportSending(true);
-              // التقاط snapshot للفيديو إن وجد
-              let evidenceUrl=null;
-              if(callType==="video" && remoteVideoElRef.current){
-                try{
-                  const canvas=document.createElement("canvas");
-                  canvas.width=remoteVideoElRef.current.videoWidth||640;
-                  canvas.height=remoteVideoElRef.current.videoHeight||480;
-                  canvas.getContext("2d").drawImage(remoteVideoElRef.current,0,0);
-                  await new Promise(res=>canvas.toBlob(async(blob)=>{
-                    if(blob){ const supa=getSupa(); if(supa){ try{ const path=`reports/${userId}_${Date.now()}.jpg`; const {data}=await supa.storage.from("evidence").upload(path,blob,{contentType:"image/jpeg",upsert:true}); if(data){ const{data:pub}=supa.storage.from("evidence").getPublicUrl(path); evidenceUrl=pub?.publicUrl||null; } }catch(_){} } }
-                    res();
-                  },"image/jpeg",0.7));
-                }catch(_){}
+            {/* ── زر إرسال البلاغ ── */}
+            <button onClick={handleReport} disabled={!reportReason||reportLoading} style={{
+              width:"100%",padding:"15px",borderRadius:16,
+              background:reportReason
+                ?"linear-gradient(135deg,#dc2626,#991b1b)"
+                :"rgba(128,128,128,0.15)",
+              border:`1.5px solid ${reportReason?"rgba(239,68,68,0.5)":"rgba(255,255,255,0.08)"}`,
+              color:reportReason?"white":"rgba(255,255,255,0.3)",
+              fontWeight:800,fontSize:14,cursor:reportReason?"pointer":"not-allowed",
+              opacity:reportLoading?0.7:1,
+              transition:"all 0.2s",
+              fontFamily:"'Poppins','Tajawal',system-ui",
+              display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+              boxShadow:reportReason?"0 6px 24px rgba(239,68,68,0.3)":"none"
+            }}>
+              {reportLoading
+                ?<><div style={{width:16,height:16,borderRadius:8,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"white",animation:"spin 0.7s linear infinite"}}/> جاري الإرسال...</>
+                :<>📩 إرسال البلاغ</>
               }
-              const reportedUid=partner._uid||"";
-              await submitReport({reportedUserId:reportedUid,reportedName:partner.name,reason:callReportReason,contextMessages:[],evidenceUrl,reportType:callType==="video"?"video_call":"voice_call"});
-              // حظر فوري
-              if(reportedUid){ setBlocked(b=>{const nb=[...b,reportedUid];save("blocked",nb);return nb;}); await blockUserDB(reportedUid); }
-              setCallReportSending(false);
-              setShowCallReportModal(false);
-              addNotif("✅","تم الإبلاغ","تم تسجيل البلاغ وإنهاء المكالمة. شكراً للحفاظ على أمان المنصة.","info");
-              await doEndCall();
-            }} style={{width:"100%",padding:"14px",borderRadius:14,background:!callReportReason?"rgba(239,68,68,0.2)":"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",color:"white",fontWeight:800,fontSize:14,cursor:!callReportReason?"not-allowed":"pointer",fontFamily:"'Poppins','Tajawal',system-ui",opacity:!callReportReason?0.5:1,transition:"all 0.2s",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              {callReportSending?<><span style={{animation:"spin 0.8s linear infinite",display:"inline-block"}}>⟳</span> جاري الإرسال...</>:<><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>إرسال البلاغ</>}
             </button>
-            <button onClick={()=>setShowCallReportModal(false)} style={{width:"100%",marginTop:10,padding:"11px",borderRadius:14,border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.35)",fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>إلغاء</button>
+
+            {/* ── تنبيه نظام الضربات الثلاث ── */}
+            <div style={{marginTop:14,padding:"10px 14px",borderRadius:12,background:"rgba(245,158,11,0.07)",border:"1px solid rgba(245,158,11,0.18)",display:"flex",gap:9,alignItems:"flex-start"}}>
+              <span style={{fontSize:14,flexShrink:0,marginTop:1}}>⚖️</span>
+              <p style={{margin:0,fontSize:10,color:"rgba(245,158,11,0.65)",lineHeight:1.65,fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                <span style={{fontWeight:800,color:"rgba(245,158,11,0.8)"}}>نظام الضربات الثلاث:</span> عند تراكم 3 بلاغات من أشخاص مختلفين خلال 24 ساعة، يتم الحظر التلقائي وإشعار فريق الإدارة فوراً.
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -4191,6 +4257,9 @@ User said: "${userMsg}"`;
       <style>{CSS}</style>
     </div>
   );
+
+  // ── CHAT ──────────────────────────────────────────────────────────────────
+  if(screen==="chat"){
     const REACTIONS_R=["❤️","😂","😮","😢","👍","🔥"];
     const sendMsg=()=>{
       if(!chatInput.trim())return;
@@ -4313,10 +4382,7 @@ User said: "${userMsg}"`;
               });
               setShowSkipConfirm(true);
             }} style={{width:32,height:32,borderRadius:16,background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:"#f59e0b"}}>⏭</button>
-            {!(isBotMatch||partner._isBot)&&<button onClick={()=>{setReportReason("");setReportTarget({userId:partner._uid,name:partner.name,contextMsgs:messages.slice(-6)});setShowReportModal(true);}} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,0.14)",border:"1.5px solid rgba(239,68,68,0.35)",borderRadius:50,padding:"5px 10px",cursor:"pointer",transition:"all 0.2s"}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6z"/></svg>
-              <span style={{fontSize:10,color:"#ef4444",fontWeight:800}}>إبلاغ</span>
-            </button>}
+            {!(isBotMatch||partner._isBot)&&<button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>}
           </div>
         </div>
 
@@ -4410,16 +4476,10 @@ User said: "${userMsg}"`;
                       ...(isMe&&!isDeleted?[{icon:"🗑️",label:"حذف",color:"#ef4444",action:()=>{
                 setMsgMenuIdR(null);
                 setMessages(prev=>prev.map(x=>x.id===m.id?{...x,_deleted:true,text:"تم حذف هذه الرسالة"}:x));
+                // Broadcast delete to partner
                 try{ roomRef.current?.send({type:"broadcast",event:"msg_delete",payload:{id:m.id}}); }catch(_){}
               }}]:[]),
               {icon:"😊",label:"تفاعل",action:()=>{setMsgMenuIdR(null);setReactMenuIdR(m.id);}},
-              ...(!isMe&&!(isBotMatch||partner._isBot)?[{icon:"🚩",label:"إبلاغ",color:"#ef4444",action:()=>{
-                setMsgMenuIdR(null);
-                const ctx=messages.slice(Math.max(0,messages.findIndex(x=>x.id===m.id)-5),messages.findIndex(x=>x.id===m.id)+1);
-                setReportTarget({userId:partner._uid,name:partner.name,msgId:m.id,contextMsgs:ctx});
-                setReportReason("");
-                setShowReportModal(true);
-              }}]:[]),
                     ].map((item,i)=>(
                       <button key={i} onClick={item.action} style={{width:"100%",background:"none",border:"none",cursor:"pointer",padding:"9px 14px",display:"flex",alignItems:"center",gap:10,color:item.color||text,fontSize:13,fontWeight:600,fontFamily:"'Poppins','Tajawal',system-ui",borderRadius:10}}>
                         <span>{item.icon}</span><span>{item.label}</span>
@@ -4681,55 +4741,9 @@ User said: "${userMsg}"`;
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBlock(false)}>
             <div style={{...glass({width:"100%",borderRadius:"22px 22px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
               <div style={{fontWeight:800,fontSize:16,marginBottom:14}}>Privacy</div>
-              {[{icon:Ic.block("#ef4444"),label:`Block ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner._uid||partner.name]);blockUserDB(partner._uid||"");setShowBlock(false);setScreen("home");}},{icon:Ic.flag("#f59e0b"),label:"Report",c:"#f59e0b",action:()=>{setShowBlock(false);setReportReason("");setReportTarget({userId:partner._uid,name:partner.name,contextMsgs:messages.slice(-6)});setShowReportModal(true);}}].map((b,i)=>(
+              {[{icon:Ic.block("#ef4444"),label:`Block ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner.name]);setShowBlock(false);setScreen("home");}},{icon:Ic.flag("#f59e0b"),label:"Report",c:"#f59e0b",action:()=>setShowBlock(false)}].map((b,i)=>(
                 <button key={i} onClick={b.action} style={{width:"100%",background:`${b.c}11`,border:`1px solid ${b.c}44`,borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12,cursor:"pointer",color:b.c,fontWeight:700,marginBottom:10,fontFamily:"'Poppins','Tajawal',system-ui"}}>{b.icon}<span>{b.label}</span></button>
               ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── REPORT MODAL (نصية عشوائية) ── */}
-        {showReportModal&&reportTarget&&(
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(16px)",zIndex:300,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowReportModal(false)}>
-            <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
-              <div style={{width:36,height:4,borderRadius:2,background:"rgba(255,255,255,0.12)",margin:"0 auto 16px"}}/>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
-                <div style={{width:40,height:40,borderRadius:20,background:"rgba(239,68,68,0.15)",border:"1.5px solid rgba(239,68,68,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6z"/></svg>
-                </div>
-                <div>
-                  <div style={{fontWeight:900,fontSize:15,color:text}}>إبلاغ عن المستخدم</div>
-                  <div style={{fontSize:11,color:muted}}>{reportTarget.name}</div>
-                </div>
-              </div>
-              <div style={{fontSize:12,color:muted,fontWeight:700,marginBottom:10}}>سبب الإبلاغ</div>
-              <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:16}}>
-                {REPORT_REASONS.map(r=>(
-                  <button key={r} onClick={()=>setReportReason(r)}
-                    style={{padding:"10px 14px",borderRadius:12,border:`1.5px solid ${reportReason===r?"#ef4444":border}`,background:reportReason===r?"rgba(239,68,68,0.1)":card,color:reportReason===r?"#ef4444":text,fontWeight:reportReason===r?700:400,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",textAlign:"right",transition:"all 0.18s",display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:14,height:14,borderRadius:7,border:`2px solid ${reportReason===r?"#ef4444":muted}`,background:reportReason===r?"#ef4444":"transparent",flexShrink:0,transition:"all 0.2s"}}/>
-                    {r}
-                  </button>
-                ))}
-              </div>
-              <button disabled={!reportReason||reportSending} onClick={async()=>{
-                if(!reportReason) return;
-                setReportSending(true);
-                const ctx=(reportTarget.contextMsgs||[]).map(m=>({role:m.from==="me"?"me":"partner",text:m.text||""}));
-                await submitReport({reportedUserId:reportTarget.userId,reportedName:reportTarget.name,reason:reportReason,contextMessages:ctx,reportType:"text_chat"});
-                // إجراء فوري: حظر + إنهاء + Toast
-                if(reportTarget.userId){ setBlocked(b=>{const nb=[...b,reportTarget.userId];save("blocked",nb);return nb;}); await blockUserDB(reportTarget.userId); }
-                setReportSending(false);
-                setShowReportModal(false);
-                // إنهاء المحادثة وإخفاء الطرف الآخر
-                try{ if(roomRef.current) roomRef.current.send({type:"broadcast",event:"chat_skip",payload:{}}); }catch(_){}
-                const supa2=getSupa(); if(roomRef.current&&supa2){try{supa2.removeChannel(roomRef.current);}catch(e){} roomRef.current=null;}
-                addNotif("✅","تم تسجيل البلاغ","تم إنهاء المحادثة. شكراً للحفاظ على أمان المنصة.","info");
-                setPartner({name:"",av:"",country:""});setMessages([]);setScreen("home");
-              }} style={{width:"100%",padding:"14px",borderRadius:14,background:!reportReason?"rgba(239,68,68,0.15)":"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",color:"white",fontWeight:800,fontSize:14,cursor:!reportReason?"not-allowed":"pointer",fontFamily:"'Poppins','Tajawal',system-ui",opacity:!reportReason?0.5:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
-                {reportSending?<><span style={{animation:"spin 0.8s linear infinite",display:"inline-block"}}>⟳</span> جاري...</>:<><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>إرسال البلاغ وإنهاء المحادثة</>}
-              </button>
-              <button onClick={()=>setShowReportModal(false)} style={{width:"100%",padding:"11px",borderRadius:14,border:`1px solid ${border}`,background:"transparent",color:muted,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>إلغاء</button>
             </div>
           </div>
         )}
@@ -5004,20 +5018,15 @@ User said: "${userMsg}"`;
             {type:"text",  title:"دردشة نصية",   desc:"تبادل الرسائل",  grad:darkMode?`linear-gradient(135deg,#f59e0b28,#fbbf2418)`:`linear-gradient(135deg,#f59e0b15,#fbbf2408)`, color:"#f59e0b",
               svg:<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
           ].map((c2,ci)=>(
-            <button key={c2.type} onClick={()=>{
-              if(!eulaAccepted){
-                addNotif("🛡️","يجب الموافقة على الشروط","يرجى الموافقة على شروط الاستخدام أولاً من إعدادات الملف الشخصي","info");
-                return;
-              }
-              startSearch(c2.type);
-            }} className="ripple" style={{
+            <button key={c2.type} onClick={()=>{ if(!eulaAccepted){addNotif("🛡️","الموافقة مطلوبة","يجب إكمال إعداد الملف الشخصي والموافقة على شروط الاستخدام أولاً","info");setShowOnboarding(true);return;} startSearch(c2.type);}} className="ripple" style={{
               width:"100%",background:c2.grad,
               backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
-              border:`1px solid ${c2.color}30`,
+              border:`1px solid ${eulaAccepted?c2.color+"30":"rgba(128,128,128,0.2)"}`,
               borderRadius:20,padding:"15px 16px",
               display:"flex",alignItems:"center",gap:14,
-              cursor:"pointer",marginBottom:10,textAlign:"right",
-              boxShadow:`0 4px 24px ${c2.color}15, 0 1px 0 rgba(255,255,255,0.06) inset`,
+              cursor:eulaAccepted?"pointer":"not-allowed",marginBottom:10,textAlign:"right",
+              boxShadow:eulaAccepted?`0 4px 24px ${c2.color}15, 0 1px 0 rgba(255,255,255,0.06) inset`:"none",
+              opacity:eulaAccepted?1:0.48,
               transition:"all 0.2s cubic-bezier(0.4,0,0.2,1)",
               animationName:"slideIn",animationDuration:"0.3s",animationFillMode:"both",animationTimingFunction:"ease",animationDelay:`${ci*0.06}s`
             }}>
@@ -5345,37 +5354,11 @@ User said: "${userMsg}"`;
                   transition:"background 0.2s"}}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={darkMode?"#9ca3af":"#6b7280"} strokeWidth="2" strokeLinecap="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
                 </button>
-                {/* ثلاث نقاط — حظر/إبلاغ */}
-                <button onClick={()=>setShowFriendOptionsMenu(p=>!p)} style={{width:36,height:36,borderRadius:18,
+                {/* ثلاث نقاط */}
+                <button onClick={()=>setShowBlock(true)} style={{width:36,height:36,borderRadius:18,
                   background:"transparent",border:"none",cursor:"pointer",
                   display:"flex",alignItems:"center",justifyContent:"center",
                   color:darkMode?"#6b7280":"#9ca3af",fontSize:18,fontWeight:700}}>⋮</button>
-                {/* قائمة الخيارات */}
-                {showFriendOptionsMenu&&(
-                  <div style={{position:"absolute",top:56,right:14,background:darkMode?"rgba(14,20,36,0.98)":"white",border:`1px solid ${border}`,borderRadius:14,padding:8,boxShadow:"0 8px 30px rgba(0,0,0,0.25)",zIndex:100,minWidth:180}} onClick={e=>e.stopPropagation()}>
-                    <button onClick={async()=>{
-                      setShowFriendOptionsMenu(false);
-                      const uid=partner._uid||"";
-                      if(uid){ setBlocked(b=>{const nb=[...b,uid];save("blocked",nb);return nb;}); await blockUserDB(uid); }
-                      disconnectStream();
-                      setActiveChat(null);
-                      setConversations(p=>p.filter(c=>c.partnerId!==uid));
-                      addNotif("🚫","تم الحظر",`لن يظهر ${partner.name} مجدداً`,"info");
-                    }} style={{width:"100%",padding:"10px 14px",background:"rgba(239,68,68,0.08)",border:"none",borderRadius:10,color:"#ef4444",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-                      حظر المستخدم
-                    </button>
-                    <button onClick={()=>{
-                      setShowFriendOptionsMenu(false);
-                      setReportReason("");
-                      setReportTarget({userId:partner._uid,name:partner.name,contextMsgs:streamMessages.slice(-6)});
-                      setShowReportModal(true);
-                    }} style={{width:"100%",padding:"10px 14px",background:"rgba(245,158,11,0.08)",border:"none",borderRadius:10,color:"#f59e0b",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",display:"flex",alignItems:"center",gap:8}}>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-                      إبلاغ
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -5419,17 +5402,8 @@ User said: "${userMsg}"`;
                   onClick={e=>e.stopPropagation()}>
                   <div style={{fontWeight:800,fontSize:16,marginBottom:14}}>الخصوصية</div>
                   {[
-                    {icon:"🚫",label:`حظر ${partner.name}`,c:"#ef4444",action:async()=>{
-                      const uid=partner._uid||""; if(uid){setBlocked(b=>{const nb=[...b,uid];save("blocked",nb);return nb;}); await blockUserDB(uid);}
-                      setShowBlock(false); disconnectStream(); setActiveChat(null);
-                      addNotif("🚫","تم الحظر",`لن يظهر ${partner.name} مجدداً`,"info");
-                    }},
-                    {icon:"🚩",label:"إبلاغ",c:"#f59e0b",action:()=>{
-                      setShowBlock(false);
-                      setReportReason("");
-                      setReportTarget({userId:partner._uid,name:partner.name,contextMsgs:streamMessages.slice(-6)});
-                      setShowReportModal(true);
-                    }}
+                    {icon:"🚫",label:`حظر ${partner.name}`,c:"#ef4444",action:()=>{setBlocked(b=>[...b,partner.name]);setShowBlock(false);setScreen("home");}},
+                    {icon:"🚩",label:"إبلاغ",c:"#f59e0b",action:()=>setShowBlock(false)}
                   ].map((b,i)=>(
                     <button key={i} onClick={b.action} style={{width:"100%",background:`${b.c}11`,
                       border:`1px solid ${b.c}44`,borderRadius:14,padding:14,
@@ -8184,9 +8158,35 @@ User said: "${userMsg}"`;
               })}
             </div>
 
+            {/* ── EULA Checkbox — يظهر مرة واحدة فقط للمستخدم الجديد ── */}
+            <div onClick={()=>setEulaAccepted(!eulaAccepted)} style={{
+              display:"flex",alignItems:"flex-start",gap:12,marginBottom:18,
+              padding:"14px 16px",borderRadius:16,cursor:"pointer",userSelect:"none",
+              background:eulaAccepted?`${primary}12`:"rgba(239,68,68,0.06)",
+              border:`1.5px solid ${eulaAccepted?primary:"rgba(239,68,68,0.4)"}`,
+              backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",
+              boxShadow:eulaAccepted?`0 0 16px ${glow}40`:"none",
+              transition:"all 0.25s"
+            }}>
+              <div style={{
+                width:22,height:22,borderRadius:6,flexShrink:0,marginTop:2,
+                background:eulaAccepted?primary:"transparent",
+                border:`2.5px solid ${eulaAccepted?primary:"rgba(239,68,68,0.55)"}`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                transition:"all 0.2s",boxShadow:eulaAccepted?`0 0 10px ${glow}`:undefined
+              }}>
+                {eulaAccepted&&<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              </div>
+              <span style={{fontSize:11.5,color:text,lineHeight:1.75,flex:1}}>
+                <span style={{fontWeight:800,color:eulaAccepted?primary:"#ef4444"}}>أوافق على شروط الاستخدام (EULA) </span>
+                وأُقرّ بأنه <span style={{fontWeight:700,color:eulaAccepted?text:"#ef4444"}}>لا تسامح</span> مع المحتوى المسيء أو العنف أو العري. سيتم <span style={{fontWeight:700}}>حظر المخالفين نهائياً</span> 🛡️
+              </span>
+            </div>
+
             <button onClick={async()=>{
               if(!onbLang){ addNotif("⚠️","اختر اللغة","يرجى اختيار لغة واحدة على الأقل","info"); return; }
               if(onbTopics.length===0){ addNotif("⚠️","اختر موضوعاً","يرجى اختيار موضوع واحد على الأقل","info"); return; }
+              if(!eulaAccepted){ addNotif("⚠️","الموافقة مطلوبة","يجب الموافقة على شروط الاستخدام للمتابعة","info"); return; }
               const prefs={lang:onbLang,level:onbLevel,topics:onbTopics,updatedAt:new Date().toISOString()};
               save("userPreferences",prefs);
               setUserPreferences(prefs);
@@ -8198,10 +8198,11 @@ User said: "${userMsg}"`;
                 const supa=getSupa();
                 if(supa&&userId){
                   await supa.from("user_preferences").upsert({user_id:userId,lang:onbLang,level:onbLevel,topics:onbTopics,updated_at:new Date().toISOString()});
+                  await supa.from("users").update({eula_accepted:true,eula_accepted_at:new Date().toISOString()}).eq("id",userId);
                 }
               }catch(_){}
-            }} style={btnP({width:"100%",fontSize:15,padding:"16px"})}>
-              ابدأ التعلم الآن 🚀
+            }} disabled={!eulaAccepted} style={btnP({width:"100%",fontSize:15,padding:"16px",opacity:eulaAccepted?1:0.42,cursor:eulaAccepted?"pointer":"not-allowed",filter:eulaAccepted?"none":"grayscale(0.3)"})}>
+              {eulaAccepted?"ابدأ التعلم الآن 🚀":"✅ وافق على الشروط أولاً"}
             </button>
 
             <button onClick={()=>setShowOnboarding(false)} style={{width:"100%",marginTop:10,padding:"12px",borderRadius:50,border:`1px solid ${border}`,background:"transparent",color:muted,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
@@ -8271,46 +8272,10 @@ User said: "${userMsg}"`;
           </div>
         </div>
       )}
-      {/* ══ GLOBAL REPORT MODAL ══ */}
-      {showReportModal&&reportTarget&&appScreen==="main"&&screen!=="chat"&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(16px)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowReportModal(false)}>
-          <div style={{...glass({width:"100%",borderRadius:"24px 24px 0 0",padding:22})}} onClick={e=>e.stopPropagation()}>
-            <div style={{width:36,height:4,borderRadius:2,background:"rgba(255,255,255,0.12)",margin:"0 auto 16px"}}/>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
-              <div style={{width:40,height:40,borderRadius:20,background:"rgba(239,68,68,0.15)",border:"1.5px solid rgba(239,68,68,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6z"/></svg>
-              </div>
-              <div><div style={{fontWeight:900,fontSize:15}}>إبلاغ — {reportTarget.name}</div><div style={{fontSize:11,color:muted}}>اختر سبب الإبلاغ</div></div>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:16}}>
-              {REPORT_REASONS.map(r=>(
-                <button key={r} onClick={()=>setReportReason(r)}
-                  style={{padding:"10px 14px",borderRadius:12,border:`1.5px solid ${reportReason===r?"#ef4444":border}`,background:reportReason===r?"rgba(239,68,68,0.1)":card,color:reportReason===r?"#ef4444":text,fontWeight:reportReason===r?700:400,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui",textAlign:"right",transition:"all 0.18s",display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:14,height:14,borderRadius:7,border:`2px solid ${reportReason===r?"#ef4444":muted}`,background:reportReason===r?"#ef4444":"transparent",flexShrink:0,transition:"all 0.2s"}}/>
-                  {r}
-                </button>
-              ))}
-            </div>
-            <button disabled={!reportReason||reportSending} onClick={async()=>{
-              if(!reportReason) return;
-              setReportSending(true);
-              const ctx=(reportTarget.contextMsgs||[]).map(m=>({role:m.user?.id===userId||m.from==="me"?"me":"partner",text:m.text||""}));
-              await submitReport({reportedUserId:reportTarget.userId,reportedName:reportTarget.name,reason:reportReason,contextMessages:ctx,reportType:"friend_chat"});
-              if(reportTarget.userId){setBlocked(b=>{const nb=[...b,reportTarget.userId];save("blocked",nb);return nb;}); await blockUserDB(reportTarget.userId);}
-              setReportSending(false); setShowReportModal(false);
-              disconnectStream(); setActiveChat(null);
-              addNotif("✅","تم الإبلاغ","تم تسجيل البلاغ. شكراً للحفاظ على أمان المنصة.","info");
-            }} style={{width:"100%",padding:"14px",borderRadius:14,background:!reportReason?"rgba(239,68,68,0.2)":"linear-gradient(135deg,#ef4444,#dc2626)",border:"none",color:"white",fontWeight:800,fontSize:14,cursor:!reportReason?"not-allowed":"pointer",fontFamily:"'Poppins','Tajawal',system-ui",opacity:!reportReason?0.5:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
-              {reportSending?<><span style={{animation:"spin 0.8s linear infinite",display:"inline-block"}}>⟳</span> جاري...</>:<>إرسال البلاغ</>}
-            </button>
-            <button onClick={()=>setShowReportModal(false)} style={{width:"100%",padding:"11px",borderRadius:14,border:`1px solid ${border}`,background:"transparent",color:muted,fontSize:13,cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>إلغاء</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
-ReactDOM.createRoot(document.getElementById("root")).render(<Ailo/>);
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Ailo));
 </script>
 </body>
 </html>
