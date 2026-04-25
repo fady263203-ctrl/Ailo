@@ -806,6 +806,71 @@ function Ailo(){
     setReportReason("");
     addNotif("📩","تم إرسال البلاغ","شكراً، سيراجعه الفريق قريباً","info");
   };
+
+  // ── Chat Report System (عشوائية + خاصة) ──────────────────────────────────
+  const[showChatReportModal,setShowChatReportModal]=useState(false);
+  const[chatReportReason,setChatReportReason]=useState("");
+  const[chatReportLoading,setChatReportLoading]=useState(false);
+  const[chatReportTargetMsg,setChatReportTargetMsg]=useState(null);
+  const[chatReportContext,setChatReportContext]=useState("random");
+
+  // فلتر OpenAI Moderation عبر Supabase Edge Function
+  const moderateText=async(text)=>{
+    try{
+      const supa=getSupa();
+      if(!supa) return null;
+      const{data,error}=await supa.functions.invoke("moderate-text",{body:{text}});
+      if(error) return null;
+      return data;
+    }catch(e){ return null; }
+  };
+
+  // إرسال بلاغ الدردشة
+  const handleChatReport=async()=>{
+    if(!chatReportReason) return;
+    setChatReportLoading(true);
+    const reportedId=partner?._uid||partner?.name||"unknown";
+    const reporterId=userId||"anonymous";
+    const now=new Date().toISOString();
+    const since=new Date(Date.now()-24*60*60*1000).toISOString();
+    const evidenceMsgs=messages.slice(-10).map(m=>`[${m.from==="me"?"أنا":partner.name}]: ${m.text||"📎 مرفق"}`).join("\n");
+    try{
+      const supa=getSupa();
+      if(supa){
+        const{data:existing}=await supa.from("chat_reports").select("reporter_id").eq("reported_id",reportedId).gte("created_at",since);
+        const uniqueReporters=new Set((existing||[]).map(r=>r.reporter_id));
+        uniqueReporters.add(reporterId);
+        const strikeCount=uniqueReporters.size;
+        await supa.from("chat_reports").insert({reported_id:reportedId,reporter_id:reporterId,reason:chatReportReason,context:chatReportContext,evidence:evidenceMsgs,strike_count:strikeCount,target_message:chatReportTargetMsg||null,created_at:now});
+        if(strikeCount===1){
+          await sendTelegramMessage(`📩 <b>بلاغ دردشة — الضربة 1/3</b>\nالنوع: ${chatReportContext==="random"?"عشوائية":"خاصة"}\nالمُبلَّغ عنه: <code>${reportedId}</code>\nالسبب: ${chatReportReason}\n\n<b>الدليل:</b>\n<pre>${evidenceMsgs.slice(0,800)}</pre>`);
+        } else if(strikeCount===2){
+          await supa.from("users").update({flagged:true}).eq("id",reportedId).catch(()=>{});
+          await sendTelegramMessage(`🚩 <b>تنبيه صامت — دردشة — الضربة 2/3</b>\nالمُبلَّغ عنه: <code>${reportedId}</code>\nالسبب: ${chatReportReason}\n\n<pre>${evidenceMsgs.slice(0,600)}</pre>`);
+        } else if(strikeCount>=3){
+          await supa.from("users").update({banned:true,banned_at:now,ban_reason:"chat_three_strikes"}).eq("id",reportedId).catch(()=>{});
+          await sendTelegramMessage(`🚨 <b>حظر تلقائي — دردشة!</b>\nالمُبلَّغ عنه: <code>${reportedId}</code>\nالسبب: تراكم 3 بلاغات / 24h\nآخر سبب: ${chatReportReason}\nالنوع: ${chatReportContext==="random"?"عشوائية":"خاصة"}\n\n<b>سجل الأدلة:</b>\n<pre>${evidenceMsgs.slice(0,800)}</pre>`);
+        }
+      } else {
+        await sendTelegramMessage(`⚠️ بلاغ دردشة (بدون DB)\n<code>${reportedId}</code> — ${chatReportReason}\n<pre>${evidenceMsgs.slice(0,500)}</pre>`);
+      }
+    }catch(err){ console.error("Chat report error:",err); }
+    setChatReportLoading(false); setShowChatReportModal(false); setChatReportReason(""); setChatReportTargetMsg(null);
+    addNotif("📩","تم إرسال البلاغ","سيراجعه الفريق خلال 24 ساعة","info");
+  };
+
+  // فلتر تلقائي قبل إرسال الرسالة
+  const moderateAndSend=async(text,sendFn)=>{
+    const result=await moderateText(text);
+    if(result?.flagged){
+      const cats=Object.entries(result.categories||{}).filter(([,v])=>v).map(([k])=>k).join(", ");
+      addNotif("🛡️","محتوى مرفوض",`تم اكتشاف محتوى مسيء (${cats}). لن يتم إرسال الرسالة.`,"info");
+      try{ const supa=getSupa(); if(supa&&userId) await supa.from("auto_moderation_log").insert({user_id:userId,text:text.slice(0,500),categories:cats,created_at:new Date().toISOString()}); }catch(_){}
+      return false;
+    }
+    sendFn(); return true;
+  };
+
   const SUPA_URL=_SUPA_URL;
   const SUPA_KEY=_SUPA_KEY;
 
@@ -3798,8 +3863,8 @@ User said: "${userMsg}"`;
           )}
         </div>
 
-        {/* Center: Red Shield Report Button */}
-        {callStatus==="connected"&&!(isBotMatch||partner._isBot)&&(
+        {/* Center: Red Shield Report Button — الاتصال العشوائي فقط */}
+        {callStatus==="connected"&&callSource==="random"&&!(isBotMatch||partner._isBot)&&(
           <button onClick={()=>setShowReportModal(true)} style={{
             width:42,height:42,borderRadius:21,
             background:"linear-gradient(135deg,rgba(220,38,38,0.85),rgba(153,27,27,0.9))",
@@ -3807,8 +3872,7 @@ User said: "${userMsg}"`;
             display:"flex",alignItems:"center",justifyContent:"center",
             cursor:"pointer",
             boxShadow:"0 0 18px rgba(239,68,68,0.45), 0 2px 8px rgba(0,0,0,0.5)",
-            transition:"all 0.2s",
-            animation:"glowPulse 2.5s ease-in-out infinite"
+            transition:"all 0.2s"
           }}
             onPointerDown={e=>e.currentTarget.style.transform="scale(0.91)"}
             onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
@@ -4118,20 +4182,11 @@ User said: "${userMsg}"`;
             <span style={{fontSize:10,color:"rgba(245,158,11,0.7)",fontWeight:600}}>تخطي</span>
           </button>}
 
-          {/* Report — real users only */}
-          {!(isBotMatch||partner._isBot)&&(
-            <button onClick={()=>setShowReportModal(true)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",fontFamily:"'Poppins','Tajawal',system-ui"}}>
-              <div style={{width:42,height:42,borderRadius:21,background:"rgba(239,68,68,0.18)",border:"1.5px solid rgba(239,68,68,0.45)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,boxShadow:"0 0 12px rgba(239,68,68,0.25)",transition:"all 0.2s"}}>🚩</div>
-              <span style={{fontSize:10,color:"rgba(239,68,68,0.75)",fontWeight:700}}>بلاغ</span>
-            </button>
-          )}
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════
-           🛡️  REPORT MODAL — نافذة الإبلاغ والحظر الزجاجية
-      ══════════════════════════════════════════════════════════════ */}
-      {showReportModal&&(
+      {/* 🛡️ REPORT MODAL — الاتصال العشوائي فقط */}
+      {showReportModal&&callSource==="random"&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",zIndex:999,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom,0)"}}>
           <div style={{
             width:"100%",maxWidth:480,
@@ -4383,6 +4438,26 @@ User said: "${userMsg}"`;
               setShowSkipConfirm(true);
             }} style={{width:32,height:32,borderRadius:16,background:"rgba(245,158,11,0.15)",border:"1px solid rgba(245,158,11,0.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:"#f59e0b"}}>⏭</button>
             {!(isBotMatch||partner._isBot)&&<button onClick={()=>setShowBlock(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6}}>{Ic.flag(muted)}</button>}
+            {/* 🛡️ زر الدرع — عشوائية وخاصة */}
+            {!(isBotMatch||partner._isBot)&&(
+              <button onClick={()=>{ setChatReportContext(callSource==="random"?"random":"private"); setShowChatReportModal(true); }} style={{
+                width:34,height:34,borderRadius:17,
+                background:"linear-gradient(135deg,rgba(220,38,38,0.82),rgba(153,27,27,0.88))",
+                border:"1.5px solid rgba(239,68,68,0.55)",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                cursor:"pointer",
+                boxShadow:"0 0 14px rgba(239,68,68,0.35)",
+                transition:"all 0.2s"
+              }}
+                onPointerDown={e=>e.currentTarget.style.transform="scale(0.9)"}
+                onPointerUp={e=>e.currentTarget.style.transform="scale(1)"}
+                title="إبلاغ"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="none">
+                  <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -4480,6 +4555,7 @@ User said: "${userMsg}"`;
                 try{ roomRef.current?.send({type:"broadcast",event:"msg_delete",payload:{id:m.id}}); }catch(_){}
               }}]:[]),
               {icon:"😊",label:"تفاعل",action:()=>{setMsgMenuIdR(null);setReactMenuIdR(m.id);}},
+                      ...(!isMe&&!(isBotMatch||partner._isBot)?[{icon:"shield",label:"إبلاغ عن هذه الرسالة",color:"#ef4444",action:()=>{ setChatReportTargetMsg(m.text||"📎 مرفق"); setChatReportContext(callSource==="random"?"random":"private"); setMsgMenuIdR(null); setShowChatReportModal(true); }}]:[]),
                     ].map((item,i)=>(
                       <button key={i} onClick={item.action} style={{width:"100%",background:"none",border:"none",cursor:"pointer",padding:"9px 14px",display:"flex",alignItems:"center",gap:10,color:item.color||text,fontSize:13,fontWeight:600,fontFamily:"'Poppins','Tajawal',system-ui",borderRadius:10}}>
                         <span>{item.icon}</span><span>{item.label}</span>
@@ -4812,6 +4888,70 @@ User said: "${userMsg}"`;
         )}
 
         {/* ── FIX 16: Context Menu (Long Press) ── */}
+
+        {/* 🛡️ CHAT REPORT MODAL — عشوائية + خاصة */}
+        {showChatReportModal&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",zIndex:999,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={()=>setShowChatReportModal(false)}>
+            <div style={{width:"100%",maxWidth:480,background:"rgba(14,6,6,0.93)",backdropFilter:"blur(28px) saturate(160%)",WebkitBackdropFilter:"blur(28px) saturate(160%)",border:"1.5px solid rgba(239,68,68,0.22)",borderRadius:"28px 28px 0 0",padding:"26px 20px 36px",boxShadow:"0 -10px 50px rgba(239,68,68,0.12)",animation:"atSlideUp 0.3s cubic-bezier(0.34,1.2,0.64,1)"}} onClick={e=>e.stopPropagation()}>
+
+              {/* الهيدر */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+                <div style={{display:"flex",alignItems:"center",gap:11}}>
+                  <div style={{width:42,height:42,borderRadius:21,background:"linear-gradient(135deg,rgba(220,38,38,0.88),rgba(153,27,27,0.84))",border:"1.5px solid rgba(239,68,68,0.5)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 18px rgba(239,68,68,0.35)"}}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="none"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/></svg>
+                  </div>
+                  <div>
+                    <div style={{fontWeight:900,fontSize:15,color:"white"}}>إبلاغ عن مستخدم</div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.38)",marginTop:1}}>
+                      {chatReportContext==="random"?"دردشة عشوائية":"دردشة خاصة"} — <span style={{color:"rgba(239,68,68,0.75)",fontWeight:700}}>{partner.name||"مجهول"}</span>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={()=>setShowChatReportModal(false)} style={{width:30,height:30,borderRadius:15,background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Poppins','Tajawal',system-ui"}}>✕</button>
+              </div>
+
+              {/* إذا كانت رسالة محددة */}
+              {chatReportTargetMsg&&(
+                <div style={{marginBottom:14,padding:"9px 13px",borderRadius:12,background:"rgba(239,68,68,0.07)",border:"1px solid rgba(239,68,68,0.2)"}}>
+                  <div style={{fontSize:10,color:"rgba(239,68,68,0.6)",fontWeight:700,marginBottom:4}}>الرسالة المُبلَّغ عنها:</div>
+                  <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chatReportTargetMsg}</div>
+                </div>
+              )}
+
+              {/* أسباب البلاغ */}
+              <div style={{fontSize:11,color:"rgba(255,255,255,0.38)",fontWeight:700,marginBottom:10}}>اختر سبب البلاغ:</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:16}}>
+                {[
+                  {key:"nudity",label:"عري / محتوى جنسي",icon:"🔞"},
+                  {key:"violence",label:"عنف أو تهديد",icon:"⚠️"},
+                  {key:"harassment",label:"مضايقة وإزعاج",icon:"😡"},
+                  {key:"spam",label:"بريد مزعج",icon:"📢"},
+                  {key:"hate",label:"خطاب كراهية",icon:"🤬"},
+                  {key:"other",label:"سبب آخر",icon:"📋"},
+                ].map(r=>(
+                  <button key={r.key} onClick={()=>setChatReportReason(r.key)} style={{padding:"10px 9px",borderRadius:12,background:chatReportReason===r.key?"rgba(239,68,68,0.18)":"rgba(255,255,255,0.04)",border:`1.5px solid ${chatReportReason===r.key?"rgba(239,68,68,0.5)":"rgba(255,255,255,0.07)"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:7,fontFamily:"'Poppins','Tajawal',system-ui",transition:"all 0.15s"}}>
+                    <span style={{fontSize:15,flexShrink:0}}>{r.icon}</span>
+                    <span style={{fontSize:11,fontWeight:chatReportReason===r.key?800:500,color:chatReportReason===r.key?"#fca5a5":"rgba(255,255,255,0.5)",lineHeight:1.3}}>{r.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* زر الإرسال */}
+              <button onClick={handleChatReport} disabled={!chatReportReason||chatReportLoading} style={{width:"100%",padding:"14px",borderRadius:15,background:chatReportReason?"linear-gradient(135deg,#dc2626,#991b1b)":"rgba(128,128,128,0.12)",border:`1.5px solid ${chatReportReason?"rgba(239,68,68,0.5)":"rgba(255,255,255,0.07)"}`,color:chatReportReason?"white":"rgba(255,255,255,0.25)",fontWeight:800,fontSize:14,cursor:chatReportReason?"pointer":"not-allowed",opacity:chatReportLoading?0.7:1,display:"flex",alignItems:"center",justifyContent:"center",gap:9,boxShadow:chatReportReason?"0 6px 22px rgba(239,68,68,0.28)":"none",fontFamily:"'Poppins','Tajawal',system-ui",marginBottom:12,transition:"all 0.2s"}}>
+                {chatReportLoading?<><div style={{width:15,height:15,borderRadius:8,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"white",animation:"spin 0.7s linear infinite"}}/> جاري الإرسال...</>:<>📩 إرسال البلاغ</>}
+              </button>
+
+              {/* نظام الضربات الثلاث */}
+              <div style={{padding:"9px 13px",borderRadius:11,background:"rgba(245,158,11,0.06)",border:"1px solid rgba(245,158,11,0.15)",display:"flex",gap:8,alignItems:"flex-start"}}>
+                <span style={{fontSize:13,flexShrink:0}}>⚖️</span>
+                <p style={{margin:0,fontSize:10,color:"rgba(245,158,11,0.6)",lineHeight:1.65,fontFamily:"'Poppins','Tajawal',system-ui"}}>
+                  <span style={{fontWeight:800,color:"rgba(245,158,11,0.75)"}}>نظام الضربات الثلاث:</span> يتم إرسال آخر 10 رسائل كدليل. عند 3 بلاغات من أشخاص مختلفين خلال 24h يتم الحظر التلقائي.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <style>{CSS}</style>
       </div>
     );
