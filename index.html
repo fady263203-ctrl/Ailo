@@ -732,7 +732,87 @@ function Ailo(){
     }catch(e){ console.warn("Telegram send failed:",e); }
   };
 
-  // ── Session Refresh — يمنع خطأ 401/403 أثناء البلاغات ──────────────────
+  // ── Google Vision — التقاط frame من الفيديو وتحليله ──────────────────────
+  const CRITICAL_REPORT_REASONS=["nudity","violence","minors"];
+
+  const captureVideoFrame=()=>{
+    try{
+      const video=remoteVideoElRef.current;
+      if(!video||video.readyState<2) return null;
+      const canvas=document.createElement("canvas");
+      canvas.width=video.videoWidth||320;
+      canvas.height=video.videoHeight||240;
+      canvas.getContext("2d").drawImage(video,0,0,canvas.width,canvas.height);
+      return canvas.toDataURL("image/jpeg",0.7).split(",")[1]; // base64
+    }catch(e){ return null; }
+  };
+
+  const analyzeWithVision=async(base64Image)=>{
+    try{
+      const supa=await getValidSupa();
+      if(!supa||!base64Image) return null;
+      const{data,error}=await supa.functions.invoke("analyze-vision",{body:{image:base64Image}});
+      if(error) return null;
+      return data; // {safeSearch:{adult,violence,racy}, verdict:"VERY_LIKELY"|"LIKELY"|"UNLIKELY"}
+    }catch(e){ return null; }
+  };
+
+  const handleVideoReport=async()=>{
+    if(!reportReason) return;
+    setReportLoading(true);
+    const isCritical=CRITICAL_REPORT_REASONS.includes(reportReason);
+
+    if(isCritical && callType==="video"){
+      // التقاط frame وإرسالها لـ Google Vision
+      const frame=captureVideoFrame();
+      const visionResult=await analyzeWithVision(frame);
+      const verdict=visionResult?.verdict||"UNLIKELY";
+
+      const supa=await getValidSupa();
+      const reportedId=partner?._uid||partner?.name||"unknown";
+      const reporterId=userId||"anonymous";
+      const now=new Date().toISOString();
+
+      if(verdict==="VERY_LIKELY"){
+        // حظر فوري
+        if(supa) await supa.from("users").update({banned:true,banned_at:now,ban_reason:`vision_${reportReason}`}).eq("id",reportedId).catch(()=>{});
+        await sendTelegramMessage(
+`🚨 <b>حظر فوري — Google Vision</b>
+السبب: ${reportReason}
+المُبلَّغ عنه: <code>${reportedId}</code>
+نتيجة Vision: <b>VERY_LIKELY</b>
+المُبلِّغ: <code>${reporterId}</code>
+الوقت: ${now}`
+        );
+        setShowReportModal(false);
+        doEndCall();
+        addNotif("🚨","حظر فوري","تم اكتشاف محتوى مسيء وحظر المستخدم فوراً","info");
+      } else if(verdict==="LIKELY"){
+        // ضربة + مراجعة بشرية
+        if(supa) await supa.from("user_reports").insert({reported_id:reportedId,reporter_id:reporterId,reason:reportReason,strike_count:1,context:"video_random",created_at:now});
+        await sendTelegramMessage(
+`🚩 <b>مراجعة بشرية مطلوبة — Vision</b>
+السبب: ${reportReason}
+المُبلَّغ عنه: <code>${reportedId}</code>
+نتيجة Vision: <b>LIKELY</b> — يحتاج قراراً بشرياً
+المُبلِّغ: <code>${reporterId}</code>`
+        );
+        setShowReportModal(false);
+        addNotif("📩","تم إرسال البلاغ","سيراجعه الفريق قريباً","info");
+      } else {
+        // UNLIKELY — حفظ فقط
+        if(supa) await supa.from("user_reports").insert({reported_id:reportedId,reporter_id:reporterId,reason:reportReason,strike_count:0,context:"video_random",vision_verdict:"UNLIKELY",created_at:now});
+        setShowReportModal(false);
+        addNotif("📋","تم الحفظ","لم يُكتشف محتوى مسيء، تم حفظ البلاغ للمراجعة","info");
+      }
+    } else {
+      // أسباب غير حرجة → نظام الضربات الثلاث العادي
+      await handleReport();
+      return;
+    }
+    setReportLoading(false);
+    setReportReason("");
+  };
   const getValidSupa=async()=>{
     const supa=getSupa();
     if(!supa) return null;
@@ -4287,7 +4367,7 @@ User said: "${userMsg}"`;
             </div>
 
             {/* ── زر إرسال البلاغ ── */}
-            <button onClick={handleReport} disabled={!reportReason||reportLoading} style={{
+            <button onClick={callType==="video"&&callSource==="random"?handleVideoReport:handleReport} disabled={!reportReason||reportLoading} style={{
               width:"100%",padding:"15px",borderRadius:16,
               background:reportReason
                 ?"linear-gradient(135deg,#dc2626,#991b1b)"
@@ -6486,29 +6566,6 @@ User said: "${userMsg}"`;
                     overflow:"hidden",lineHeight:1.5,fontFamily:"'Poppins','Tajawal',system-ui",
                     padding:0}}
                 />
-              </div>
-
-              {/* زر الإرسال */}
-              <button onClick={async()=>{
-                if(!chatInput.trim()) return;
-                const txt=chatInput; setChatInput(""); streamTypingStop();
-                setReplyTo(null); setShowAiloMenu(false);
-                // اقتراح Ailo تلقائي بعد كل 5 رسائل
-                const msgCount=streamMessages.filter(m=>m.user?.id===userId).length;
-                const ok=await sendStreamMessage(txt,null);
-                if(ok){
-                  addXp(5,"رسالة");
-                  setStats(s=>{const ns={...s,totalMsgs:s.totalMsgs+1};checkBadges(ns);return ns;});
-                  updateQuest("msgs"); setCoins(c=>c+1);
-                  // كل 5 رسائل: اقتراح Ailo
-                  if(msgCount>0&&(msgCount+1)%5===0){
-                    const suggestions=["💡 Ailo يقترح: جرّب استخدام كلمة جديدة في جملتك القادمة!","💡 Ailo: ممتاز! استمر في المحادثة — كل رسالة تقوّي لغتك 🌟","💡 Ailo: هل تريد تعلم كلمة مرتبطة بهذا الموضوع؟"];
-                    const sug=suggestions[Math.floor(Math.random()*suggestions.length)];
-                    setTimeout(()=>{
-                      setStreamMessages(p=>[...p,{id:"ailo_"+Date.now(),_isAiloSuggestion:true,text:sug,user:{id:"ailo"},created_at:new Date().toISOString(),attachments:[],readBy:[]}]);
-                    },800);
-                  }
-                }
               </div>
 
               {/* زر الإرسال */}
